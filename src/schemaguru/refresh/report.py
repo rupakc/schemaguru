@@ -92,6 +92,19 @@ class RefreshReport:
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True)
 
+    def _exit3_reason(self) -> str:
+        reasons: list[str] = []
+        if self.crawl.errors and self.crawl.tables_seen == 0:
+            reasons.append(
+                f"the catalog crawl failed ({len(self.crawl.errors)} error(s)) and saw no tables"
+            )
+        if self.measure.errors:
+            reasons.append(f"errors occurred during the run ({len(self.measure.errors)})")
+        if not self.measure.measured_tables:
+            reasons.append("nothing was measured")
+        text = "; ".join(reasons) if reasons else "the run reported a failure"
+        return text[0].upper() + text[1:] + "."
+
     def to_markdown(self) -> str:
         n = self.counts()
         lines = [
@@ -116,5 +129,5 @@ class RefreshReport:
             for c, _ in rows:
                 lines.append(f"- {c.kind.name} {subject_key(c.subject)}: {c.change}")
         if self.exit_code == EXIT_NOTHING_MEASURED:
-            lines += ["", "Nothing was measured; no verdict can be drawn from this run."]
+            lines += ["", self._exit3_reason()]
         return "\n".join(lines) + "\n"

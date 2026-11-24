@@ -65,44 +65,44 @@ def _stale_or_changed(store: Store, now: datetime, ttl_days: int) -> list[Object
 STATE_KEY = "refresh"
 
 
+def _wkey(ref: ObjectRef, at: datetime) -> str:
+    return f"{ref.canonical()}|{at.isoformat()}"
+
+
 def _reported(store: Store) -> set[str]:
     raw = (store.crawl_state_get(STATE_KEY) or {}).get("withdrawn_reported")
     return {str(x) for x in raw} if isinstance(raw, list) else set()
 
 
-def _still_withdrawn(store: Store, keys: Collection[str]) -> list[str]:
-    out = []
-    for k in sorted(keys):
-        tb = store.table(ObjectRef.parse(k))
-        if tb is not None and tb.withdrawn_at is not None:
-            out.append(k)  # a restored table drops out, so a later withdrawal reports again
-    return out
-
-
-def _withdrawn_since_snapshot(store: Store, prev_facts: list[Fact]) -> list[ObjectRef]:
-    """Tables the previous snapshot's facts refer to that are withdrawn now and not yet reported.
-
-    Compared against the previous snapshot (not against the crawl of this run), so a run that
-    crashed between crawl and snapshot loses nothing: the withdrawal stays unreported until a
-    snapshot has been taken (the reported set is saved only after that).
-    """
-    reported = _reported(store)
+def _currently_withdrawn_keys(store: Store, prev_facts: list[Fact]) -> dict[str, ObjectRef]:
+    """``name|withdrawn_at`` -> table, for tables the previous snapshot refers to."""
     seen: dict[str, ObjectRef] = {}
     for f in prev_facts:
         for r in _tables_of(f):
             seen[r.canonical()] = r
-    out = []
+    out: dict[str, ObjectRef] = {}
     for key in sorted(seen):
         tb = store.table(seen[key])
-        if tb is not None and tb.withdrawn_at is not None and key not in reported:
-            out.append(seen[key])
+        if tb is not None and tb.withdrawn_at is not None:
+            out[_wkey(seen[key], tb.withdrawn_at)] = seen[key]
     return out
+
+
+def _withdrawn_since_snapshot(store: Store, prev_facts: list[Fact]) -> list[ObjectRef]:
+    """Withdrawn tables the previous snapshot's facts refer to that are not yet reported.
+
+    Compared against the previous snapshot (not against this run's crawl), and keyed on
+    ``(name, withdrawn_at)``: a table restored and dropped again, even between two direct
+    ``crawl()`` calls, is a new withdrawal. The reported set is saved only at the very end of a
+    run (see :func:`refresh`), so a run that fails before returning its report loses nothing.
+    """
+    reported = _reported(store)
+    return [r for k, r in _currently_withdrawn_keys(store, prev_facts).items() if k not in reported]
 
 
 def _carried_unmeasured(
     prev_facts: list[Fact],
     new_facts: list[Fact],
-    prev_checks: Collection[str],
     checks_run: Collection[str],
     targets: Collection[ObjectRef],
     measured: Collection[ObjectRef],
@@ -110,9 +110,11 @@ def _carried_unmeasured(
     """Facts carried unchanged from the previous snapshot whose check did not run this time.
 
     The store never deletes facts, so a narrower run leaves the old ones in place and a plain
-    diff sees nothing. A carried fact (same id, ``observed_at`` not advanced) is reported as
-    not measured when its kind was checked last time and not now, or its table was due for
-    measurement and was not reached. Tables that were not due (still fresh) are not reported.
+    diff sees nothing. Decided per (table, kind): a carried fact (same id, ``observed_at`` not
+    advanced) on a table that was DUE is reported when its kind did not run in this run, or its
+    table was never reached. A table that was not due is never reported (its facts are still
+    fresh), so one partial run cannot raise a false alarm, and a later full run still sees what
+    it skips. ``checks_run`` must be what THIS run measured, not what the snapshot records.
     """
     prev_at = {f.id: f.observed_at for f in prev_facts}
     due, done = set(targets), set(measured)
@@ -121,19 +123,33 @@ def _carried_unmeasured(
         if f.id not in prev_at or f.observed_at != prev_at[f.id]:
             continue
         if f.provenance is Provenance.CATALOG:
-            skipped = CATALOG_CHECK in prev_checks and CATALOG_CHECK not in checks_run
+            skipped = CATALOG_CHECK not in checks_run
         elif f.provenance is Provenance.MEASURED and f.kind.name in MEASURED_KINDS:
             tables = _tables_of(f)
             if not tables & due:
                 continue
-            skipped = (f.kind.name in prev_checks and f.kind.name not in checks_run) or not (
-                tables & done
-            )
+            skipped = f.kind.name not in checks_run or not (tables & done)
         else:
             continue
         if skipped:
             out.append(Change(f.kind, f.subject, f, None, "removed"))
     return out
+
+
+def _carried_kinds(
+    prev_facts: list[Fact], targets: Collection[ObjectRef], now: datetime, ttl_days: int
+) -> set[str]:
+    """Kinds still standing from tables that were not due: their facts are fresh (within TTL)."""
+    due, cutoff = set(targets), now - timedelta(days=ttl_days)
+    return {
+        f.kind.name
+        for f in prev_facts
+        if f.provenance is Provenance.MEASURED
+        and f.kind.name in MEASURED_KINDS
+        and f.observed_at is not None
+        and f.observed_at >= cutoff
+        and not _tables_of(f) & due
+    }
 
 
 def _error(code: str, message: str) -> Diagnostic:
@@ -155,8 +171,8 @@ def refresh(
     declared/human expectations (PRIMARY_KEY, VALUES, JOIN) on the touched tables. A reader or
     scheduler failure (``Exception``) is recorded in the report, never raised. A check that was
     attempted and errored is not in ``checks_run``; ``CATALOG`` is only there for a crawl without
-    errors. When nothing was due for measurement the previous measured checks still stand
-    (everything is fresh), so they carry into ``checks_run``.
+    errors. The recorded checks also include kinds that still stand on tables that were not due
+    (fresh facts); ``missing_checks`` names kinds skipped on tables that were due.
 
     Exit code: ``3`` when the crawl failed with nothing seen, any measurement error was reported,
     or measurement was attempted and nothing was measured; else ``1`` if any change needs review;
@@ -165,7 +181,6 @@ def refresh(
     t = now()
     prev_id = store.latest_snapshot()
     prev_facts = store.snapshot_facts(prev_id) if prev_id else []
-    prev_checks = store.snapshot_checks_run(prev_id) if prev_id else frozenset()
 
     try:
         crawl_report = crawl(reader, store, config=config.crawl, incremental=True, now=now)
@@ -181,32 +196,30 @@ def refresh(
         except Exception as e:
             measure = MeasureReport(errors=[_error("SG303", f"measurement failed: {e}")])
 
-    checks_run = set(measure.checks_run)
-    if not targets:
-        checks_run |= set(prev_checks) - {CATALOG_CHECK}
+    run_checks = set(measure.checks_run)  # what THIS run measured
     if not crawl_report.errors:
-        checks_run.add(CATALOG_CHECK)
-    missing = sorted(set(prev_checks) - checks_run)
-    snap = take(store, checks_run, label)
+        run_checks.add(CATALOG_CHECK)
+    # the snapshot also records kinds that still stand on tables that were not due
+    recorded = run_checks | _carried_kinds(prev_facts, targets, t, config.fact_ttl_days)
+    snap = take(store, recorded, label)
     new_facts = store.snapshot_facts(snap)
-    store.crawl_state_set(
-        STATE_KEY,
-        {
-            "withdrawn_reported": _still_withdrawn(
-                store, _reported(store) | {r.canonical() for r in withdrawn}
-            )
-        },
-    )
 
     changes: list[Change] = diff(prev_facts, new_facts)
     changes += [Change(TABLE_WITHDRAWN, r, None, None, "removed") for r in withdrawn]
-    changes += _carried_unmeasured(
-        prev_facts, new_facts, prev_checks, checks_run, targets, measure.measured_tables
+    carried = _carried_unmeasured(
+        prev_facts, new_facts, run_checks, targets, measure.measured_tables
+    )
+    changes += carried
+    missing = sorted(
+        {
+            CATALOG_CHECK if c.before and c.before.provenance is Provenance.CATALOG else c.kind.name
+            for c in carried
+        }
     )
     prev_eff = resolve(prev_facts, now=t, ttl_days=config.fact_ttl_days)
     new_eff = resolve(new_facts, now=t, ttl_days=config.fact_ttl_days)
     classified = classify_changes(
-        changes, prev_eff, new_eff, checks_run=checks_run, measured_tables=measure.measured_tables
+        changes, prev_eff, new_eff, checks_run=run_checks, measured_tables=measure.measured_tables
     )
 
     nothing_seen = bool(crawl_report.errors) and crawl_report.tables_seen == 0
@@ -216,6 +229,12 @@ def refresh(
         code = EXIT_REVIEW
     else:
         code = EXIT_OK
-    return RefreshReport(
-        classified, crawl_report, measure, code, snap, prev_id, frozenset(checks_run), missing
+    report = RefreshReport(
+        classified, crawl_report, measure, code, snap, prev_id, frozenset(recorded), missing
     )
+    # last, after diff/resolve/classify: a failure above must not mark a withdrawal reported
+    store.crawl_state_set(
+        STATE_KEY,
+        {"withdrawn_reported": sorted(_currently_withdrawn_keys(store, prev_facts))},
+    )
+    return report

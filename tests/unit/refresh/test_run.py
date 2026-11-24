@@ -6,11 +6,11 @@ from typing import Any
 
 import pytest
 
-from schemaguru.catalog import DBAPIExecutor
+from schemaguru.catalog import DBAPIExecutor, crawl
 from schemaguru.catalog.readers.duckdb import DuckDBReader
 from schemaguru.config import Budget, Config
 from schemaguru.knowledge.diff import subject_key
-from schemaguru.measure.requests import Uniqueness
+from schemaguru.measure.requests import KeyOverlapReq, Uniqueness
 from schemaguru.measure.scheduler import MeasureReport, Scheduler
 from schemaguru.model.refs import ObjectRef
 from schemaguru.refresh import ChangeClass, refresh
@@ -194,3 +194,142 @@ def test_measure_errors_exit_3_and_check_not_run(store: SQLiteStore, conn: Any) 
     r = go(store, conn, fail=lambda req: isinstance(req, Uniqueness))
     assert r.measure.errors and r.exit_code == 3
     assert "PRIMARY_KEY" not in r.checks_run and "NULL_RATE" in r.checks_run
+
+
+class NoJoinScheduler(Scheduler):
+    """A config that stopped measuring joins."""
+
+    def plan_table(self, ref: ObjectRef) -> list[Any]:
+        return [r for r in super().plan_table(ref) if not isinstance(r, KeyOverlapReq)]
+
+
+def _clocked(
+    store: SQLiteStore, conn: Any, clock: list[datetime], cls: type = Scheduler, **kw: Any
+) -> Any:
+    def now() -> datetime:
+        return clock[0]
+
+    cfg = Config()
+    reader = DuckDBReader(DBAPIExecutor(conn))
+    return refresh(
+        store, reader, cls(store, FakeBackend(conn, **kw), cfg, now=now), config=cfg, now=now
+    )
+
+
+def test_partial_run_no_false_alarm_and_later_narrowing_still_seen(
+    store: SQLiteStore, conn: Any
+) -> None:
+    t0 = datetime.now(timezone.utc)
+    clock = [t0]
+    first = _clocked(store, conn, clock)
+    assert "JOIN" in first.checks_run
+    # run 2: only the new table is due, and it has no join: nothing is missing
+    clock[0] = t0 + timedelta(days=1)
+    conn.execute("CREATE TABLE shop.misc(id INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO shop.misc VALUES (1)")
+    second = _clocked(store, conn, clock)
+    assert [t.table for t in second.measure.measured_tables] == ["misc"]
+    assert second.missing_checks == []
+    assert not [c for c, k in second.changes if k is ChangeClass.NOT_MEASURED]
+    assert "JOIN" in second.checks_run  # still stands on the tables that were not due
+    # run 3: every table is due and the config no longer measures joins
+    clock[0] = t0 + timedelta(days=40)
+    third = _clocked(store, conn, clock, NoJoinScheduler)
+    assert "JOIN" in third.missing_checks and "JOIN" not in third.checks_run
+    joins = [(c, k) for c, k in third.changes if c.kind.name == "JOIN"]
+    assert joins and {k for _, k in joins} == {ChangeClass.NOT_MEASURED}
+    assert not [1 for _, k in third.changes if k is ChangeClass.REVIEW]
+    assert third.exit_code == 0
+
+
+def test_restore_and_redrop_between_direct_crawls_is_reported(
+    store: SQLiteStore, conn: Any
+) -> None:
+    go(store, conn)
+    conn.execute("DROP TABLE shop.orders")
+    r2 = go(store, conn)
+    assert [c for c, _ in r2.changes if c.kind.name == "TABLE_WITHDRAWN"]
+    reader = DuckDBReader(DBAPIExecutor(conn))
+    conn.execute("CREATE TABLE shop.orders(order_id INTEGER PRIMARY KEY, customer_id INTEGER)")
+    crawl(reader, store, now=lambda: later(1))
+    conn.execute("DROP TABLE shop.orders")
+    crawl(reader, store, now=lambda: later(2))
+    r3 = go(store, conn)
+    assert [c for c, _ in r3.changes if c.kind.name == "TABLE_WITHDRAWN"]
+    r4 = go(store, conn)
+    assert not [c for c, _ in r4.changes if c.kind.name == "TABLE_WITHDRAWN"]
+
+
+def test_failing_classifier_does_not_mark_withdrawal_reported(
+    store: SQLiteStore, conn: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import schemaguru.refresh.run as run_mod
+
+    go(store, conn)
+    conn.execute("DROP TABLE shop.orders")
+
+    def boom(*a: Any, **k: Any) -> Any:
+        raise RuntimeError("classifier bug")
+
+    with monkeypatch.context() as m:
+        m.setattr(run_mod, "classify_changes", boom)
+        with pytest.raises(RuntimeError):
+            go(store, conn)
+    r = go(store, conn)
+    assert [c for c, _ in r.changes if c.kind.name == "TABLE_WITHDRAWN"]
+
+
+def test_due_table_does_not_vouch_for_kinds() -> None:
+    """Fresh facts on a due table (altered since) do not stand in for a kind the run skipped."""
+    from schemaguru.model.facts import Fact, Provenance, Status
+    from schemaguru.model.kinds import FactKind
+    from schemaguru.refresh.run import _carried_kinds
+
+    t = datetime(2026, 11, 24, tzinfo=timezone.utc)
+
+    def nr(table: str) -> Fact:
+        return Fact.make(
+            FactKind.NULL_RATE, ObjectRef(None, "shop", table, "c"), {"rate": 0.0},
+            Provenance.MEASURED, Status.OBSERVED, method="exact", observed_at=t,
+        )  # fmt: skip
+
+    facts = [nr("a"), nr("b")]
+    due = [ObjectRef(None, "shop", "a")]
+    assert _carried_kinds(facts, due, t, 14) == {"NULL_RATE"}  # b is not due and fresh
+    assert _carried_kinds(facts[:1], due, t, 14) == set()  # only the due table held it
+    assert _carried_kinds(facts, [], t + timedelta(days=30), 14) == set()  # stale: not standing
+
+
+def test_errored_check_old_facts_are_not_measured_never_fixed(
+    store: SQLiteStore, conn: Any
+) -> None:
+    from schemaguru.measure.requests import ProfileColumns
+
+    t0 = datetime.now(timezone.utc)
+    clock = [t0]
+    _clocked(store, conn, clock)
+    clock[0] = t0 + timedelta(days=30)
+    r = _clocked(store, conn, clock, fail=lambda req: isinstance(req, ProfileColumns))
+    assert "NULL_RATE" not in r.checks_run
+    got = {k for c, k in r.changes if c.kind.name == "NULL_RATE"}
+    assert ChangeClass.NOT_MEASURED in got and ChangeClass.REVIEW not in got
+
+
+def test_advanced_fact_is_not_carried() -> None:
+    from schemaguru.model.facts import Fact, Provenance, Status
+    from schemaguru.model.kinds import FactKind
+    from schemaguru.refresh.run import _carried_unmeasured
+
+    t = datetime(2026, 11, 24, tzinfo=timezone.utc)
+    ref = ObjectRef(None, "shop", "orders", "c")
+
+    def nr(at: datetime) -> Fact:
+        return Fact.make(
+            FactKind.NULL_RATE, ref, {"rate": 0.0},
+            Provenance.MEASURED, Status.OBSERVED, method="exact", observed_at=at,
+        )  # fmt: skip
+
+    due = [ref.table_ref()]
+    same = _carried_unmeasured([nr(t)], [nr(t)], set(), due, [])
+    advanced = _carried_unmeasured([nr(t)], [nr(t + timedelta(days=1))], set(), due, [])
+    assert len(same) == 1 and advanced == []

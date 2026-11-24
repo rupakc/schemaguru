@@ -7,6 +7,7 @@ import math
 import random
 import time
 from dataclasses import dataclass, replace
+from typing import Any
 
 import pytest
 
@@ -201,23 +202,27 @@ def _random_graph() -> tuple[Graph, list[str]]:
 
 
 def test_hubs_and_calibration_scale_linearly() -> None:
-    edges = _sink_edges(50_000, 5_000)
-    t0 = time.perf_counter()
-    hubs = Hubs.from_edges(edges, set(), CFG)
-    cals = calibrate_hubs(edges)
-    took = time.perf_counter() - t0
+    def run(n_edges: int, n_sinks: int) -> tuple[float, Hubs, Any]:
+        edges = _sink_edges(n_edges, n_sinks)
+        t0 = time.perf_counter()
+        hubs = Hubs.from_edges(edges, set(), CFG)
+        cals = calibrate_hubs(edges)
+        return time.perf_counter() - t0, hubs, cals
+
+    small, _, _ = run(5_000, 500)
+    large, hubs, cals = run(50_000, 5_000)
     assert len(cals) == 5_000 and hubs.tables
-    assert took < 10.0  # was ~179 s (O(sinks x edges)); strict bound in the benchmark below
+    # a scaling ratio (the absolute bound is the benchmark below): 10x edges and sinks is ~10x
+    # the time when linear, ~100x for the old O(sinks x edges); small floored at 10 ms
+    assert large / max(small, 0.01) < 30, (small, large)
 
 
 def test_find_paths_on_a_large_random_graph() -> None:
     g, names = _random_graph()
-    t0 = time.perf_counter()
     res = find_paths(
         g, ObjectRef(None, "shop", names[0]), ObjectRef(None, "shop", names[1]), cfg=CFG
     )
-    took = time.perf_counter() - t0
-    assert res.paths and took < 10.0  # strict bound in the benchmark below
+    assert res.paths  # its time is bounded by the benchmark below, never in the default suite
 
 
 @pytest.mark.benchmark

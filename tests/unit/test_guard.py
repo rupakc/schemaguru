@@ -189,16 +189,22 @@ def test_guard_performance_at_cap() -> None:
     import time
 
     unit = "SELECT a, b FROM t1 WHERE c = 'x''y' /* c */ -- n\n"
-    sql = (unit * (100_000 // len(unit)))[:99_000]
     nq = [ObjectRef(None, "s", f"banned_{i}") for i in range(50)]
-    best = 9.0
-    for _ in range(3):
-        t0 = time.perf_counter()
-        check_sql(sql, never_query=nq)
-        best = min(best, time.perf_counter() - t0)
-    # linear work is ~0.2 s locally; shared CI runners (Windows, coverage tracing) reach ~0.6 s.
-    # A quadratic guard on 99k characters takes minutes, so 2 s still catches the regression.
-    assert best < 2.0
+
+    def best(n: int) -> float:
+        sql = (unit * (n // len(unit) + 1))[:n]
+        out = 9.0
+        for _ in range(3):
+            t0 = time.perf_counter()
+            check_sql(sql, never_query=nq)
+            out = min(out, time.perf_counter() - t0)
+        return out
+
+    # a scaling ratio, not a wall-clock bound (it holds on a slow or loaded runner): 10x the
+    # input is ~10x the time when linear, ~100x when quadratic; the small run is floored at
+    # 10 ms so timer noise cannot inflate the ratio
+    small, large = best(9_900), best(99_000)
+    assert large / max(small, 0.01) < 30, (small, large)
 
 
 @pytest.mark.parametrize(

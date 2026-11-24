@@ -239,11 +239,12 @@ def _big() -> tuple[Graph, list[str]]:
 def test_via_rule_and_multi_target_on_a_large_graph() -> None:
     g, names = _big()
     a, b, w = _bench_pairs(names)[0]
-    t0 = time.perf_counter()
-    find_paths(g, a, b, cfg=GraphConfig(), automaton=Via(w))
+    res = find_paths(g, a, b, cfg=GraphConfig(), automaton=Via(w))
     targets = [T(x) for x in names[1:8]]
-    best_paths_from(g, a, targets, cfg=GraphConfig())
-    assert time.perf_counter() - t0 < 10.0  # strict bounds in the benchmarks below
+    out = best_paths_from(g, a, targets, cfg=GraphConfig())
+    # correctness only: the time bounds are the benchmarks below, never the default suite
+    assert res.paths or res.refusal is not None
+    assert set(out) == set(targets)
 
 
 @pytest.mark.benchmark

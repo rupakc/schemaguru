@@ -1,7 +1,8 @@
 """Retrieval latency at scale (spec 12.4): search runs in the store's index, not in Python.
 
-``test_search_latency_50k`` runs by default as a sanity check; the 500k benchmark is marked
-``benchmark`` (nightly). Both build a synthetic shop-domain catalog straight into the store.
+Both are absolute latency bounds, so both are marked ``benchmark`` (nightly; wall-clock bounds
+flake on loaded runners and never gate a push). They build a synthetic shop-domain catalog
+straight into the store.
 """
 
 from __future__ import annotations
@@ -93,6 +94,7 @@ def p95_ms(store: SQLiteStore, rounds: int) -> float:
     return times[int(0.95 * (len(times) - 1))]
 
 
+@pytest.mark.benchmark
 def test_search_latency_50k(tmp_path: Path) -> None:
     with build_catalog(tmp_path / "s50k.db", 50_000) as store:
         assert p95_ms(store, rounds=3) < 200

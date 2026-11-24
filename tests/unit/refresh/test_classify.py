@@ -180,27 +180,31 @@ def test_classify_many_is_not_quadratic() -> None:
     from schemaguru.knowledge.resolve import Effective
     from schemaguru.refresh.classify import classify_changes
 
-    n = 50_000
-    facts = [
-        Fact.make(
-            FactKind.NULL_RATE, ObjectRef(None, "shop", "t", f"c{i}"), {"rate": 0.0},
-            Provenance.MEASURED, Status.OBSERVED, method="exact", observed_at=T,
+    def run(n: int) -> tuple[float, Any]:
+        facts = [
+            Fact.make(
+                FactKind.NULL_RATE, ObjectRef(None, "shop", "t", f"c{i}"), {"rate": 0.0},
+                Provenance.MEASURED, Status.OBSERVED, method="exact", observed_at=T,
+            )
+            for i in range(n)
+        ]  # fmt: skip
+        prev = cast(
+            "dict[tuple[str, str], Effective]", {("NULL_RATE", f"x{i}"): None for i in range(n)}
         )
-        for i in range(n)
-    ]  # fmt: skip
-    prev = cast(
-        "dict[tuple[str, str], Effective]", {("NULL_RATE", f"x{i}"): None for i in range(n)}
-    )
-    changes = [Change(f.kind, f.subject, None, f, "added") for f in facts]
-    gone = [Change(f.kind, f.subject, f, None, "removed") for f in facts]
-    t0 = time.perf_counter()
-    out = classify_changes(
-        changes + gone, prev, {}, checks_run={"NULL_RATE"},
-        measured_tables=[ObjectRef(None, "shop", f"m{i}") for i in range(n)],
-    )  # fmt: skip
-    # linear: ~0.7 s locally, up to ~2.4 s on shared CI runners; quadratic in 100k changes is
-    # minutes, so 10 s still catches it
-    assert time.perf_counter() - t0 < 10.0
+        changes = [Change(f.kind, f.subject, None, f, "added") for f in facts]
+        gone = [Change(f.kind, f.subject, f, None, "removed") for f in facts]
+        tables = [ObjectRef(None, "shop", f"m{i}") for i in range(n)]
+        t0 = time.perf_counter()
+        out = classify_changes(
+            changes + gone, prev, {}, checks_run={"NULL_RATE"}, measured_tables=tables
+        )
+        return time.perf_counter() - t0, out
+
+    # a scaling ratio, not a wall-clock bound: 10x the changes is ~10x the time when linear,
+    # ~100x when quadratic (the small run is floored at 10 ms against timer noise)
+    small, _ = run(5_000)
+    large, out = run(50_000)
+    assert large / max(small, 0.01) < 30, (small, large)
     assert out[0][1] is ChangeClass.BENIGN and out[-1][1] is ChangeClass.NOT_MEASURED
 
 

@@ -243,11 +243,30 @@ def test_quote_never_captures_keywords() -> None:
     assert amb == []
 
 
+def _factlang_filter_keywords(parser: object) -> frozenset[str]:
+    """FactLang's filter keyword set, read directly: a rename fails loudly, never self-compares."""
+    try:
+        return frozenset(parser._FILTER_KEYWORDS)  # type: ignore[attr-defined]
+    except AttributeError:
+        pytest.fail(
+            "factlang.syntax.parser._FILTER_KEYWORDS is gone: re-pin "
+            "schemaguru.render.fragments.FILTER_KEYWORDS against FactLang's filter keywords"
+        )
+
+
 def test_filter_keywords_match_factlang() -> None:
-    parser = pytest.importorskip("factlang.syntax.parser")
-    assert (
-        getattr(parser, "_FILTER_KEYWORDS", fragments.FILTER_KEYWORDS) == fragments.FILTER_KEYWORDS
-    )
+    import factlang.syntax.parser as parser  # a hard dependency: never skipped
+
+    assert _factlang_filter_keywords(parser) == fragments.FILTER_KEYWORDS
+
+
+def test_filter_keywords_check_fails_when_factlang_renames_it() -> None:
+    """Negative control: a parser module without the attribute fails, it does not pass."""
+    import types
+
+    renamed = types.ModuleType("factlang.syntax.parser")
+    with pytest.raises(pytest.fail.Exception, match="_FILTER_KEYWORDS is gone"):
+        _factlang_filter_keywords(renamed)
 
 
 def test_ambiguous_filter_column_is_reported(store: SQLiteStore, fake_factlang: dict) -> None:  # type: ignore[type-arg]

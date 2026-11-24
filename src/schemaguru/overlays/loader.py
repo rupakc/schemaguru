@@ -468,8 +468,8 @@ class _FileLoader:
         require = self.texts(m.get("require"), "waypoints.require") or []
         forbid = self.texts(m.get("forbid"), "waypoints.forbid") or []
         because = self.text(m.get("because"), "waypoints")
-        if not require and not forbid:
-            self.diag("SG208", "waypoints: a rule needs 'require' or 'forbid'", node)
+        if scope == "pair" and not require and not forbid:  # `node: X` alone forbids X
+            self.diag("SG208", "waypoints: a pair rule needs 'require' or 'forbid'", node)
             return
         if because is None:
             self.diag("SG208", "waypoints: a rule needs 'because'", node)

@@ -16,6 +16,7 @@ from schemaguru.graph.waypoints import (
     compile_rules,
     lint_rules,
     parse_predicate,
+    parse_term,
     validate_rules,
 )
 from schemaguru.model.facts import Fact
@@ -86,7 +87,8 @@ def test_parse_predicates_exact() -> None:
     "token",
     [
         "",
-        "shop.orders",  # bare names are not predicates: write node(...)
+        "  ",
+        "shop.orders.status.x",  # a bare reference must be a table
         "node()",
         "node(shop.orders",
         "nodes(shop.orders)",
@@ -95,8 +97,9 @@ def test_parse_predicates_exact() -> None:
         "edge(shop.a.x->shop.b.y->shop.c.z)",
         "edge(shop.a.x, shop.b.y->shop.c.z, shop.c.w)",  # one side spans two tables
         "edge(shop.a.x->shop.b.y, shop.b.z)",  # unequal sides
-        "ANY",
+        "Any(x)",
         'node("shop.orders)',
+        "shop..orders",
     ],
 )
 def test_bad_token_fails_closed(token: str) -> None:
@@ -104,8 +107,26 @@ def test_bad_token_fails_closed(token: str) -> None:
         parse_predicate(token)
 
 
+def test_bare_table_ref_is_node() -> None:
+    assert parse_predicate("shop.orders") == Predicate("node", table=t("orders"))
+    assert parse_predicate(" ANY ") == Predicate("node", table=ObjectRef(None, None, "ANY"))
+    assert parse_term("shop.a | node(shop.b)") == (
+        Predicate("node", table=t("a")),
+        Predicate("node", table=t("b")),
+    )
+    with pytest.raises(ValueError):
+        parse_term("node(shop.a) |")
+    # Bare form in a pair rule forces the route like node() does.
+    auto = compile_rules(
+        [pair("events", "orders", require=["shop.sessions"])], t("events"), t("orders")
+    )
+    assert _route(find_paths(G, t("events"), t("orders"), cfg=CFG, automaton=auto).paths) == [
+        ["events", "sessions", "orders"]
+    ]
+
+
 def test_bad_rule_reported_and_refuses_its_searches() -> None:
-    bad = pair("events", "orders", require=["sessions"])
+    bad = pair("events", "orders", require=["sessions("])
     bag = DiagnosticBag()
     auto = compile_rules([bad], t("events"), t("orders"), bag=bag)
     (d,) = list(bag)
@@ -185,19 +206,50 @@ def test_forbid_node() -> None:
     assert _route(res.paths) == [["events", "sessions", "orders"]]
 
 
+def test_node_rule_bans_its_node_as_intermediate_only() -> None:
+    rule = [node("events")]  # no forbid list: the anchor alone
+    assert validate_rules(rule) == []
+    free = find_paths(G, t("sessions"), t("orders"), cfg=CFG)
+    assert ["sessions", "events", "orders"] in _route(free.paths)
+    res = find_paths(
+        G,
+        t("sessions"),
+        t("orders"),
+        cfg=CFG,
+        automaton=compile_rules(rule, t("sessions"), t("orders")),
+    )
+    assert _route(res.paths) == [["sessions", "orders"]]
+    # Searches from or to the node itself are allowed.
+    for a, b in (("events", "payments"), ("payments", "events")):
+        auto = compile_rules(rule, t(a), t(b))
+        assert not auto.is_empty()
+        res = find_paths(G, t(a), t(b), cfg=CFG, automaton=auto)
+        assert res.refusal is None and res.paths, (a, b)
+
+
+def test_node_rule_forbid_list_adds_intermediates() -> None:
+    # The loader's form: a bare table reference in the forbid list.
+    rule = [node("events", forbid=["shop.orders"])]
+    assert validate_rules(rule) == []
+    auto = compile_rules(rule, t("sessions"), t("payments"))
+    res = find_paths(G, t("sessions"), t("payments"), cfg=CFG, automaton=auto)
+    assert res.refusal is Refusal.RULE_REJECTS_ALL  # every route passes orders
+    # Withheld per endpoint: both forbidden nodes are the endpoints here.
+    auto = compile_rules(rule, t("events"), t("orders"))
+    assert not auto.is_empty()
+    assert _route(find_paths(G, t("events"), t("orders"), cfg=CFG, automaton=auto).paths)[0] == [
+        "events",
+        "orders",
+    ]
+
+
 def test_node_forbid_withheld_at_endpoint() -> None:
     rules = [node("sessions", forbid=["node(shop.sessions)"])]
     auto = compile_rules(rules, t("events"), t("sessions"))
     assert not auto.is_empty()
     res = find_paths(G, t("events"), t("sessions"), cfg=CFG, automaton=auto)
     assert res.refusal is None and _route(res.paths)[0] == ["events", "sessions"]
-    # A node rule forbidding a different node still applies when its anchor is not an endpoint...
-    rules = [node("payments", forbid=["node(shop.sessions)"])]
-    auto = compile_rules(rules, t("events"), t("orders"))
-    assert _route(find_paths(G, t("events"), t("orders"), cfg=CFG, automaton=auto).paths) == [
-        ["events", "orders"]
-    ]
-    # ... and a forbidden node that is an endpoint is withheld even under another anchor.
+    # A forbidden node that is an endpoint is withheld even under another anchor.
     rules = [node("payments", forbid=["node(shop.orders)"])]
     assert not compile_rules(rules, t("events"), t("orders")).is_empty()
     # Pair scope is not withheld: forbidding your own endpoint is a contradiction.
@@ -205,6 +257,16 @@ def test_node_forbid_withheld_at_endpoint() -> None:
         [pair("events", "orders", forbid=["node(shop.orders)"])], t("events"), t("orders")
     )
     assert auto.is_empty()
+
+
+@pytest.mark.parametrize(
+    "forbid", ["any", "col(shop.orders.session_id)", VIA, "node(shop.x) | col(shop.a.b)"]
+)
+def test_node_rule_forbids_only_nodes(forbid: str) -> None:
+    (d,) = validate_rules([node("events", forbid=[forbid])])
+    assert d.code == "SG602" and "only forbid nodes" in d.message
+    # Fail closed: it governs every search.
+    assert compile_rules([node("events", forbid=[forbid])], t("orders"), t("payments")).is_empty()
 
 
 @pytest.mark.parametrize(
@@ -294,12 +356,34 @@ def test_lint_dead_prohibition() -> None:
     assert "shop.orders.order_id->shop.events.order_id" in msgs
     assert "shop.nowhere" in msgs and "shop.orders.nope" in msgs
     # A malformed predicate is not linted (validate_rules reports it).
-    assert lint_rules([pair("a", "b", forbid=["oops"])], edges) == []
+    assert lint_rules([pair("a", "b", forbid=["oops("])], edges) == []
+
+
+def test_lint_dead_requirement_and_node_anchor() -> None:
+    rules = [
+        pair(
+            "events",
+            "orders",
+            require=[
+                "node(shop.sesions)",  # typo: dead
+                VIA,  # live
+                "edge(shop.x.a->shop.y.b) | node(shop.sessions)",  # one live alternative
+                "col(shop.orders.nope) | node(shop.nowhere)",  # every alternative dead
+            ],
+        ),
+        node("nowhere"),  # the anchor itself matches nothing
+    ]
+    diags = lint_rules(rules, G.edges)
+    assert [d.code for d in diags] == ["SG604"] * 3
+    msgs = [d.message for d in diags]
+    assert any("prohibition node(shop.nowhere)" in m for m in msgs)
+    assert any("requirement node(shop.sesions)" in m for m in msgs)
+    assert any("requirement col(shop.orders.nope) | node(shop.nowhere)" in m for m in msgs)
 
 
 def test_codes_registered() -> None:
     doc = (Path(__file__).resolve().parents[3] / "docs/reference/diagnostics.md").read_text(
         encoding="utf-8"
     )
-    for code in ("SG602", "SG603", "SG604"):
+    for code in ("SG602", "SG603", "SG604", "SG605"):
         assert code in CODES and f"| {code} |" in doc

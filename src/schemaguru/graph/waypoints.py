@@ -13,14 +13,21 @@ Predicates, matched exactly (no globbing, no case folding):
   not part of the predicate);
 * ``any`` - every element.
 
-Pair scope (``pair: [a, b]``) may require and forbid; it governs searches between ``a`` and
-``b`` in either direction. Node scope (``node: t``) may only forbid; it governs every search,
-except that it is withheld when ``t`` is a search endpoint, and a forbidden ``node(x)`` is
-withheld when ``x`` is one. At most :data:`MAX_REQUIREMENTS` requirements per rule.
+A bare table reference (``shop.orders``) means ``node(shop.orders)``. A term may list
+alternatives separated by ``|`` (``edge(a.x->b.y) | edge(b.y->a.x)``): a required term is met
+by any alternative; a forbidden term forbids each alternative.
 
-Fail closed: a rule that cannot be compiled (``SG602`` bad predicate, ``require`` on a node
-rule, empty ``because``; ``SG603`` too many requirements) is reported and makes every search
-it governs refuse with ``WAYPOINT_UNSATISFIABLE`` - it is never silently dropped.
+Pair scope (``pair: [a, b]``) may require and forbid; it governs searches between ``a`` and
+``b`` in either direction and is never withheld (forbidding its own endpoint is a
+contradiction). Node scope (``node: x``) may only forbid, and only nodes: it forbids routes
+through ``x`` and through every table in its ``forbid`` list; it governs every search, and each
+of its prohibitions is withheld for a search where the forbidden node is an endpoint (so it
+bans ``x`` as an intermediate only). At most :data:`MAX_REQUIREMENTS` requirements per rule.
+
+Fail closed: a rule that cannot be compiled (``SG602``: bad predicate, ``require`` on a node
+rule, a non-node prohibition on a node rule, empty ``because``; ``SG603``: too many
+requirements) is reported and makes every search it governs refuse with
+``WAYPOINT_UNSATISFIABLE`` - it is never silently dropped.
 Emptiness is decided offline from the predicates alone (:meth:`RuleAutomaton.is_empty`);
 a rule that is satisfiable in principle but not in this graph surfaces as ``RULE_REJECTS_ALL``.
 """
@@ -137,10 +144,18 @@ def _columns(text: str) -> tuple[ObjectRef, ...]:
 
 
 def parse_predicate(token: str) -> Predicate:
-    """Parse one predicate; anything else raises :class:`ValueError` (callers fail closed)."""
+    """Parse one predicate; anything else raises :class:`ValueError` (callers fail closed).
+
+    A bare table reference is ``node(<ref>)``, matched exactly.
+    """
     text = token.strip()
     if text == "any":
         return Predicate("any")
+    if text and "(" not in text and ")" not in text:
+        ref = ObjectRef.parse(text)
+        if ref.column is not None:
+            raise ValueError(f"a bare reference must name a table, not a column: {token!r}")
+        return Predicate("node", table=ref)
     open_at = text.find("(")
     if open_at < 0 or not text.endswith(")"):
         raise ValueError(f"not a predicate: {token!r} (use node(t), col(t.c), edge(a.x->b.y), any)")
@@ -163,14 +178,26 @@ def parse_predicate(token: str) -> Predicate:
     raise ValueError(f"unknown predicate {kind!r} in {token!r}")
 
 
+Term = tuple[Predicate, ...]  # alternatives: any one matches
+
+
+def parse_term(token: str) -> Term:
+    """``p | q | ...``; each alternative is parsed by :func:`parse_predicate`."""
+    return tuple(parse_predicate(p) for p in _split_outside_quotes(token, "|"))
+
+
+def term_text(term: Term) -> str:
+    return " | ".join(p.text() for p in term)
+
+
 # --- validation ----------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class _Compiled:
     spec: WaypointSpec
-    require: tuple[Predicate, ...]
-    forbid: tuple[Predicate, ...]
+    require: tuple[Term, ...]
+    forbid: tuple[Predicate, ...]  # alternatives flattened: each is forbidden
 
 
 def _compile_one(spec: WaypointSpec) -> _Compiled | Diagnostic:
@@ -190,10 +217,21 @@ def _compile_one(spec: WaypointSpec) -> _Compiled | Diagnostic:
             f"split it into several rules; {fail}",
         )
     try:
-        req = tuple(parse_predicate(p) for p in spec.require)
-        forb = tuple(parse_predicate(p) for p in spec.forbid)
+        req = tuple(parse_term(p) for p in spec.require)
+        forb = tuple(p for t in spec.forbid for p in parse_term(t))
     except ValueError as exc:
         return bad("SG602", f"waypoint rule cannot be parsed: {exc}", fail)
+    if spec.scope == "node":
+        if len(spec.tables) != 1:
+            return bad("SG602", "a node waypoint rule names exactly one table", fail)
+        wrong = [p.text() for p in forb if p.kind != "node"]
+        if wrong:
+            return bad(
+                "SG602",
+                f"a node waypoint rule may only forbid nodes, not {', '.join(wrong)}",
+                f"use a pair rule for edge/col/any prohibitions; {fail}",
+            )
+        forb = (Predicate("node", table=spec.tables[0].table_ref()), *forb)
     return _Compiled(spec, req, forb)
 
 
@@ -214,7 +252,7 @@ class RuleAutomaton:
 
     src: ObjectRef
     dst: ObjectRef
-    require: tuple[Predicate, ...]
+    require: tuple[Term, ...]
     forbid: tuple[Predicate, ...]
     broken: tuple[str, ...] = ()  # SG602/SG603 rules governing this pair: fail closed
 
@@ -226,9 +264,11 @@ class RuleAutomaton:
                 table is not None and f.matches_table(table)
             ):
                 return DEAD
-        for i, r in enumerate(self.require):
-            if (hop is not None and r.matches_hop(hop)) or (
-                table is not None and r.matches_table(table)
+        for i, term in enumerate(self.require):
+            if any(
+                (hop is not None and r.matches_hop(hop))
+                or (table is not None and r.matches_table(table))
+                for r in term
             ):
                 state |= 1 << i
         return state
@@ -250,10 +290,9 @@ class RuleAutomaton:
         for end in (self.src, self.dst):
             if any(f.matches_table(end) for f in self.forbid):
                 return f"the endpoint {end.canonical()} is itself forbidden"
-        for r in self.require:
-            for f in self.forbid:
-                if r.implies(f):
-                    return f"requirement {r.text()} always meets prohibition {f.text()}"
+        for term in self.require:
+            if all(any(r.implies(f) for f in self.forbid) for r in term):
+                return f"requirement {term_text(term)} always meets a prohibition"
         return None
 
     def is_empty(self) -> bool:
@@ -263,7 +302,7 @@ class RuleAutomaton:
 def _governs(spec: WaypointSpec, src: ObjectRef, dst: ObjectRef) -> bool:
     if spec.scope == "pair":
         return {x.table_ref() for x in spec.tables} == {src, dst} and len(spec.tables) == 2
-    return bool(spec.tables) and spec.tables[0].table_ref() not in (src, dst)
+    return True  # node scope governs every search; its prohibitions are withheld per endpoint
 
 
 def compile_rules(
@@ -279,7 +318,7 @@ def compile_rules(
     search makes the automaton empty (fail closed).
     """
     s, d = src.table_ref(), dst.table_ref()
-    require: list[Predicate] = []
+    require: list[Term] = []
     forbid: list[Predicate] = []
     broken: list[str] = []
     for spec in specs:
@@ -304,29 +343,35 @@ def compile_rules(
 
 
 def lint_rules(specs: Iterable[WaypointSpec], edges: Iterable[Edge]) -> list[Diagnostic]:
-    """``SG604`` for every prohibition that no edge (or edge endpoint) can match.
+    """``SG604`` for every prohibition, and every requirement, that nothing in the graph matches.
 
-    Malformed rules are skipped here; :func:`validate_rules` reports them.
+    A dead prohibition is inert; a dead requirement would surface only at search time as
+    ``RULE_REJECTS_ALL``. Malformed rules are skipped here; :func:`validate_rules` reports them.
     """
     edge_list = list(edges)
     tables = {e.left_table for e in edge_list} | {e.right_table for e in edge_list}
+
+    def live(p: Predicate) -> bool:
+        return any(p.matches_table(x) for x in tables) or any(p.matches_edge(e) for e in edge_list)
+
+    def warn(what: str, text: str, where: str) -> Diagnostic:
+        return Diagnostic(
+            "SG604",
+            Severity.WARNING,
+            f"waypoint {what} {text} matches no edge or table in the graph",
+            location=where,
+            hint="check the spelling and, for edge(), the declared orientation",
+        )
+
     out: list[Diagnostic] = []
     for spec in specs:
         compiled = _compile_one(spec)
         if isinstance(compiled, Diagnostic):
             continue
-        for f in compiled.forbid:
-            live = any(f.matches_table(x) for x in tables) or any(
-                f.matches_edge(e) for e in edge_list
-            )
-            if not live:
-                out.append(
-                    Diagnostic(
-                        "SG604",
-                        Severity.WARNING,
-                        f"waypoint prohibition {f.text()} matches no edge in the graph",
-                        location=spec.source,
-                        hint="check the spelling and, for edge(), the declared orientation",
-                    )
-                )
+        out += [warn("prohibition", f.text(), spec.source) for f in compiled.forbid if not live(f)]
+        out += [
+            warn("requirement", term_text(t), spec.source)
+            for t in compiled.require
+            if not any(live(p) for p in t)
+        ]
     return out

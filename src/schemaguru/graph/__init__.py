@@ -20,6 +20,7 @@ from schemaguru.graph.waypoints import (
     compile_rules,
     lint_rules,
     parse_predicate,
+    parse_term,
     validate_rules,
 )
 
@@ -46,5 +47,6 @@ __all__ = [
     "is_attribution",
     "lint_rules",
     "parse_predicate",
+    "parse_term",
     "validate_rules",
 ]

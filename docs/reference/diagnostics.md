@@ -30,7 +30,8 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG601 | a malformed join fact was skipped; only that graph edge is lost |
 | SG602 | a waypoint rule is malformed; the searches it governs are refused |
 | SG603 | a waypoint rule has more than 16 requirements; its searches are refused |
-| SG604 | a waypoint prohibition matches no edge in the graph |
+| SG604 | a waypoint prohibition or requirement matches no edge or table in the graph |
+| SG605 | an identity chain cannot be compiled into a waypoint rule (it is not applied) |
 | SG701 | SQLite FTS5 is unavailable; search falls back to a slower LIKE scan |
 | SG702 | the store was written by a newer schema version than this library supports |
 | SG801 | guard refused the SQL: not a single read-only SELECT/WITH statement |

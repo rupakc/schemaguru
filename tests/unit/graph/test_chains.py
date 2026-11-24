@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from schemaguru.config import GraphConfig
+from schemaguru.diagnostics import DiagnosticBag, Severity
 from schemaguru.graph.chains import compile_chain
 from schemaguru.graph.edges import build_edges
 from schemaguru.graph.hubs import Hubs
 from schemaguru.graph.search import Graph, find_paths
-from schemaguru.graph.waypoints import compile_rules, parse_predicate, validate_rules
+from schemaguru.graph.waypoints import compile_rules, parse_predicate, parse_term, validate_rules
 from schemaguru.model.chains import Chain, FilterStep, NoteStep
 from tests.fixtures.shop import JoinFacts
 from tests.unit.graph.shop_graph import effective, j, join_value, measured, t
@@ -62,6 +63,41 @@ def test_multi_step_chain_forces_route() -> None:
     auto = compile_rules([spec], t("events"), t("orders"))
     (p, *_) = find_paths(G, t("events"), t("orders"), cfg=CFG, automaton=auto).paths
     assert [x.table for x in p.tables] == ["events", "sessions", "orders"]
+
+
+def test_both_declared_orientations_accepted() -> None:
+    # The graph declares the same columns both ways: the requirement accepts either edge.
+    both = [*FACTS, _syn("orders.order_id", "payments.order_id", 1.0)]
+    e = build_edges(effective(both), cfg=CFG)
+    g = Graph.build(e, Hubs.from_edges(e, set(), CFG))
+    spec = compile_chain(Chain("c", (j("orders.order_id", "payments.order_id"),), "b"), g)
+    assert spec is not None
+    (term,) = spec.require
+    assert term == (
+        "edge(shop.orders.order_id->shop.payments.order_id)"
+        " | edge(shop.payments.order_id->shop.orders.order_id)"
+    )
+    assert len(parse_term(term)) == 2 and validate_rules([spec]) == []
+    auto = compile_rules([spec], t("orders"), t("payments"))
+    (p, *_) = find_paths(g, t("orders"), t("payments"), cfg=CFG, automaton=auto).paths
+    assert len(p.hops) == 1 and auto.accepting(auto.step(auto.start, p.hops[0]))
+
+
+def test_uncompilable_chain_reported_sg605() -> None:
+    cases = {
+        "gap": (j("events.order_id", "orders.order_id"), j("payments.order_id", "nope.id")),
+        "unknown": (j("events.x", "orders.y"),),
+        "empty": (NoteStep("x"),),
+    }
+    for name, steps in cases.items():
+        bag = DiagnosticBag()
+        assert compile_chain(Chain(name, steps, "b"), G, bag=bag) is None
+        (d,) = list(bag)
+        assert d.code == "SG605" and d.severity is Severity.WARNING
+        assert d.location == f"chain:{name}" and name in d.message, name
+    bag = DiagnosticBag()
+    ok = Chain("ok", (j("orders.order_id", "payments.order_id"),), "b")
+    assert compile_chain(ok, G, bag=bag) is not None and list(bag) == []
 
 
 def test_disconnected_or_nonlinear_chain_is_none() -> None:

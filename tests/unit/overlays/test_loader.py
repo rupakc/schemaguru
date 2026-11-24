@@ -177,6 +177,15 @@ def test_waypoint_node_and_forbid(store: SQLiteStore, tmp_path: Path) -> None:
     assert list(bag) == [] and wps[0].scope == "node" and wps[0].forbid == ("shop.orders",)
 
 
+def test_waypoint_node_without_forbid_list(store: SQLiteStore, tmp_path: Path) -> None:
+    text = "version: 1\nwaypoints:\n  - node: shop.events\n    because: not a bridge\n"
+    _, _, wps, _, bag = load(store, tmp_path, text)
+    assert list(bag) == [] and wps[0].scope == "node" and wps[0].forbid == ()
+    text = "version: 1\nwaypoints:\n  - pair: [shop.events, shop.orders]\n    because: b\n"
+    _, _, wps, _, bag = load(store, tmp_path, text, "p.yaml")
+    assert wps == [] and codes(bag) == ["SG208"]
+
+
 def test_bad_inputs_never_raise(store: SQLiteStore, tmp_path: Path) -> None:
     cases = [
         "", "- a\n- b\n", "{{{", "version: 1\ntables: [a]\n",

@@ -577,3 +577,31 @@ def test_no_command_prints_full_help(run: Run) -> None:
     code, out, err = run()
     assert code == 2 and out == ""
     assert "usage:" in err and "export-drafts" in err and "a command is required" in err
+
+
+def test_scrub_password_with_spaces() -> None:
+    from schemaguru.cli.commands import scrub
+
+    for pw in ("my pass", "my big pass"):
+        url = f"postgresql://alice:{pw}@db/x"
+        msg = f"cannot open {url} now"
+        for known in ([url], []):
+            out = scrub(msg, known)
+            assert out.startswith("cannot open postgresql://") and out.endswith(" now"), out
+            assert "pass" not in out and "alice" not in out and "my" not in out.split("://")[1]
+    assert scrub("see postgresql://host:5432/db or ops@example.com").endswith("ops@example.com")
+
+
+def test_space_password_never_leaks_through_cli(run: Run, monkeypatch: pytest.MonkeyPatch) -> None:
+    url = "postgresql://alice:my big pass@nohost.invalid/x"
+    code, out, err = run("crawl", "--url", url)
+    assert code == 3 and not any(w in out + err for w in ("pass", "alice", "big"))
+
+    def boom(*a: object, **k: object) -> None:
+        raise RuntimeError(f"driver said no for {url} (retry)")
+
+    monkeypatch.setattr("schemaguru.cli.commands.Guru.connect", boom)
+    monkeypatch.delenv("SCHEMAGURU_URL", raising=False)
+    code, out, err = run("crawl", "--url", "postgresql://other/db")
+    assert code == 3 and not any(w in out + err for w in ("pass", "alice", "big")), err
+    assert "driver said no" in err

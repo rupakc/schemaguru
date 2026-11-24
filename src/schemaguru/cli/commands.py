@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from schemaguru.catalog.executor import _redact
+from schemaguru.catalog.executor import redact_url
 from schemaguru.config import Config
 from schemaguru.diagnostics import Diagnostic, DiagnosticBag, Severity
 from schemaguru.errors import SchemaGuruError
@@ -47,14 +47,35 @@ def scrub(text: str, known: Sequence[str | None] = ()) -> str:
     first; then every URL-shaped token is redacted. Never redacts a whole message.
     """
     for url in sorted({u for u in known if u}, key=len, reverse=True):
-        text = text.replace(url, _redact(url))
-
-    def one(m: re.Match[str]) -> str:
-        tok = m.group(0)
-        body = tok.rstrip(_TRAILING)
-        return _redact(body) + tok[len(body) :]
-
-    return _URL_TOKEN.sub(one, text)
+        text = text.replace(url, redact_url(url))
+    parts = re.split(r"(\s+)", text)  # tokens at even indexes, whitespace at odd ones
+    out: list[str] = []
+    i = 0
+    while i < len(parts):
+        tok = parts[i]
+        m = _URL_TOKEN.search(tok)
+        if m is None:
+            out.append(tok)
+            i += 1
+            continue
+        body = m.group(0).rstrip(_TRAILING)
+        authority = body.partition("://")[2].split("/", 1)[0]
+        if "@" not in body and re.search(r":\D", authority):
+            # userinfo with a space in the password: the '@' is in a later token (fail closed)
+            j = i + 2
+            while j < len(parts) and j <= i + 16 and "://" not in parts[j]:
+                if "@" in parts[j]:
+                    out.append(tok[: m.start()] + body.split("://")[0] + "://***")
+                    i = j + 1
+                    break
+                j += 2
+            else:
+                out.append(tok[: m.start()] + redact_url(body) + tok[m.start() + len(body) :])
+                i += 1
+            continue
+        out.append(tok[: m.start()] + redact_url(body) + tok[m.start() + len(body) :])
+        i += 1
+    return "".join(out)
 
 
 class UsageError(Exception):
@@ -282,7 +303,7 @@ def init(args: argparse.Namespace, io: IO) -> int:
     lines = [f"wrote {p}" for p in written]
     lines.append(
         "next: schemaguru crawl --url "
-        + (_redact(url) if url else "<warehouse-url>")
+        + (redact_url(url) if url else "<warehouse-url>")
         + ' && schemaguru context "<a question>"'
     )
     io.emit({"written": written}, lines, title="init")
@@ -796,7 +817,7 @@ def _doctor_checks(args: argparse.Namespace) -> list[dict[str, Any]]:
                     _check(
                         "connectivity",
                         "PASS",
-                        f"connected to {_redact(url)} ({guru.dialect}); "
+                        f"connected to {redact_url(url)} ({guru.dialect}); "
                         f"{len(schemas)} schema(s) readable",
                     )
                 )

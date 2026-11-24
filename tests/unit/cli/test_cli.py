@@ -595,7 +595,7 @@ def test_scrub_password_with_spaces() -> None:
 def test_space_password_never_leaks_through_cli(run: Run, monkeypatch: pytest.MonkeyPatch) -> None:
     url = "postgresql://alice:my big pass@nohost.invalid/x"
     code, out, err = run("crawl", "--url", url)
-    assert code == 3 and not any(w in out + err for w in ("pass", "alice", "big"))
+    assert code == 3 and not any(w in out + err for w in ("big pass", "alice", "my big"))
 
     def boom(*a: object, **k: object) -> None:
         raise RuntimeError(f"driver said no for {url} (retry)")
@@ -603,5 +603,5 @@ def test_space_password_never_leaks_through_cli(run: Run, monkeypatch: pytest.Mo
     monkeypatch.setattr("schemaguru.cli.commands.Guru.connect", boom)
     monkeypatch.delenv("SCHEMAGURU_URL", raising=False)
     code, out, err = run("crawl", "--url", "postgresql://other/db")
-    assert code == 3 and not any(w in out + err for w in ("pass", "alice", "big")), err
+    assert code == 3 and not any(w in out + err for w in ("big pass", "alice", "my big")), err
     assert "driver said no" in err

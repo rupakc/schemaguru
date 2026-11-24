@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any, Literal
 
 from schemaguru._util.sqltext import agreed_lex
-from schemaguru.pii.detectors import first_match, name_spans, names_enabled
+from schemaguru.pii.detectors import all_detectors, first_match, name_spans, names_enabled
 from schemaguru.pii.sweep import sweep, sweep_detail
 
 _TOKENS = {
@@ -95,13 +95,25 @@ def mask_text(text: str) -> str:
 _RUN = re.compile(r"([qdD]+)|([eij]+|[bj]+)|(m+)|(c+)")
 
 
+# identifiers are replaced only on a SHAPE hit: names, addresses and prose look like column names
+_SHAPES = frozenset({"email", "phone", "iban", "card", "ip", "uuid", "hex", "secret"})
+
+
+def _shape_hit(text: str) -> bool:
+    v = text.strip()
+    if v and any(d.category in _SHAPES and d.matches(v) for d in all_detectors()):
+        return True
+    return bool(sweep_detail(text)[1])
+
+
 def sql_template(sql: str) -> str | None:
     """The SQL with every string literal replaced by ``?`` (spec 11); ``None`` when unsure.
 
     Segmentation is the shared agreed lexer (:func:`schemaguru._util.sqltext.agreed_lex`): when
     dialect variants (backslash escapes, ``$tag$``, triple quotes, ``q''``, ...) disagree, or a
     literal is left open, nothing is stored. Comments are dropped. Quoted identifiers are kept
-    unless they hold ``@`` or a PII shape.
+    unless a shape detector (email, phone, IBAN, card, IP, UUID, long hex, secret) hits;
+    never on the name, address or free-text detectors.
     """
     lexed, ok = agreed_lex(sql)
     if not ok or not lexed.terminated or lexed.bang:
@@ -114,8 +126,7 @@ def sql_template(sql: str) -> str | None:
             out.append("?")
         elif m.group(2):
             inner = text[1:-1] if len(text) >= 2 else text
-            pii = "@" in inner or mask_value(inner)[1] is not None
-            out.append("?" if pii else text)
+            out.append("?" if _shape_hit(inner) else text)
         elif m.group(3):
             out.append(" ")
         else:

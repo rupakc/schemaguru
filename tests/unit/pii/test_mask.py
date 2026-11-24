@@ -103,3 +103,14 @@ def test_sql_template_ambiguous_or_unterminated_is_none() -> None:
 def test_scrub_tree_replacement_reaches_nested_params() -> None:
     tree = ["x@y.com", ["x@y.com"], {"a": "x@y.com", "n": 5}]
     assert scrub_tree(tree, "none", replacement="?") == ["?", ["?"], {"a": "?", "n": 5}]
+
+
+@pytest.mark.parametrize("ident", ["Unit Price", "Order Items", "John Smith", "Main Street 5"])
+def test_sql_template_keeps_identifiers_that_only_look_like_names(ident: str) -> None:
+    sql = f'SELECT "{ident}" FROM "Order Items"'
+    assert sql_template(sql) == sql
+
+
+@pytest.mark.parametrize("value", ["alice@example.com", "+49 170 1234567"])
+def test_sql_template_replaces_shape_hits_in_double_quoted_spans(value: str) -> None:
+    assert sql_template(f'SELECT 1 WHERE c = "{value}"') == "SELECT 1 WHERE c = ?"

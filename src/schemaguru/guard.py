@@ -41,6 +41,11 @@ ClickHouse/DuckDB table function (``file``, ``url``, ``s3``, ``remote``, ``postg
 a family is refused by design; the same names used as columns or aliases (not called), or
 declared (``WITH file(a) AS``, ``t AS input(a, b)``), are fine. A string literal directly after
 ``FROM`` or ``JOIN`` (DuckDB's file/URL-as-table, ``FROM '/etc/passwd'``) is refused. The
+A path-like quoted identifier as a FROM/JOIN item (contains ``/`` or
+ends ``.csv``/``.parquet``/``.json``/``.gz``/...; DuckDB replacement scan) is refused, as is a
+parenthesised or ``E''``/``N''``-prefixed literal there. Accepted limits: ``substring(x FROM
+'regex')`` is refused (fail-safe), and ``ARRAY['a','b']`` is refused as ambiguous because T-SQL
+reads ``[..]`` as an identifier (use ``ARRAY('a','b')`` where supported, or a parameter). The
 deny-list stays BEST-EFFORT: an unlisted vendor function passes, and adversarial isolation needs
 warehouse permissions (a read-only role). The
 ``dialect`` argument is reserved.
@@ -173,13 +178,32 @@ def _joined_literals(sql: str, kinds: str) -> list[str]:
     return out
 
 
-def _file_as_table(toks: list[Tok], i: int) -> bool:
-    """A string literal directly after FROM/JOIN (optionally LATERAL/ONLY): DuckDB reads it as a
-    file or URL."""
-    j = i - 1
-    while j >= 0 and toks[j].kind == "ident" and toks[j].text.upper() in ("LATERAL", "ONLY"):
-        j -= 1
-    return j >= 0 and toks[j].kind == "ident" and toks[j].text.upper() in ("FROM", "JOIN")
+_PATH_SUFFIXES = (".csv", ".tsv", ".parquet", ".json", ".ndjson", ".jsonl", ".xlsx", ".gz", ".zst")
+_LITERAL_PREFIXES = frozenset({"E", "N", "B", "X", "U"})
+
+
+def _item_is_file(toks: list[Tok], j: int) -> str | None:
+    """Why the FROM item starting at token ``j`` is a file or URL (DuckDB replacement scan or
+    file-as-table), else None. Looks through ``(`` and a literal prefix (``E'..'``, ``U&'..'``)."""
+    n = len(toks)
+    while j < n and toks[j].text == "(":
+        j += 1
+    if j >= n:
+        return None
+    literal = "SG801: a string literal as a table (file or URL) is not allowed"
+    if toks[j].kind == "ident" and toks[j].text.upper() in _LITERAL_PREFIXES:
+        k = j + 1
+        if toks[j].text.upper() == "U" and k < n and toks[k].text == "&":
+            k += 1
+        if k < n and toks[k].kind == "str":
+            return literal
+    if toks[j].kind == "str":
+        return literal
+    if toks[j].kind == "qident":
+        name = toks[j].text[1:-1].casefold()
+        if "/" in name or "\\" in name or name.endswith(_PATH_SUFFIXES):
+            return "SG801: a path-like quoted identifier as a table (file) is not allowed"
+    return None
 
 
 def _declares(toks: list[Tok], i: int) -> bool:
@@ -194,14 +218,14 @@ def _declares(toks: list[Tok], i: int) -> bool:
 
 _FROM_ENDERS = frozenset(
     {"WHERE", "GROUP", "ORDER", "HAVING", "LIMIT", "UNION", "INTERSECT", "EXCEPT", "WINDOW"}
-    | {"QUALIFY", "OFFSET", "FETCH", "SELECT", "WITH", "RETURNING"}
+    | {"QUALIFY", "OFFSET", "FETCH", "SELECT", "WITH", "RETURNING", "VALUES"}
 )
 
 
 def _comma_items(toks: list[Tok]) -> tuple[set[int], set[int]]:
     """One pass over the tokens, tracking the clause at each parenthesis depth. Returns the
-    indices of (string literals that are FROM-list items after a comma, names that are CTE
-    declarations after a comma in a WITH clause: ``, name(cols) AS (``)."""
+    indices of (first tokens of FROM items - after FROM/JOIN [LATERAL/ONLY] or a FROM-list comma,
+    names that are CTE declarations after a comma in a WITH clause: ``, name(cols) AS (``)."""
     files: set[int] = set()
     decls: set[int] = set()
     stack: list[list[bool]] = [[False, False]]  # [in FROM list, in WITH clause]
@@ -223,6 +247,10 @@ def _comma_items(toks: list[Tok]) -> tuple[set[int], set[int]]:
                 stack.pop()
         elif up in ("FROM", "JOIN"):
             st[0] = True
+            j = i + 1
+            while j < len(toks) and toks[j].text.upper() in ("LATERAL", "ONLY"):
+                j += 1
+            files.add(j)
         elif up == "WITH":
             st[0], st[1] = False, True
         elif up in _FROM_ENDERS:
@@ -233,7 +261,7 @@ def _comma_items(toks: list[Tok]) -> tuple[set[int], set[int]]:
             j = i + 1
             while j < len(toks) and toks[j].text.upper() in ("LATERAL", "ONLY"):
                 j += 1
-            if st[0] and j < len(toks) and toks[j].kind == "str":
+            if st[0]:
                 files.add(j)
             if st[1] and j + 1 < len(toks) and toks[j + 1].text == "(" and j + 1 in match:
                 k = match[j + 1] + 1
@@ -289,9 +317,11 @@ def check_sql(
     banned = {b.table.casefold(): b.table_ref() for b in never_query}
     toks = tokenize(blank(sql, lexed=lexed).view)
     comma_files, comma_decls = _comma_items(toks)
+    for j in sorted(comma_files):
+        why = _item_is_file(toks, j)
+        if why:
+            add(why)
     for i, t in enumerate(toks):
-        if t.kind == "str" and (i in comma_files or _file_as_table(toks, i)):
-            add("SG801: a string literal as a table (file or URL) is not allowed")
         if t.kind not in ("ident", "qident"):
             continue
         text_ = t.text.strip('"`')

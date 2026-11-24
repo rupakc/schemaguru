@@ -627,3 +627,55 @@ def test_guard_r6b_comma_cte_declaration_passes(sql: str) -> None:
 def test_guard_r6b_comma_calls_still_refused(sql: str) -> None:
     v = check_sql(sql)
     assert not v.ok and any("named by text" in r for r in v.reasons), v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM ('x.csv')",
+        "SELECT * FROM t JOIN ('x.csv') ON true",
+        "SELECT * FROM t, ('x.csv')",
+        "SELECT * FROM (('x.csv'))",
+        "SELECT * FROM E'x.csv'",
+        "SELECT * FROM t JOIN N'x.csv' ON true",
+        "SELECT * FROM t, E'x.csv'",
+        "SELECT * FROM U&'x.csv'",
+        "SELECT * FROM ('x.csv') AS q",
+    ],
+)
+def test_guard_r6c_parenthesised_and_prefixed_literals_refused(sql: str) -> None:
+    v = check_sql(sql)
+    assert not v.ok, v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        'SELECT * FROM "/etc/passwd"',
+        'SELECT * FROM "data/x"',
+        'SELECT * FROM "x.csv"',
+        'SELECT * FROM t JOIN "X.PARQUET" ON true',
+        'SELECT * FROM t, "x.json.gz"',
+        'SELECT * FROM ("x.csv")',
+        "SELECT * FROM `x.parquet`",
+    ],
+)
+def test_guard_r6c_path_like_quoted_identifier_refused(sql: str) -> None:
+    v = check_sql(sql)
+    assert not v.ok and any("path-like" in r for r in v.reasons), v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        'SELECT * FROM "Order Items"',
+        'SELECT * FROM "my.table"',
+        'SELECT * FROM s."my.table" AS t JOIN "Order Items" o ON true',
+        'SELECT "x.csv" FROM t',
+        "SELECT * FROM (SELECT 1) q, (VALUES ('a')) v(x)",
+        "SELECT * FROM (t JOIN u ON t.a = u.a)",
+    ],
+)
+def test_guard_r6c_ordinary_from_items_pass(sql: str) -> None:
+    v = check_sql(sql)
+    assert v.ok, v.reasons

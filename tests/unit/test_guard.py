@@ -393,3 +393,94 @@ def test_guard_r4_single_variant_agreement_covers_every_combination() -> None:
         for c in combos:
             assert agrees(sql, base, lex(sql, Opts(**c))), (sql, c)
     assert agreed_samples > 1_000
+
+
+# --- fix round 5: deny by name family ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM postgres_execute('pg','DROP TABLE t')",
+        "SELECT mysql_execute('m','DELETE FROM t')",
+        "SELECT * FROM postgres_query('pg','select * from sec'||chr(114)||'et')",
+        "SELECT * FROM EXTERNAL_QUERY('conn','select 1')",
+        "SELECT * FROM file('/etc/passwd','LineAsString')",
+        "SELECT * FROM url('http://169.254.169.254/x','CSV')",
+        "SELECT * FROM s3('https://b/k.csv')",
+        "SELECT * FROM remote('127.0.0.1', concat('anal','ytics'), concat('sec','ret'))",
+        "SELECT * FROM postgresql('h:5432','db','t','u','p')",
+        "SELECT * FROM jdbc('jdbc:x','t')",
+        "SELECT * FROM odbc('dsn','t')",
+        "SELECT * FROM executable('x.sh','CSV','a String')",
+        "SELECT * FROM glob('*')",
+        "SELECT * FROM read_xlsx('x')",
+        "SELECT * FROM parquet_metadata('x')",
+        "SELECT * FROM `pg_catalog.query_to_xml`('select 1', true, true, '')",
+        "SELECT * FROM `main.read_csv`('x.csv')",
+        'SELECT * FROM "main"."READ_CSV"(\'x.csv\')',
+        "SELECT * FROM s3Cluster('c','https://b/k')",
+        "SELECT * FROM clusterAllReplicas('c', db, t)",
+        "SELECT * FROM my_udf_query('x')",
+        "SELECT * FROM query_anything('x')",
+    ],
+)
+def test_guard_r5_function_families_refused(sql: str) -> None:
+    v = check_sql(sql)
+    assert not v.ok and any("named by text" in r for r in v.reasons), v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT file, url, query, input, merge_key, read_count, remote_id, cluster_name FROM t",
+        "SELECT t.file AS url, t.query AS input FROM t",
+        "SELECT count(*), coalesce(a, b), date_trunc('day', ts), json_extract(j, '$.a') FROM t",
+        'SELECT "file", `url` FROM t WHERE remote_id = 1',
+    ],
+)
+def test_guard_r5_family_names_not_called_pass(sql: str) -> None:
+    v = check_sql(sql, never_query=NQ)
+    assert v.ok, v.reasons
+
+
+def test_guard_r5_weakened_comparison_is_caught_by_the_property() -> None:
+    """Negative control for the combination property: gating with a comparison that folds
+    identifier kinds into code (the round-3 design) lets SQL through whose all-options lexing
+    differs exactly from the baseline. The exact :func:`agrees` gate admits none."""
+    import dataclasses
+    import random
+
+    from schemaguru._util import sqltext
+    from schemaguru._util.sqltext import Opts, agreed_lex, agrees, lex
+
+    weak = str.maketrans("qmcidDejb", "xxccccccc")
+
+    def weak_sig(lx: sqltext.Lexed) -> tuple[str, bool, bool]:
+        return lx.kinds.translate(weak), lx.terminated, lx.bang
+
+    def weak_agreed(sql: str) -> tuple[sqltext.Lexed, bool]:
+        base = lex(sql, Opts())
+        sig = weak_sig(base)
+        return base, all(
+            not any(t in sql for t in trig) or weak_sig(lex(sql, o)) == sig
+            for o, trig in sqltext._VARIANTS
+        )
+
+    flags = [f.name for f in dataclasses.fields(Opts) if f.type in (bool, "bool")]
+    flags.remove("comments")
+    all_on = Opts(**dict.fromkeys(flags, True))
+    alphabet = [*"'\"`[]-/*#$\\\r\n ;aqQnM!x(", "''", "--", "/*", "*/"]
+    rng = random.Random(20261124)
+    weak_misses = strict_misses = 0
+    for _ in range(20_000):
+        sql = "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 10)))
+        combo = lex(sql, all_on)
+        base, ok = weak_agreed(sql)
+        if ok and not agrees(sql, base, combo):
+            weak_misses += 1
+        base, ok = agreed_lex(sql)
+        if ok and not agrees(sql, base, combo):
+            strict_misses += 1
+    assert weak_misses > 0
+    assert strict_misses == 0

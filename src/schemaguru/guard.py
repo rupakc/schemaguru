@@ -27,9 +27,15 @@ SQL, wherever it appears and whatever catalog/schema qualifies it; so does any s
 containing that name, after joining literals separated only by whitespace, comments or ``||``
 (dynamic SQL is built from strings). Escape sequences inside literals are not decoded. Functions
 that run SQL from text (``query_to_xml``, ``ts_stat``, DuckDB ``query``, ``dblink*``, ...) and
-functions that read files or foreign databases (``pg_read_file``, ``lo_import``, ``read_csv*``,
-``read_parquet*``, ``read_json*``, ``*_scan``, ...) are refused whatever their arguments, because
-they reach data without naming it as a catalog table. The ``dialect`` argument is reserved.
+functions that read files, URLs or foreign databases are refused whatever their arguments,
+because they reach data without naming it as a catalog table. They are denied by name FAMILY,
+not instance: a call whose last name part (after quoting and qualification) is ``read_*``,
+``query_*``, ``dblink*``, ``*_scan``, ``*_execute``, ``*_query``, ``*_metadata``, ``glob``,
+``external_query``, a ClickHouse table function (``file``, ``url``, ``s3``, ``remote``,
+``postgresql``, ``jdbc``, ``odbc``, ``executable``, ``merge``, ...) or a listed name
+(``pg_read_file``, ``lo_import``, ``ts_stat``, ...). A user UDF whose name matches a family is
+refused by design; the same names used as columns or aliases (not called) are fine. The
+``dialect`` argument is reserved.
 """
 
 from __future__ import annotations
@@ -85,13 +91,48 @@ _TEXT_SQL_FUNCTIONS = frozenset(
         "opendatasource",
     }
 )
-_TEXT_SQL_PREFIXES = ("dblink", "read_csv", "read_parquet", "read_json", "read_ndjson")
+# Families, not instances: a CALL whose last name part matches is refused (user UDFs too).
+_TEXT_SQL_PREFIXES = ("dblink", "read_", "query_")
+_TEXT_SQL_SUFFIXES = ("_scan", "_execute", "_query", "_metadata")
+_TABLE_FUNCTIONS = frozenset(
+    {
+        "glob",
+        "external_query",
+        # ClickHouse table functions reaching files, URLs, object stores or other servers
+        "file",
+        "url",
+        "s3",
+        "s3cluster",
+        "gcs",
+        "hdfs",
+        "azureblobstorage",
+        "azureblobstoragecluster",
+        "remote",
+        "remotesecure",
+        "cluster",
+        "clusterallreplicas",
+        "postgresql",
+        "mysql",
+        "jdbc",
+        "odbc",
+        "executable",
+        "input",
+        "merge",
+        "dictionary",
+        "mongodb",
+        "redis",
+        "sqlite",
+    }
+)
 _LITERAL_GLUE = re.compile(r"(?:\s|\|\|)*")
 
 
 def _reads_by_text(name: str) -> bool:
     return (
-        name in _TEXT_SQL_FUNCTIONS or name.startswith(_TEXT_SQL_PREFIXES) or name.endswith("_scan")
+        name in _TEXT_SQL_FUNCTIONS
+        or name in _TABLE_FUNCTIONS
+        or name.startswith(_TEXT_SQL_PREFIXES)
+        or name.endswith(_TEXT_SQL_SUFFIXES)
     )
 
 
@@ -169,8 +210,9 @@ def check_sql(
             if key in names:
                 add(f"SG802: reads never-query table {ref.canonical()}")
         followed = i + 1 < len(toks) and toks[i + 1].text == "("
-        if followed and _reads_by_text(folded):
-            add(f"SG801: {folded}() runs SQL or reads a table or file named by text")
+        last = folded.rsplit(".", 1)[-1]  # backtick `a.b.f` names a qualified function
+        if followed and _reads_by_text(last):
+            add(f"SG801: {last}() runs SQL or reads a table or file named by text")
         if followed and folded in ("identifier", "table"):
             plain = (
                 i + 3 < len(toks)

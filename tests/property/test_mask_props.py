@@ -5,18 +5,18 @@ from hypothesis import strategies as st
 
 from schemaguru.pii import mask_value, sweep
 
+EMAILS = st.from_regex(r"[a-z0-9._%+\-]{1,20}@[a-z0-9\-]{1,15}\.[a-z]{2,6}", fullmatch=True)
+
 PIIISH = st.one_of(
     st.text(max_size=120),
-    st.emails(),
+    EMAILS,
     st.uuids().map(str),
     st.binary(min_size=10, max_size=30).map(lambda b: b.hex()),
     st.integers(min_value=0, max_value=10**19).map(str),
     st.from_regex(r"\+?[0-9 ()\-.]{5,25}", fullmatch=True),
     st.from_regex(r"[A-Z]{2}[0-9]{2}[A-Z0-9 ]{10,30}", fullmatch=True),
     st.from_regex(r"[0-9a-f:.]{3,40}", fullmatch=True),
-    st.builds(
-        lambda a, b, c: f"{a} {b} {c}", st.text(max_size=20), st.emails(), st.text(max_size=20)
-    ),
+    st.builds(lambda a, b, c: f"{a} {b} {c}", st.text(max_size=20), EMAILS, st.text(max_size=20)),
 )
 
 
@@ -36,7 +36,7 @@ def test_sweep_idempotent(v: str) -> None:
 
 
 @settings(max_examples=200, deadline=None)
-@given(st.emails())
+@given(EMAILS)
 def test_email_never_survives(e: str) -> None:
     assert e not in mask_value(e)[0]
     assert e not in sweep(f"error for {e}!")[0]

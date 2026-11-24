@@ -22,44 +22,54 @@ from typing import Protocol, runtime_checkable
 # ---------------------------------------------------------------------------------------------
 # Shared patterns (also used by the outbound sweep, which searches instead of full-matching).
 
+_LABEL = r"(?:[^\W_]|-){1,63}"
 EMAIL_RE = re.compile(
-    r"[A-Za-z0-9._%+\-!#$&'*/=?^`{|}~]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}"
+    r"(?<![A-Za-z0-9._%+\-])[A-Za-z0-9._%+\-]{1,64}@"
+    rf"{_LABEL}(?:\.{_LABEL}){{0,8}}\.[^\W\d_]{{2,24}}"
 )
 UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 HEX_RE = re.compile(r"[0-9a-fA-F]{20,}")
 JWT_RE = re.compile(r"[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]*")
 IPV4_RE = re.compile(r"(?:\d{1,3}\.){3}\d{1,3}")
 IPV6_RE = re.compile(r"(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}")
-IBAN_RE = re.compile(r"[A-Z]{2}\d{2}(?: ?[A-Z0-9]{1,4}){2,8}")
+IBAN_RE = re.compile(r"[A-Za-z]{2}\d{2}(?: ?[A-Za-z0-9]){11,30}")
 CARD_RE = re.compile(r"(?:\d[ \-]?){12,18}\d")
 E164_RE = re.compile(r"\+[1-9](?:[ .\-()]{0,2}\d){6,14}")
 NATIONAL_RE = re.compile(
     r"(?:\(\d{2,5}\)[ .\-]?\d{2,8}(?:[ .\-]\d{2,5}){0,3}"
-    r"|0\d{1,4}[ ./\-]\d{3,}(?:[ .\-]\d{2,})*"
+    r"|0\d{1,4}[ ./\-]\d{3,12}(?:[ .\-]\d{2,12}){0,5}"
     r"|\d{3}[ .\-]\d{3}[ .\-]\d{4}"
+    r"|00[1-9](?:[ .\-()]{0,2}\d){7,14}"
     r"|0[1-9]\d{8,12})"
 )
 
 _SCHEME_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://")
 _SECRET_CHARS = re.compile(r"[A-Za-z0-9_\-+/=.~]+")
-_ADDR_SUFFIX = (
-    r"street|st|road|rd|avenue|ave|lane|ln|drive|dr|boulevard|blvd|court|ct|way|place|"
-    r"square|terrace|close|crescent|rue|via|calle"
+_STREET = (
+    r"street|st|road|rd|avenue|ave|lane|ln|drive|dr|boulevard|blvd|court|ct|way|place|pl|"
+    r"square|terrace|close|crescent|str|stra(?:\u00df|ss)e|rue|via|calle"
 )
-_ADDR_DE = r"stra(?:ß|ss)e|str\.|weg|platz|allee|gasse|ring|damm|ufer|chaussee"
+_WORD = r"[^\W\d_][\w'\-]*"
+_UNIT = r"(?:(?:flat|apt|apartment|unit|suite|room)\.?\s{0,2}\d{1,4}[a-z]?,\s{0,2})?"
 ADDRESS_RES = (
+    # "10 Downing Street, London", "flat 3, 12 baker st": number, 1-4 name words, street word
     re.compile(
-        rf"\d{{1,5}}[a-zA-Z]?\s+(?:[^\W\d_][\w.'\-]*\s+){{0,4}}(?:{_ADDR_SUFFIX})\b\.?(?:,.*)?",
+        rf"{_UNIT}\d{{1,4}}[a-z]?\s{{1,3}}(?:{_WORD}\s{{1,3}}){{1,4}}(?:{_STREET})\b\.?(?:,.{{0,60}})?",
         re.I,
     ),
+    # "Baker Street 12": name words, street word, house number
     re.compile(
-        rf"(?:[^\W\d_][\w.'\-]*\s+){{0,3}}[^\W\d_][\w.'\-]*(?:{_ADDR_DE})\s*\d{{1,4}}[a-zA-Z]?(?:,.*)?",
+        rf"(?:{_WORD}\s{{1,3}}){{1,4}}(?:{_STREET})\b\.?\s{{0,3}}\d{{1,4}}[a-z]?(?:,.{{0,60}})?",
         re.I,
     ),
+    # glued German forms: "Hauptstra\u00dfe 12", "Musterstr. 5a"
     re.compile(
-        rf"(?:[^\W\d_][\w.'\-]*\s+){{1,3}}(?:{_ADDR_DE})\s*\d{{1,4}}[a-zA-Z]?(?:,.*)?", re.I
+        r"[^\W\d_]{3,}(?:stra(?:\u00df|ss)e|weg|platz|allee|gasse)\s{0,3}\d{1,4}[a-z]?(?:,.{0,60})?",
+        re.I,
     ),
-    re.compile(r"[^\W\d_][\w.'\-\s]{2,40}\s\d{1,4}[a-zA-Z]?,\s*\d{4,5}\s+[^\W\d_][\w.'\-]+"),
+    re.compile(r"[^\W\d_]{4,}str\.\s{0,3}\d{1,4}[a-z]?(?:,.{0,60})?", re.I),
+    # "Main Road 5, 12345 Town"
+    re.compile(rf"(?:{_WORD}\s{{1,3}}){{1,4}}\d{{1,4}}[a-z]?,\s{{0,2}}\d{{4,5}}\s{{1,3}}{_WORD}"),
 )
 
 FREE_TEXT_MIN = 61
@@ -80,7 +90,7 @@ def luhn_ok(digits: str) -> bool:
 
 
 def iban_ok(text: str) -> bool:
-    s = text.replace(" ", "")
+    s = text.replace(" ", "").upper()
     if not 15 <= len(s) <= 34 or not s.isalnum() or not s.isascii():
         return False
     if not (s[:2].isalpha() and s[:2].isupper() and s[2:4].isdigit()):
@@ -222,13 +232,91 @@ def name_list() -> frozenset[str]:
     return frozenset(line.strip() for line in text.splitlines() if line.strip())
 
 
-_NAME_TOKEN = re.compile("[^\\W\\d_](?:[^\\W\\d_]|['\u2019\\-])*")
+_NAME_TOKEN = re.compile("[^\\W\\d_]+(?:['\u2019\\-][^\\W\\d_]+)*")
+_NAME_SPLIT = re.compile("['\u2019\\-]")
+_MC = re.compile(r"(?:Mc|Mac)[A-Z][a-z]+")
+_TITLE = re.compile(r"(?:Dr|Mr|Mrs|Ms|Miss|Prof|Herr|Frau|Mme|Mlle|Sir)\.?\s+")
+
+
+def _part_ok(p: str) -> bool:
+    if not p[0].isupper():
+        return False
+    rest = p[1:]
+    return rest == "" or rest.islower() or p.isupper() or _MC.fullmatch(p) is not None
+
+
+def _is_name_token(tok: str) -> bool:
+    return all(_part_ok(p) for p in _NAME_SPLIT.split(tok))
+
+
+def _is_name_hit(tok: str) -> bool:
+    low = tok.lower()
+    keys = {low, _NAME_SPLIT.sub("", low), *_NAME_SPLIT.split(low)}
+    for prefix in ("mac", "mc"):
+        if low.startswith(prefix) and len(low) > len(prefix) + 2:
+            keys.add(low[len(prefix) :])
+    names = name_list()
+    return any(k in names for k in keys)
+
+
+def name_spans(text: str) -> list[tuple[int, int]]:
+    """Spans of person names inside ``text``.
+
+    A name is a run of 2-4 capitalised tokens with at least one hit in the name list.
+
+    Tokens may be Title-case, ALL-CAPS, ``McX``/``MacX``, ``O'X`` or hyphenated; they are
+    joined by whitespace or by ``", "`` (``"Garcia, Maria"``). A run longer than four tokens
+    is masked in windows of one token either side of each name-list hit. Linear in len(text).
+    """
+    spans: list[tuple[int, int]] = []
+    run: list[tuple[int, int, bool]] = []
+
+    def flush() -> None:
+        if len(run) >= 2 and any(h for _, _, h in run):
+            if len(run) <= 4:
+                spans.append((run[0][0], run[-1][1]))
+            else:
+                keep = [False] * len(run)
+                for i, (_, _, h) in enumerate(run):
+                    if h:
+                        for j in (i - 1, i, i + 1):
+                            if 0 <= j < len(run):
+                                keep[j] = True
+                i = 0
+                while i < len(run):
+                    if keep[i]:
+                        j = i
+                        while j + 1 < len(run) and keep[j + 1]:
+                            j += 1
+                        if j > i:
+                            spans.append((run[i][0], run[j][1]))
+                        i = j + 1
+                    else:
+                        i += 1
+        run.clear()
+
+    prev_end = -1
+    for m in _NAME_TOKEN.finditer(text):
+        tok = m.group()
+        if run:
+            sep = text[prev_end : m.start()]
+            if len(sep) > 3 or not (sep.isspace() or (sep[:1] == "," and sep[1:].isspace())):
+                flush()
+        if _is_name_token(tok):
+            run.append((m.start(), m.end(), _is_name_hit(tok)))
+        else:
+            flush()
+        prev_end = m.end()
+    flush()
+    return spans
 
 
 class PersonNameDetector:
-    """2-4 capitalised tokens with at least one hit in the bundled name list.
+    """A whole value that is a person name: 2-4 name tokens, at least one in the bundled list.
 
-    Set ``enabled=False`` (or re-register a disabled instance) to opt out.
+    Accepts a title prefix (``Dr. Maria Garcia``), ``"Garcia, Maria"``, ALL-CAPS, ``McX``,
+    ``O'X`` and hyphenated forms. Set ``enabled=False`` (or re-register a disabled instance)
+    to opt out; ``mask_value`` then leaves names alone too.
     """
 
     name = "person_name"
@@ -240,17 +328,20 @@ class PersonNameDetector:
     def matches(self, value: str) -> bool:
         if not self.enabled:
             return False
-        tokens = value.split()
-        if not 2 <= len(tokens) <= 4:
-            return False
-        names = name_list()
-        hit = False
-        for t in tokens:
-            if not _NAME_TOKEN.fullmatch(t) or not t[0].isupper() or t[1:] != t[1:].lower():
-                return False
-            if t.lower().strip("'\u2019-") in names:
-                hit = True
-        return hit
+        v = value.strip()
+        t = _TITLE.match(v)
+        if t:
+            v = v[t.end() :]
+        spans = name_spans(v)
+        return len(spans) == 1 and spans[0] == (0, len(v)) and len(v.split()) <= 4
+
+
+def names_enabled() -> bool:
+    """False when the registered ``person_name`` detector is disabled or replaced by a stub."""
+    for d in _registry:
+        if d.name == "person_name":
+            return bool(getattr(d, "enabled", True))
+    return False
 
 
 _BUILTINS: tuple[Detector, ...] = (

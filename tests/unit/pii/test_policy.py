@@ -27,9 +27,9 @@ def test_policy_glob_specificity() -> None:
     assert mode("other.orders", cfg) == "none"
 
 
-def test_tie_broken_by_fewer_wildcards() -> None:
+def test_narrower_glob_wins_over_the_glob_that_contains_it() -> None:
     cfg = SamplingConfig(per_glob={"shop.o*": "raw", "shop.o*s*": "none"})
-    assert mode("shop.orders", cfg) == "raw"
+    assert mode("shop.orders", cfg) == "none"  # the narrower glob wins
 
 
 def test_catalog_names_match_schema_table_and_bare_forms() -> None:
@@ -47,3 +47,20 @@ def test_no_match_falls_back_to_default() -> None:
 def test_invalid_mode_rejected() -> None:
     with pytest.raises(ConfigError):
         mode("shop.orders", SamplingConfig(per_glob={"shop.*": "bogus"}))
+
+
+def test_incomparable_globs_resolve_to_most_restrictive() -> None:
+    cfg = SamplingConfig(per_glob={"shop.*": "raw", "*.customers": "none"})
+    assert mode("db.shop.customers", cfg) == "none"
+    cfg = SamplingConfig(per_glob={"shop.*": "none", "*.customers": "raw"})
+    assert mode("db.shop.customers", cfg) == "none"
+    cfg = SamplingConfig(per_glob={"shop.*": "masked", "*.customers": "raw"})
+    assert mode("db.shop.customers", cfg) == "masked"
+
+
+def test_bare_name_glob_does_not_widen_raw() -> None:
+    cfg = SamplingConfig(per_glob={"customers": "raw", "shop.*": "none"})
+    assert mode("db.shop.customers", cfg) == "none"
+    # a glob with a dot never matches the bare table name
+    assert mode("shop.customers", SamplingConfig(per_glob={"x.customers": "raw"})) == "masked"
+    assert mode("shop.customers", SamplingConfig(per_glob={"customers": "raw"})) == "raw"

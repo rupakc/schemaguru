@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from schemaguru.pii.detectors import first_match
+from schemaguru.pii.detectors import first_match, name_spans, names_enabled
 from schemaguru.pii.sweep import sweep_detail
 
 _TOKENS = {
@@ -40,6 +40,18 @@ def mask_value(value: object) -> tuple[str, str | None]:
             return f"<hex{len(text.strip())}>", cat
         return _TOKENS.get(cat, f"<{cat}>"), cat
     masked, hits = sweep_detail(text)
+    if names_enabled():
+        spans = name_spans(masked)
+        if spans:
+            out: list[str] = []
+            pos = 0
+            for a, b in spans:
+                out.append(masked[pos:a])
+                out.append("<name>")
+                pos = b
+            out.append(masked[pos:])
+            masked = "".join(out)
+            hits.append("name")
     if hits:
         return masked, hits[0]
     return text, None

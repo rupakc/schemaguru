@@ -173,40 +173,57 @@ def test_connect_helper(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("url", "secrets"),
+    ("url", "shown"),
     [
-        ("postgresql://alice:p/ss@db/x", ["alice", "p/ss"]),
-        ("mysql://u:pa@ss@h/db", ["pa@ss", "u:pa", "ss@h"]),
-        ("snowflake://acct/db?user=a&password=hunter2", ["hunter2"]),
-        (
-            "snowflake://acct/db?PWD=s3&Token=t0k&private_key=pk&warehouse=wh#frag",
-            ["s3", "t0k", "pk", "frag"],
-        ),
+        # parses cleanly, one '@' or none: scheme://host[:port] only
+        ("postgresql://alice:secret@db:5432/x?sslmode=require", "postgresql://db:5432"),
+        ("snowflake://acct/db?user=a&password=hunter2", "snowflake://acct"),
+        ("snowflake://acct/db?a=1?password=hunter2", "snowflake://acct"),
+        ("snowflake://acct/db?passphrase=s3cret", "snowflake://acct"),
+        ("mssql://host/db;Password=s3cret", "mssql://host"),
+        ("duckdb:///shop.duckdb", "duckdb://"),
+        ("postgresql://u:pw@[::1]:5432/db", "postgresql://[::1]:5432"),
+        # anything else fails closed
+        ("postgresql://alice:p/ss@db/x", "postgresql://***"),
+        ("mysql://u:pa@ss@h/db", "mysql://***"),
+        ("mysql://u:pa#ss@h/db", "mysql://***"),
+        ("postgresql://u:p?ss@h/db", "postgresql://***"),
+        ("postgresql://u:secret@[::1/db", "postgresql://***"),
+        ("not a url with secret", "***"),
     ],
 )
-def test_redact_removes_credentials(url: str, secrets: list[str]) -> None:
-    from schemaguru.catalog.executor import _redact
+def test_redact_fails_closed(url: str, shown: str) -> None:
+    from schemaguru.catalog.executor import redact_url
 
-    out = _redact(url)
-    for secret in secrets:
-        assert secret not in out, (url, out)
-    with pytest.raises(SchemaGuruError) as exc:
+    assert redact_url(url) == shown
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://alice:p/ss@db/x",
+        "mysql://u:pa@ss@h/db",
+        "mysql://u:pa#ss@h/db",
+        "postgresql://u:p?ss@h/db",
+        "snowflake://acct/db?a=1?password=hunter2",
+        "snowflake://acct/db?passphrase=s3cret",
+        "mssql://host/db;Password=s3cret",
+        "postgresql://u:secret@[::1/db",
+    ],
+)
+def test_connect_errors_never_echo_secrets(url: str) -> None:
+    with pytest.raises(SchemaGuruError, match="SG106") as exc:  # never a raw ValueError
         connect_url(url.replace(url.split("://")[0], "nosuchdb", 1))
-    for secret in secrets:
-        assert secret not in str(exc.value)
+    msg = str(exc.value)
+    for secret in ("secret", "pa", "ss", "hunter2", "s3cret", "alice", "/x", "/db", "?"):
+        assert secret not in msg.split("SG106", 1)[1].replace("pass a connector", ""), msg
 
 
-def test_redact_keeps_urls_without_credentials() -> None:
-    from schemaguru.catalog.executor import _redact
-
-    for url in (
-        "duckdb:///shop.duckdb",
-        "postgresql://db:5432/x?sslmode=require",
-        "duckdb:///:memory:",
-    ):
-        assert _redact(url) == url
-    assert "warehouse=wh" in _redact("snowflake://acct/db?warehouse=wh&password=x")
-    assert "h/db" in _redact("mysql://u:pa@ss@h/db")
+def test_guru_repr_hides_the_url(tmp_path: Path, shop_file: Path) -> None:
+    g = Guru.connect(f"duckdb:///{shop_file}", store=str(tmp_path / "r.db"))
+    text = repr(g)
+    assert "duckdb://" in text and str(shop_file) not in text
+    g.close()
 
 
 def test_duckdb_fallback_is_read_only(tmp_path: Path, shop_file: Path) -> None:
@@ -707,3 +724,112 @@ def test_connector_wiring(tmp_path: Path) -> None:
     g.config = Config()
     assert g.backend._sampling == SamplingConfig()  # an auto-built backend follows the config
     g.close()
+
+
+def _in_thread(fn: Any) -> list[BaseException]:
+    """Run ``fn`` on another thread to completion; return what it raised."""
+    import threading
+
+    errors: list[BaseException] = []
+
+    def body() -> None:
+        try:
+            fn()
+        except BaseException as e:
+            errors.append(e)
+
+    t = threading.Thread(target=body)
+    t.start()
+    t.join(30)
+    assert not t.is_alive()
+    return errors
+
+
+@pytest.mark.parametrize("when", ["before_reconfigure", "after_reconfigure"])
+def test_config_switch_races_never_leave_a_drainer(
+    tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts], when: str
+) -> None:
+    """Injected interleavings: a context() on another thread during a switch to queue mode."""
+    conn = shop_duckdb[0].cursor()
+    bg = Config(measure_on_demand="background")
+    g = make_guru(
+        tmp_path, shop_duckdb[0], backend=FakeBackend(conn), config=bg, drain_interval_s=5
+    )
+    g.crawl()
+    g.context("orders per customer")
+    assert g.drainer is not None and g.drainer.is_alive()
+    sched = g._scheduler
+    real = sched.reconfigure
+    seen: list[list[BaseException]] = []
+
+    def racing_reconfigure(config: Config, backend: Any = None) -> None:
+        if when == "after_reconfigure":
+            real(config, backend)
+        # (a) a context() elsewhere queues a table and asks for a drainer;
+        # (b) after the reconfigure, BackgroundDrainer would have raised ValueError
+        seen.append(_in_thread(lambda: g._enqueue([ORD])))
+        seen.append(_in_thread(g._ensure_drainer))
+        if when == "before_reconfigure":
+            real(config, backend)
+
+    sched.reconfigure = racing_reconfigure  # type: ignore[method-assign]
+    g.config = Config()  # queue mode
+    assert seen == [[], []]  # nothing raised on the racing thread
+    assert g.drainer is None  # no drainer survives the switch
+    g._ensure_drainer()  # and none starts afterwards in queue mode
+    assert g.drainer is None
+    # back to background: a drainer may start again
+    sched.reconfigure = real  # type: ignore[method-assign]
+    g.config = bg
+    g._enqueue([ORD])
+    assert g.drainer is not None and g.drainer.is_alive()
+    g.close()
+    conn.close()
+
+
+def test_close_waits_for_an_in_flight_block_run(
+    tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts]
+) -> None:
+    import threading
+
+    entered, release = threading.Event(), threading.Event()
+    fake = FakeBackend(shop_duckdb[0])
+    real = fake.measure
+
+    def slow(reqs: Any) -> Any:
+        entered.set()
+        assert release.wait(30)
+        return real(reqs)
+
+    g = make_guru(tmp_path, shop_duckdb[0], backend=fake, config=Config(measure_on_demand="block"))
+    g.crawl()
+    fake.measure = slow  # type: ignore[method-assign]
+    views: list[Any] = []
+    errors: list[BaseException] = []
+
+    def ask() -> None:
+        try:
+            views.append(g.context("orders per customer"))
+        except BaseException as e:
+            errors.append(e)
+
+    asker = threading.Thread(target=ask)
+    asker.start()
+    assert entered.wait(30)
+    closer = threading.Thread(target=g.close)
+    closer.start()
+    closer.join(0.3)
+    assert closer.is_alive()  # close() waits for the block run
+    release.set()
+    asker.join(30)
+    closer.join(30)
+    assert not closer.is_alive() and errors == [] and len(views) == 1
+    assert "10,000 rows (measured" in views[0].text
+
+
+def test_redact_text_judges_every_embedded_url() -> None:
+    from schemaguru.catalog.executor import redact_text
+
+    msg = "failed: mysql://u:pa@ss@h/db and postgresql://a:b@db:5432/x?password=q (retry)"
+    assert redact_text(msg) == "failed: mysql://*** and postgresql://db:5432 (retry)"
+    assert redact_text("no url here") == "no url here"

@@ -251,6 +251,13 @@ class Guru:
         self._chains: list[Chain] = []
         self._waivers: tuple[Waiver, ...] = ()
         self._scheduler = self._make_scheduler(self._config)
+        # config switches: serialised; while one runs no drainer may start (see the setter)
+        self._config_lock = threading.Lock()
+        self._switching = False
+        # in-flight block-mode runs; close() waits for them (they use the store)
+        self._runs = threading.Condition()
+        self._active_runs = 0
+        self._closing = False
 
     # ----- construction ---------------------------------------------------------------------
 
@@ -292,9 +299,19 @@ class Guru:
             guru.crawl()
         return guru
 
+    def __repr__(self) -> str:
+        shown = None if self._connection is None else self._connection.shown_url
+        where = f" url={shown!r}" if shown else ""
+        return f"<Guru name={self.name!r} dialect={self.dialect!r}{where}>"
+
     def close(self) -> None:
-        """Stop the background drainer, close what this Guru opened (its store, its URL)."""
+        """Stop the drainer and wait for in-flight runs, then close what this Guru opened."""
+        with self._runs:
+            self._closing = True
         self._stop_drainer()
+        with self._runs:
+            while self._active_runs:
+                self._runs.wait()
         if self._connection is not None:
             self._connection.close()
             self._connection = None
@@ -320,19 +337,28 @@ class Guru:
         The one scheduler is reconfigured between runs; nothing here holds the façade lock while
         waiting for a run, because a finishing run takes that lock to invalidate views.
         """
-        was_draining = self._stop_drainer()
-        backend = self._default_backend(value) if self._auto_backend else None
-        self._scheduler.reconfigure(value, backend)
-        with self._lock:
-            self._config = value
-            if backend is not None:  # the FactLang backend scales its samples by the config
-                self.backend = backend
-            self._cache = _LRU(value.scope.cache_entries)
-            if not self._explicit_counter:
-                self.counter = _counter_for(value)
-            self._invalidate()
-        if was_draining and value.measure_on_demand == "background":
-            self._ensure_drainer()
+        with self._config_lock:
+            with self._lock:  # from here until the swap, no drainer can start
+                self._switching = True
+            try:
+                was_draining = self._stop_drainer()
+                backend = self._default_backend(value) if self._auto_backend else None
+                self._scheduler.reconfigure(value, backend)
+                with self._lock:
+                    self._config = value
+                    if backend is not None:  # the FactLang backend scales samples by the config
+                        self.backend = backend
+                    self._cache = _LRU(value.scope.cache_entries)
+                    if not self._explicit_counter:
+                        self.counter = _counter_for(value)
+                    self._invalidate()
+            finally:
+                with self._lock:
+                    self._switching = False
+            if value.measure_on_demand != "background":
+                self._stop_drainer()  # belt and braces: nothing may outlive a switch away
+            elif was_draining:
+                self._ensure_drainer()
 
     def _stop_drainer(self) -> bool:
         """Stop the drainer and WAIT for it (never under the façade lock); True if it ran."""
@@ -778,7 +804,12 @@ class Guru:
             block: tuple[ObjectRef, ...] = ()
             if view is None:
                 view, unmeasured = self._render(question, budget_tokens, profile)
-                if unmeasured and cfg.measure_on_demand == "block" and self._no_measure() is None:
+                if (
+                    unmeasured
+                    and cfg.measure_on_demand == "block"
+                    and self._no_measure() is None
+                    and self._begin_run()
+                ):
                     block = unmeasured
                 else:
                     self._enqueue(unmeasured)
@@ -789,10 +820,25 @@ class Guru:
             cap = cfg.budget.max_seconds
             seconds = cfg.block_timeout_s if cap is None else min(cap, cfg.block_timeout_s)
             guard = BudgetGuard(replace(cfg.budget, max_seconds=seconds), self.store)
-            self._scheduler.run(list(block), guard=guard)
-            with self._lock:
-                view, _ = self._render(question, budget_tokens, profile)
+            try:
+                self._scheduler.run(list(block), guard=guard)
+                with self._lock:
+                    view, _ = self._render(question, budget_tokens, profile)
+            finally:
+                self._end_run()
         return view if format == "text" else replace(view, format=format)
+
+    def _begin_run(self) -> bool:
+        with self._runs:
+            if self._closing:
+                return False
+            self._active_runs += 1
+            return True
+
+    def _end_run(self) -> None:
+        with self._runs:
+            self._active_runs -= 1
+            self._runs.notify_all()
 
     def _render(
         self, question: str, budget_tokens: int, profile: str
@@ -838,7 +884,12 @@ class Guru:
             self._ensure_drainer()
 
     def _ensure_drainer(self) -> None:
+        """Start the drainer only in background mode, never during a config switch or close."""
         with self._lock:
+            if self._switching or self._closing:
+                return
+            if self._scheduler.config.measure_on_demand != "background":
+                return
             if self.drainer is not None and self.drainer.is_alive():
                 return
             if self._no_measure() is not None:

@@ -175,33 +175,50 @@ _SCHEME_DIALECTS = {
 }
 
 
-_SECRET_KEYS = re.compile(
-    r"password|passwd|pwd|token|secret|key|private_key|credentials", re.IGNORECASE
-)
+_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*")
 
 
-def _redact(url: str) -> str:
-    """``url`` safe for a message: no userinfo, no secret query values, no fragment.
+def redact_url(url: str) -> str:
+    """What may be shown of a connection URL in an error, log or repr: fails CLOSED.
 
-    The userinfo is everything in the authority up to its LAST ``@`` (a password may hold
-    ``/`` or ``@``, which ``urlsplit`` would misread), so it is cut by hand: before the query,
-    everything up to the last ``@`` becomes ``***@``. Query values whose key names a secret
-    (password, pwd, token, secret, key, private_key, credentials, ...) become ``***``.
+    Only ``scheme://host[:port]``, and only when the URL parses cleanly with at most one ``@``
+    and that ``@`` inside the authority; anything else is ``scheme://***`` (or ``***`` without
+    a scheme). Userinfo, path, query and fragment are never shown.
     """
-    parts = urlsplit(url)
-    if not parts.scheme or "://" not in url:
-        return "***" if "@" in url else url.split("#", 1)[0]
-    rest = url.split("://", 1)[1].split("#", 1)[0]
-    head, sep, query = rest.partition("?")
-    if "@" in head:
-        head = "***@" + head.rsplit("@", 1)[1]
-    if sep:
-        pairs = []
-        for item in query.split("&"):
-            k, eq, _v = item.partition("=")
-            pairs.append(f"{k}=***" if eq and _SECRET_KEYS.search(k) else item)
-        query = "&".join(pairs)
-    return f"{parts.scheme}://{head}{sep}{query}"
+    scheme, sep, _ = url.partition("://")
+    if not sep or not _SCHEME.fullmatch(scheme):
+        return "***"
+    closed = f"{scheme}://***"
+    if url.count("@") > 1:
+        return closed
+    try:
+        parts = urlsplit(url)
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        return closed
+    if "@" in url and "@" not in parts.netloc:
+        return closed  # the '@' sits in a path, query or fragment: the authority was misread
+    if host is None:
+        return closed if parts.netloc else f"{scheme}://"
+    if not re.fullmatch(r"[A-Za-z0-9._:-]+", host):
+        return closed
+    shown = f"[{host}]" if ":" in host else host
+    return f"{scheme}://{shown}" + (f":{port}" if port is not None else "")
+
+
+_URL_IN_TEXT = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
+
+
+def redact_text(text: str) -> str:
+    """``text`` with every embedded ``scheme://...`` token replaced by :func:`redact_url`.
+
+    For messages that may quote a URL (errors, logs, CLI output). A token runs to the next
+    whitespace, so a URL is judged whole; text without a URL is unchanged.
+    """
+    return _URL_IN_TEXT.sub(lambda m: redact_url(m.group(0)), text)
+
+
+_redact = redact_text  # message text (the CLI); connect() itself uses redact_url
 
 
 @dataclass
@@ -217,6 +234,8 @@ class Connection:
     executor: MetadataExecutor
     connector: Any | None = None
     raw: Any | None = None
+    # the only form of the URL ever shown (redact_url): never userinfo, path or query
+    shown_url: str = ""
 
     def close(self) -> None:
         for obj in (self.raw, self.connector):
@@ -233,7 +252,7 @@ def connect(url: str) -> Connection:
     driver (``duckdb:///path``, ``duckdb:///:memory:``); anything else raises ``SG106``.
     """
     if "://" not in url:
-        raise CatalogError("SG106", f"not a connection URL: {_redact(url)!r}")
+        raise CatalogError("SG106", f"not a connection URL: {redact_url(url)}")
     scheme = url.split("://", 1)[0].split("+", 1)[0].lower()
     dialect = _SCHEME_DIALECTS.get(scheme, scheme)
     fl_connect = None
@@ -245,9 +264,11 @@ def connect(url: str) -> Connection:
     if callable(fl_connect):
         try:
             connector = fl_connect(url)
-            return Connection(dialect, FactLangExecutor(connector), connector)
+            return Connection(
+                dialect, FactLangExecutor(connector), connector, shown_url=redact_url(url)
+            )
         except Exception as e:
-            failure = f"FactLang could not open {_redact(url)}: {type(e).__name__}"
+            failure = f"FactLang could not open {redact_url(url)}: {type(e).__name__}"
     if scheme == "duckdb":
         try:
             duckdb = importlib.import_module("duckdb")
@@ -261,17 +282,17 @@ def connect(url: str) -> Connection:
             raw = duckdb.connect(path)
         else:  # read-only: SchemaGuru never writes, and a typo must not create a file
             if not os.path.exists(path):
-                raise CatalogError("SG106", f"no DuckDB database at {_redact(url)}")
+                raise CatalogError("SG106", f"no DuckDB database file at {redact_url(url)}")
             try:
                 raw = duckdb.connect(path, read_only=True)
             except Exception as e:
                 raise CatalogError(
-                    "SG106", f"cannot open {_redact(url)}: {type(e).__name__}"
+                    "SG106", f"cannot open {redact_url(url)}: {type(e).__name__}"
                 ) from None
-        return Connection("duckdb", DBAPIExecutor(raw, "qmark"), None, raw)
+        return Connection("duckdb", DBAPIExecutor(raw, "qmark"), None, raw, redact_url(url))
     raise CatalogError(
         "SG106",
         failure
-        or f"cannot open {_redact(url)}: the installed FactLang has no connect() and there is no "
-        f"built-in driver for {scheme!r} (pass a connector or reader to Guru instead)",
+        or f"cannot open {redact_url(url)}: the installed FactLang has no connect() and there "
+        f"is no built-in driver for {scheme!r} (pass a connector or reader to Guru instead)",
     )

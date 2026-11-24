@@ -87,7 +87,9 @@ def test_init_refuses_to_overwrite_without_force(run: Run, tmp_path: Path) -> No
 
 def test_init_echoes_no_credentials(run: Run) -> None:
     code, out, err = run("init", "--url", "postgresql://alice:hunter2@db.example.com/shop")
-    assert code == 0 and "hunter2" not in out + err and "***@" in out
+    assert code == 0 and "hunter2" not in out + err and "alice" not in out + err
+    assert "postgresql://db.example.com " in out  # fail closed: scheme://host only
+    assert "/shop" not in out
 
 
 # ----- crawl, measure ---------------------------------------------------------------------------

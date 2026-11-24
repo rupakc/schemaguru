@@ -53,8 +53,18 @@ _CLAIM_WORDS = re.compile(
     r"MAX_PER_KEY|ROWS|NULLS|DEAD|UNIQUE|FANOUT|VALUES|RANGE|PATTERN|FRESH|JOIN|COUNT|WHERE)\b",
     re.IGNORECASE,
 )
-_FORBIDDEN = ("--", ";", "#", "/*", "*/", "\n", "\r", "\x00")
+_FORBIDDEN = ("--", ";", "#", "/*", "*/")  # outside string literals
+_CONTROL = ("\n", "\r", "\x00")  # anywhere
+_STRING = re.compile(r"'(?:[^']|'')*'")
 _QUOTED = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|`[^`]*`")
+
+
+def _references(text: str, column: str) -> bool:
+    """``column`` appears bare, ``"double-quoted"`` or ```backquoted``` in ``text``."""
+    bare = rf"(?<![\w$\"`]){re.escape(column)}(?![\w$\"`])"
+    dq = re.escape('"' + column.replace('"', '""') + '"')
+    bq = re.escape("`" + column + "`")
+    return re.search(f"{bare}|{dq}|{bq}", text) is not None
 
 
 def check_predicate(
@@ -63,19 +73,24 @@ def check_predicate(
     """Why a drafted soft-delete predicate may not be put into a claim, or ``None`` if it may.
 
     A strict local check (the FactLang-seam ``validate_filter`` does not exist yet): the text
-    must be one filter expression. ``columns`` (the table's stored column names), when given,
-    must contain every marker column.
+    must be one filter expression. Comment and statement markers (``--``, ``;``, ``#``, ``/*``)
+    count only outside string literals; quoted identifiers (``"deleted_at"``, ```deleted_at```)
+    are accepted. ``columns`` (the table's stored column names), when given, must contain every
+    marker column, and a marker must be referenced outside string literals.
     """
     if not isinstance(predicate, str) or not predicate.strip():
         return "the predicate is empty"
-    for bad in _FORBIDDEN:
+    for bad in _CONTROL:
         if bad in predicate:
             return f"the predicate contains {bad!r}"
     syntax = check_filter_syntax(predicate)
     if syntax is not None:
         return syntax
-    bare = _QUOTED.sub("''", predicate)
-    word = _CLAIM_WORDS.search(bare)
+    code = _STRING.sub("''", predicate)  # string literals emptied; identifiers kept
+    for bad in _FORBIDDEN:
+        if bad in code:
+            return f"the predicate contains {bad!r} outside a string literal"
+    word = _CLAIM_WORDS.search(_QUOTED.sub("''", code))
     if word is not None:
         return f"the predicate contains the claim keyword {word.group(0)!r}"
     if not markers:
@@ -84,8 +99,7 @@ def check_predicate(
         missing = [m for m in markers if m not in columns]
         if missing:
             return f"marker column(s) {missing} do not exist"
-    named = {m for m in markers if re.search(rf"(?<![\w$]){re.escape(m)}(?![\w$])", bare)}
-    if not named:
+    if not any(_references(code, m) for m in markers):
         return f"the predicate references none of its marker columns {list(markers)}"
     return None
 

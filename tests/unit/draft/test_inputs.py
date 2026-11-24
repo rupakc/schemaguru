@@ -159,3 +159,13 @@ def test_names_in_comments_are_masked_in_masked_and_none_modes(shop_store: SQLit
         # identifiers are never rewritten
         assert di.payload["table"] == "shop.customers"
         assert [c["name"] for c in di.payload["columns"]] == [c.ref.column for c in cols]
+
+
+def test_possessive_and_common_names_in_comments(shop_store: SQLiteStore) -> None:
+    from schemaguru.draft.inputs import mask_free_text
+
+    text, hits = mask_free_text("Alice Johnson's table; ask Bob Smith or Mary Brown")
+    assert text == "<name>'s table; ask <name> or <name>" and hits == 3
+    shop_store.upsert_tables([Table(CUST, "table", "John Smith's IBAN list", 1000)])
+    di = build_inputs(shop_store, CUST, Config())
+    assert "Smith" not in di.text() and di.payload["comment"] == "<name>'s IBAN list"

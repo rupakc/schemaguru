@@ -314,3 +314,28 @@ def test_bare_credentials_masked_in_prose(secret: str) -> None:
 )
 def test_credential_lookalikes_pass(prose: str) -> None:
     assert sweep(prose) == (prose, 0)
+
+
+@pytest.mark.parametrize(
+    ("value", "masked"),
+    [
+        ("Bob Smith", "<name>"),
+        ("<Bob Smith>", "<<name>>"),
+        ("Mary Brown", "<name>"),
+        ("James Miller", "<name>"),
+        ("Alice Johnson's table", "<name>'s table"),
+        ("John Smith's IBAN", "<name>'s IBAN"),
+        ("Alice Johnson\u2019s table", "<name>\u2019s table"),
+        ("ask Robert Williams's team", "ask <name>'s team"),
+    ],
+)
+def test_common_and_possessive_names_are_masked(value: str, masked: str) -> None:
+    assert mask_value(value) == (masked, "name")
+
+
+def test_common_word_names_are_in_the_list() -> None:
+    from schemaguru.pii.detectors import name_list
+
+    names = name_list()
+    for n in ("smith", "brown", "miller", "bob", "james", "wilson", "taylor", "white", "king"):
+        assert n in names, n

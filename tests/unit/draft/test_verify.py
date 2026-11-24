@@ -185,3 +185,36 @@ def test_soft_delete_marker_must_exist_in_store(shop_store: Any, shop_duckdb: An
     good = _draft(FactKind.SOFT_DELETE, ORD, SOFT)
     [ok] = verify_drafts([good], be, store=shop_store)
     assert ok.status is Status.VERIFIED
+
+
+@pytest.mark.parametrize(
+    ("predicate", "markers"),
+    [
+        ('"deleted_at" IS NULL', ["deleted_at"]),
+        ("`deleted_at` IS NULL", ["deleted_at"]),
+        ("deleted IS NULL OR note <> 'a--b'", ["deleted"]),
+        ("deleted IS NULL OR note <> 'x; #y'", ["deleted"]),
+        ('"Deleted Flag" IS NULL OR NOT "Deleted Flag"', ["Deleted Flag"]),
+    ],
+)
+def test_predicate_accepts_quoted_identifiers_and_literals(
+    predicate: str, markers: list[str]
+) -> None:
+    from schemaguru.draft.verify import check_predicate
+
+    assert check_predicate(predicate, markers) is None
+
+
+@pytest.mark.parametrize(
+    ("predicate", "markers"),
+    [
+        ('"deleted_at" IS NULL -- x', ["deleted_at"]),
+        ("deleted IS NULL OR note = 'x' -- '", ["deleted"]),
+        ("note = 'deleted'", ["deleted"]),  # the marker only appears inside a string
+        ('"deleted_at" IS NULL VALUE >=0', ["deleted_at"]),
+    ],
+)
+def test_predicate_rejects_comments_outside_literals(predicate: str, markers: list[str]) -> None:
+    from schemaguru.draft.verify import check_predicate
+
+    assert check_predicate(predicate, markers) is not None

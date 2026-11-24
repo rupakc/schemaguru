@@ -270,7 +270,9 @@ def name_spans(text: str) -> list[tuple[int, int]]:
     A name is a run of 2-4 capitalised tokens with at least one hit in the name list.
 
     Tokens may be Title-case, ALL-CAPS, ``McX``/``MacX``, ``O'X`` or hyphenated; they are
-    joined by whitespace or by ``", "`` (``"Garcia, Maria"``). A run longer than four tokens
+    joined by whitespace or by ``", "`` (``"Garcia, Maria"``). A trailing possessive ``'s`` /
+    ``U+2019 s`` ends the name and is kept outside the span (``"Alice Johnson's"`` ->
+    ``"<name>'s"``). A run longer than four tokens
     is masked in windows of one token either side of each name-list hit. Linear in len(text).
     """
     spans: list[tuple[int, int]] = []
@@ -307,8 +309,15 @@ def name_spans(text: str) -> list[tuple[int, int]]:
             sep = text[prev_end : m.start()]
             if len(sep) > 3 or not (sep.isspace() or (sep[:1] == "," and sep[1:].isspace())):
                 flush()
+        end, possessive = m.end(), False
+        if len(tok) > 2 and tok[-2] in "'\u2019" and tok[-1] in "sS":
+            base = tok[:-2]  # "Johnson's": mask the name, keep the possessive suffix
+            if _is_name_token(base):
+                tok, end, possessive = base, m.start() + len(base), True
         if _is_name_token(tok):
-            run.append((m.start(), m.end(), _is_name_hit(tok)))
+            run.append((m.start(), end, _is_name_hit(tok)))
+            if possessive:
+                flush()  # a possessive ends the name
         else:
             flush()
         prev_end = m.end()

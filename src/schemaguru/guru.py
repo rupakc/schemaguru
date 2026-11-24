@@ -838,13 +838,16 @@ class Guru:
                     self._enqueue(unmeasured)
                     self._cache.put(key, view)
         if block:
-            # block mode (the user's opt-in to spend): measure OUTSIDE the façade lock, capped
-            # by block_timeout_s; whatever the cap leaves is re-queued by the scheduler
+            # block mode (the user's opt-in to spend): measure OUTSIDE the façade lock, through
+            # the one per-period guard the drainer and check_fact share (so N calls cannot
+            # spend N totals), overriding only the seconds: block_timeout_s, started here,
+            # before the scheduler lock is taken. Whatever the cap leaves is re-queued.
             cap = cfg.budget.max_seconds
             seconds = cfg.block_timeout_s if cap is None else min(cap, cfg.block_timeout_s)
-            guard = BudgetGuard(replace(cfg.budget, max_seconds=seconds), self.store)
+            guard = self._period_guard()
             try:
-                self._scheduler.run(list(block), guard=guard)
+                with guard.deadline(seconds):
+                    self._scheduler.run(list(block), guard=guard)
                 with self._lock:
                     view, _ = self._render(question, budget_tokens, profile)
             finally:

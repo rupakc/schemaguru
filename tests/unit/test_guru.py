@@ -380,6 +380,34 @@ def test_block_mode_measures_outside_the_lock_with_a_time_cap(
     g.close()
 
 
+def test_block_mode_spends_through_the_shared_period_guard(
+    tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts]
+) -> None:
+    """N block-mode context() calls together never exceed max_bytes_total in one period: each
+    is admitted through the guard the drainer and check_fact share (a fresh guard per call
+    let every call spend the whole total)."""
+    total = 3_000
+    fake = FakeBackend(shop_duckdb[0], cost=lambda r: 1_000)
+    budget = Budget(max_bytes_per_probe=None, max_bytes_total=total, period_s=3600.0)
+    cfg = Config(measure_on_demand="block", budget=budget)
+    g = make_guru(tmp_path, shop_duckdb[0], backend=fake, config=cfg)
+    g.crawl()
+    questions = [
+        "orders per customer",
+        "products and order items",
+        "payments by account",
+        "events per session",
+        "users and accounts",
+        "customers by segment",
+    ]
+    for q in questions:
+        g.context(q)
+    spent = g.store.ledger_total("measure", "bytes", None)
+    assert 0 < spent <= total, spent
+    assert g._period_guard().spent_bytes == spent  # one guard, one total
+    g.close()
+
+
 def test_one_retrieval_per_render(guru: Guru) -> None:
     calls: list[int] = []
     real = guru.retriever.search

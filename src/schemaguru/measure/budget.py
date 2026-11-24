@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Iterator
+from contextlib import contextmanager
 from typing import Literal
 
 from schemaguru.config import Budget
@@ -49,13 +50,33 @@ class BudgetGuard:
         now = clock()
         self._start = now
         self._period_start = now
-        # request (or any key) -> (charged bytes counted in the committed total, known estimate)
-        self._reserved: dict[Hashable, tuple[int | None, int | None]] = {}
+        # request (or any key) -> one (charged bytes counted in the committed total, known
+        # estimate) per admission still in flight: two identical requests admitted together are
+        # two reservations, recorded first-in first-out, never one overwriting the other
+        self._reserved: dict[Hashable, list[tuple[int | None, int | None]]] = {}
+        # a per-thread deadline (:meth:`deadline`): block-mode runs cap their seconds on the
+        # shared guard without a guard of their own
+        self._local = threading.local()
         self.spent_bytes = 0  # this period, including pessimistic charges
         self.lifetime_spent_bytes = 0
         self.probes = 0
         self.unknown_cost = 0  # probes admitted without a known estimate
         self.unknown_spend = 0  # probes recorded with no reported bytes and no estimate
+
+    @contextmanager
+    def deadline(self, seconds: float) -> Iterator[None]:
+        """Admit nothing on this thread once ``seconds`` have passed since entering.
+
+        Only the time is overridden: the byte total, probe count and period stay the shared
+        guard's. The clock starts here, so a caller that then waits (for a scheduler lock) has
+        already spent part of its allowance. Nested deadlines keep the earliest."""
+        prev = getattr(self._local, "deadline", None)
+        mine = self._clock() + seconds
+        self._local.deadline = mine if prev is None else min(prev, mine)
+        try:
+            yield
+        finally:
+            self._local.deadline = prev
 
     def new_run(self) -> None:
         """Start another run on the same byte budget (probe count and clock restart)."""
@@ -76,7 +97,9 @@ class BudgetGuard:
             self.spent_bytes = 0
             # in-flight probes stay tracked for recording, but no longer count against the
             # fresh period's total
-            self._reserved = {r: (None, est) for r, (_, est) in self._reserved.items()}
+            self._reserved = {
+                r: [(None, est) for _, est in held] for r, held in self._reserved.items()
+            }
 
     def _charge_unknown(self) -> int | None:
         b = self._budget
@@ -84,7 +107,9 @@ class BudgetGuard:
         return min(options) if options else None
 
     def _committed(self) -> int:
-        return self.spent_bytes + sum(c for c, _ in self._reserved.values() if c is not None)
+        return self.spent_bytes + sum(
+            c for held in self._reserved.values() for c, _ in held if c is not None
+        )
 
     def admit(self, estimate: CostEstimate) -> Admission:
         if estimate.method == "row_estimate" and estimate.bytes is not None:
@@ -117,6 +142,9 @@ class BudgetGuard:
             return "over_total"
         if b.max_seconds is not None and now - self._start > b.max_seconds:
             return "over_total"
+        deadline = getattr(self._local, "deadline", None)
+        if deadline is not None and now >= deadline:
+            return "over_total"
         if (
             refuse_over_probe
             and known is not None
@@ -144,7 +172,7 @@ class BudgetGuard:
         self.probes += 1
         if known is None:
             self.unknown_cost += 1
-        self._reserved[key] = (charge, known)
+        self._reserved.setdefault(key, []).append((charge, known))
         return "run"
 
     def record(self, result: MeasureResult) -> None:
@@ -164,7 +192,10 @@ class BudgetGuard:
 
     def _record(self, key: Hashable, reported: int | None, note: str, kind: str) -> None:
         unknown_kind = f"{kind}.unknown_bytes"
-        charge, known = self._reserved.pop(key, (None, None))
+        held = self._reserved.get(key)
+        charge, known = held.pop(0) if held else (None, None)
+        if held is not None and not held:
+            del self._reserved[key]
         spent = reported if reported is not None else known
         if spent is not None:
             self._spend(int(spent))

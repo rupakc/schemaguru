@@ -173,3 +173,36 @@ def test_no_refill_without_period(store: SQLiteStore) -> None:
     assert _cycle(g, 50) == 10
     clock.t = 10.0**9
     assert _cycle(g, 50) == 0 and g.remaining_bytes() == 0
+
+
+# --- final fix wave: one reservation per admission; a per-run deadline ----------------------
+
+
+def test_identical_requests_in_flight_keep_both_reservations(store: SQLiteStore) -> None:
+    """Two admissions under one key (two identical claim checks in flight) are two charges:
+    the second must not overwrite the first's reservation."""
+    g = BudgetGuard(Budget(max_bytes_per_probe=None, max_bytes_total=150), store)
+    assert g.admit(_est(60)) == "run"
+    assert g.admit(_est(60)) == "run"  # same request, still in flight
+    assert g.remaining_bytes() == 30  # both charges count (the bug left 90)
+    assert g.admit(_est(60)) == "over_total"
+    g.record(_res(None))  # first finishes with no reported bytes: its estimate is spent
+    assert g.remaining_bytes() == 30
+    g.record(_res(None))
+    assert g.remaining_bytes() == 30 and g.spent_bytes == 120
+    g.record(_res(None))  # a third record without an admission charges nothing (control)
+    assert g.spent_bytes == 120
+
+
+def test_deadline_starts_when_entered_and_only_overrides_seconds(store: SQLiteStore) -> None:
+    now = [0.0]
+    budget = Budget(max_bytes_per_probe=None, max_bytes_total=100)
+    g = BudgetGuard(budget, store, clock=lambda: now[0])
+    with g.deadline(5.0):
+        now[0] = 4.0
+        g.new_run()  # a run that started late (waited for a lock) keeps the earlier deadline
+        assert g.admit(_est(10)) == "run"
+        now[0] = 6.0
+        assert g.admit(_est(10, REQ2)) == "over_total"
+    assert g.admit(_est(10, REQ2)) == "run"  # outside the block: no deadline (control)
+    assert g.remaining_bytes() == 80  # the byte total is the shared one

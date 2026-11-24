@@ -19,6 +19,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from schemaguru._util.redact import scrub_text
 from schemaguru.config import Config
 from schemaguru.measure.backend import MeasureResult
 from schemaguru.measure.estimates import EstimatedValue, scale_count, wilson
@@ -182,8 +183,9 @@ def to_facts(
                     **ident,
                     "reason": reason,
                     "code": code,
-                    # warehouse errors can quote the offending value back
-                    "message": mask_free_text(result.error.message)[0],
+                    # warehouse errors can quote the offending value back, and a driver's
+                    # message can echo the connection's credentials
+                    "message": mask_free_text(scrub_text(result.error.message))[0],
                 },
                 Status.ERROR,
             )

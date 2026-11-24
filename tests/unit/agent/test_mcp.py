@@ -201,3 +201,26 @@ def test_mcp_raw_mode_echoes_the_ref_cut_to_200(planted: Any) -> None:
 
     e = _run(session())
     assert e.data["uri"] == "schema://tables/" + "Z" * 200
+
+
+def test_mcp_tool_errors_are_credential_scrubbed(
+    shop_guru: Guru, no_seam_check: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp import Client
+
+    from schemaguru.agent.mcp import build_server
+
+    def explode(*a: Any, **k: Any) -> Any:
+        raise RuntimeError("snowflake://u:p4ssw0rd!@acct/db refused: password=hunter2")
+
+    monkeypatch.setattr(shop_guru, "find_path", explode)
+    server = build_server(shop_guru)
+
+    async def session() -> Any:
+        async with Client(server) as client:
+            return await client.call_tool("find_join_path", {"from": "orders", "to": "customers"})
+
+    out = _run(session())
+    text = out.content[0].text + json.dumps(out.structured_content)
+    assert out.is_error and "SG804" in json.dumps(out.structured_content)
+    assert "p4ssw0rd" not in text and "hunter2" not in text

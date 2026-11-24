@@ -29,6 +29,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any, cast
 
 from schemaguru._util.hashing import canonical_json
+from schemaguru._util.redact import scrub_text
 from schemaguru.agent.tools import ToolHost, check_spec, tool_definitions
 from schemaguru.errors import (
     STORE_MISCONFIGURED,
@@ -107,7 +108,11 @@ def error_text(guru: ToolHost, text: str) -> str:
     """An error message as it leaves (spec 11): unless values are raw, every quoted literal
     (a caller's value, a value quoted by a backend) becomes ``?``; raw keeps them, cut to
     ``MAX_ECHO`` characters. Then free-text masking and the outbound sweep. The tools' own
-    argument names are written in backticks, so they stay readable."""
+    argument names are written in backticks, so they stay readable.
+
+    Credentials (URL userinfo, ``password=...`` and the like) are scrubbed first, in every
+    mode: ``raw`` opts into data values, never into secrets."""
+    text = scrub_text(text)
     try:
         mode = outbound_mode(guru)
     except Exception:

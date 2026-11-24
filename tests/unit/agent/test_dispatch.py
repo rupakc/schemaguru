@@ -519,3 +519,33 @@ def test_store_credentials_rejected_is_a_configuration_error(
     out = handle_tool_call(shop_guru, "search_tables", {"query": "orders"})
     assert out["error"]["code"] == "SG704" and out["error"]["message"] == STORE_MISCONFIGURED
     assert "db.internal" not in json.dumps(out) and "sg" not in out["text"].split()
+
+
+# --- final fix wave: tool-surface errors are credential-scrubbed in every value mode ----------
+
+LEAKY = "connect failed: snowflake://u:p4ssw0rd!@acct/db (password=hunter2)"
+
+
+def _explode(*a: Any, **k: Any) -> Any:
+    raise RuntimeError(LEAKY)
+
+
+@pytest.mark.parametrize("mode", ["raw", "masked", "none"])
+def test_tool_errors_never_carry_credentials(
+    planted: Callable[..., Guru], monkeypatch: Any, mode: str
+) -> None:
+    g = planted(mode)
+    monkeypatch.setattr(g, "find_path", _explode)
+    out = call(g, "find_join_path", {"from": "orders", "to": "customers"})
+    text = json.dumps(out)
+    assert out["error"]["code"] == "SG804"
+    assert "p4ssw0rd" not in text and "hunter2" not in text, text
+    assert "snowflake://" in text  # the message is scrubbed, not dropped (negative control)
+
+
+@pytest.mark.parametrize("mode", ["raw", "masked", "none"])
+def test_error_text_scrubs_credentials(planted: Callable[..., Guru], mode: str) -> None:
+    from schemaguru.agent.dispatch import error_text
+
+    shown = error_text(planted(mode), LEAKY)
+    assert "p4ssw0rd" not in shown and "hunter2" not in shown

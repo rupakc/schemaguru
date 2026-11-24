@@ -158,3 +158,23 @@ def test_openai_agents_name_argument_cannot_reroute(shop_guru: Guru, no_seam_che
 
     tool = {t.name: t for t in adapter.function_tools(shop_guru)}["describe_table"]
     _refused_or_same(asyncio.run(tool.on_invoke_tool(None, json.dumps(REROUTE))))  # type: ignore[arg-type]
+
+
+def test_adapter_tool_errors_are_credential_scrubbed(
+    shop_guru: Guru, no_seam_check: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from schemaguru.agent.adapters import anthropic as adapter
+
+    def explode(*a: Any, **k: Any) -> Any:
+        raise RuntimeError("snowflake://u:p4ssw0rd!@acct/db refused: password=hunter2")
+
+    monkeypatch.setattr(shop_guru, "find_path", explode)
+    block = {
+        "type": "tool_use",
+        "id": "t1",
+        "name": "find_join_path",
+        "input": {"from": "orders", "to": "customers"},
+    }
+    out = adapter.run_tool_use(shop_guru, block)
+    assert out["is_error"] is True and "SG804" in out["content"]
+    assert "p4ssw0rd" not in json.dumps(out) and "hunter2" not in json.dumps(out)

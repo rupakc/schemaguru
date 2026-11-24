@@ -534,6 +534,15 @@ def test_error_message_is_swept_before_storage() -> None:
     assert "alice@example.com" not in f.value["message"] and "<email>" in f.value["message"]
 
 
+def test_error_message_is_credential_scrubbed_before_storage() -> None:
+    col = ObjectRef(None, "shop", "customers", "email")
+    msg = "login failed for snowflake://u:p4ssw0rd!@acct/db (password=hunter2)"
+    [f] = _facts(TopValues(col, 20), None, Diagnostic("SG303", Severity.ERROR, msg))
+    stored = f.value["message"]
+    assert "p4ssw0rd" not in stored and "hunter2" not in stored, stored
+    assert "login failed" in stored  # scrubbed, not dropped (negative control)
+
+
 def test_masking_that_collapses_values_marks_merged() -> None:
     v = _by(_facts(TopValues(EMAIL_COL, 20), EMAIL_PAYLOAD), "VALUES")
     assert v.value["merged"] is True and v.value["value_policy"] == "masked"

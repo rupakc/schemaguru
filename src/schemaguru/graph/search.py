@@ -7,9 +7,13 @@
 * No visited-set pruning (it would make the label-setting search incomplete): a table is
   revisited only when the waypoint rules force it (``Path.revisits``); a hub is never entered
   twice.
+* The destination is passed through while the rules are not yet satisfied; a route ends on
+  arriving at it in an accepting state.
 * Two passes: pass 1 prunes every hop whose known support is below ``thin_support``; pass 2 drops
-  that pruning, and its routes with a thin hop are appended after pass 1's, ``provisional``.
-* ``k_paths`` best paths by Yen's algorithm.
+  that pruning, requires a thin hop (a bit in its state) and its up to ``k_paths`` routes are
+  appended after pass 1's, ``provisional``.
+* ``k_paths`` best paths by Yen's algorithm over the product graph (table, automaton state):
+  simple in that graph, so a rule-forced revisit is found as readily as a simple route.
 * No path: typed refusal; diagnostic re-runs relax exactly one mechanism to name the blocker,
   and the relaxed route is never returned.
 """
@@ -18,7 +22,7 @@ from __future__ import annotations
 
 import heapq
 import math
-from collections.abc import Hashable, Iterable, Sequence
+from collections.abc import Collection, Hashable, Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from itertools import pairwise
@@ -161,12 +165,17 @@ class Graph:
         root_ids = {r: self._ids[r] for r in set(self._component.values())}
         self._comp_of = [root_ids[self._component[r]] for r in refs]
         self._built: set[int] = set()
+        self._hops: list[tuple[Hop, int]] = []  # by hop index: (hop, end id)
+        self._indeg_by_id = [self._in_degree.get(r, 0) for r in refs]
+        # per-config memo of hop costs and lower bounds, reused across calls (bounded)
+        self._ctxs: dict[GraphConfig, _Ctx] = {}
         self._thin: dict[float, frozenset[ObjectRef]] = {}
         # largest known distinct_left: the price of an unknown fan-out (spec 9.3)
         self.worst_fanout: float | None = worst
         hub_order = sorted(hubs.tables, key=lambda r: r.canonical())
         self._hub_bit: dict[ObjectRef, int] = {h: 1 << i for i, h in enumerate(hub_order)}
         self._bits_by_id = [self._hub_bit.get(r, 0) for r in refs]
+        self._hub_ids = frozenset(self._ids[h] for h in hub_order if h in self._ids)
 
     @classmethod
     def build(cls, edges: Iterable[Edge], hubs: Hubs) -> Graph:
@@ -183,6 +192,9 @@ class Graph:
 
     def hub_bit(self, table: ObjectRef) -> int:
         return self._hub_bit.get(table, 0)
+
+    def hub_ids(self) -> frozenset[int]:
+        return self._hub_ids
 
     def has_thin(self, table: ObjectRef, thin: float) -> bool:
         """Whether ``table``'s component has a hop with known support below ``thin``."""
@@ -240,6 +252,7 @@ class Graph:
                 arcs.append(arc)
                 self._into.setdefault(end, []).append((start, h, arc[3]))
                 self._n_hops += 1
+                self._hops.append((h, end))
             self._arcs[start] = tuple(arcs)
 
 
@@ -248,24 +261,51 @@ class Graph:
 
 @dataclass(frozen=True)
 class _Mode:
-    prune_thin: bool
+    prune_thin: bool  # pass 1: never take a hop with known support below thin_support
     hub_guard: bool
     hop_limit: int
     automaton: Automaton | None
+    require_thin: bool = False  # pass 2: accept only routes that took a thin hop
 
 
-_Key = tuple[int, Any, int, bool, int]  # (table id, automaton state, hops, attr, hub mask)
+# (table id, automaton state, hops, arrived on attribution, hubs entered, thin hop taken).
+# The first five are spec 9.3's key; the thin bit is always False outside pass 2.
+_Key = tuple[int, Any, int, bool, int, bool]
+# A node of the product graph Yen works on: (table id, automaton state, thin hop taken).
+_Node = tuple[int, Any, bool]
+
+
+def _node(key: _Key) -> _Node:
+    return (key[0], key[1], key[5])
+
+
+_MAX_CONFIGS = 4
+_MAX_LOWER_BOUNDS = 64
 
 
 class _Ctx:
-    """One ``find_paths`` call: config plus memoised hop costs and attribution flags."""
+    """Memoised hop costs, attribution flags and lower bounds for one (graph, config).
+
+    The graph is immutable and the config is frozen, so the memo is reused across calls
+    (``_Ctx.of``); weights are still read from the config the caller passes, at call time.
+    """
+
+    @classmethod
+    def of(cls, graph: Graph, cfg: GraphConfig) -> _Ctx:
+        ctxs = graph._ctxs
+        ctx = ctxs.get(cfg)
+        if ctx is None:
+            if len(ctxs) >= _MAX_CONFIGS:
+                del ctxs[next(iter(ctxs))]
+            ctx = ctxs[cfg] = cls(graph, cfg)
+        return ctx
 
     def __init__(self, graph: Graph, cfg: GraphConfig) -> None:
         self.graph, self.cfg = graph, cfg
         self._cost: dict[Hop, float] = {}
         self._attr: dict[str, bool] = {}
         self._cost_i: list[float | None] = []
-        self._lower: dict[int, list[float]] = {}
+        self._lower: dict[tuple[int, ...], list[float]] = {}
         self._attr_i: list[bool | None] = []
 
     def cost(self, hop: Hop) -> float:
@@ -282,21 +322,25 @@ class _Ctx:
             self._cost[hop] = c
         return c
 
-    def lower_bound(self, dst: int) -> list[float]:
-        """Cheapest cost from every table to ``dst`` with every constraint relaxed.
+    def lower_bound(self, *dsts: int) -> list[float]:
+        """Cheapest cost from every table to the nearest of ``dsts``, every constraint relaxed.
 
-        Admissible and consistent (a shortest-path metric over the same hop costs), so A* with it
-        still settles the exact optimum of the constrained search.
+        Admissible and consistent (a shortest-path metric over the same hop costs, 0 at every
+        target), so A* with it still settles each target's exact optimum of the constrained search.
         """
-        h = self._lower.get(dst)
+        cache_key = tuple(sorted(set(dsts)))
+        h = self._lower.get(cache_key)
         if h is not None:
             return h
         g = self.graph
-        g.arcs(dst)  # builds the component
-        costs, _ = self.tables_by_hop()
+        for t in cache_key:
+            g.arcs(t)  # builds the component
+        costs = self._fill_costs()
         h = [math.inf] * len(g._refs)
-        h[dst] = 0.0
-        heap = [(0.0, dst)]
+        heap: list[tuple[float, int]] = []
+        for t in cache_key:
+            h[t] = 0.0
+            heap.append((0.0, t))
         while heap:
             d, v = heapq.heappop(heap)
             if d > h[v]:
@@ -309,8 +353,36 @@ class _Ctx:
                 if nd < h[u]:
                     h[u] = nd
                     heapq.heappush(heap, (nd, u))
-        self._lower[dst] = h
+        if len(self._lower) >= _MAX_LOWER_BOUNDS:
+            del self._lower[next(iter(self._lower))]  # oldest first
+        self._lower[cache_key] = h
         return h
+
+    def _fill_costs(self) -> list[float | None]:
+        """Every built hop's cost in one tight loop (same formula as :func:`hop_cost`)."""
+        costs, _ = self.tables_by_hop()
+        cfg, g = self.cfg, self.graph
+        ws, wf, wh, pen = cfg.w_support, cfg.w_fanout, cfg.w_hub, cfg.unmeasured_penalty
+        worst = g.worst_fanout
+        unknown_fan = wf * (pen if worst is None else math.log1p(worst))
+        indeg = g._indeg_by_id
+        log, log1p, inf = math.log, math.log1p, math.inf
+        for idx, (hop, end) in enumerate(g._hops):
+            if costs[idx] is not None:
+                continue
+            e = hop.edge
+            sup = hop.support
+            if sup is None:
+                c = pen
+            elif sup <= 0.0:
+                costs[idx] = inf
+                continue
+            else:
+                c = ws * -log(min(sup, 1.0))
+            dl = e.value.get("distinct_left") if e.measured else None
+            c += unknown_fan if dl is None else wf * log1p(float(dl))
+            costs[idx] = c + wh * log1p(max(indeg[end], 0))
+        return costs
 
     def tables_by_hop(self) -> tuple[list[float | None], list[bool | None]]:
         """Per-hop-index memo lists (cost, attribution), grown to the graph's built hops."""
@@ -330,17 +402,24 @@ class _Ctx:
         return sum(self.cost(h) for h in hops)
 
 
-def _replay(ctx: _Ctx, src: ObjectRef, hops: Sequence[Hop], mode: _Mode) -> _Key:
-    """The search state after ``hops`` from ``src`` (for Yen's spur searches)."""
+def _replay(ctx: _Ctx, src: ObjectRef, hops: Sequence[Hop], mode: _Mode) -> list[_Key]:
+    """Every search state along ``hops`` from ``src`` (``len(hops) + 1`` keys)."""
     a, graph = mode.automaton, ctx.graph
+    thin = ctx.cfg.thin_support
     state: Any = None if a is None else a.start
-    attr, mask, table = False, graph.hub_bit(src), src
-    for h in hops:
+    attr, mask, used = False, graph.hub_bit(src), False
+    tid = graph.table_id(src)
+    assert tid is not None
+    keys: list[_Key] = [(tid, state, 0, attr, mask, used)]
+    for n, h in enumerate(hops, 1):
         state = None if a is None else a.step(state, h)
-        attr, mask, table = ctx.attribution(h.edge), mask | graph.hub_bit(h.end), h.end
-    tid = graph.table_id(table)
-    assert tid is not None  # replayed hops come from this graph
-    return (tid, state, len(hops), attr, mask)
+        attr, mask = ctx.attribution(h.edge), mask | graph.hub_bit(h.end)
+        if mode.require_thin and h.support is not None and h.support < thin:
+            used = True
+        end = graph.table_id(h.end)
+        assert end is not None  # replayed hops come from this graph
+        keys.append((end, state, n, attr, mask, used))
+    return keys
 
 
 def _dijkstra(
@@ -349,25 +428,63 @@ def _dijkstra(
     dst: ObjectRef,
     mode: _Mode,
     *,
-    banned_hops: frozenset[tuple[str, bool]] = frozenset(),
-    banned_tables: frozenset[int] = frozenset(),
+    spur_banned: frozenset[tuple[str, bool]] = frozenset(),
+    banned_nodes: frozenset[_Node] = frozenset(),
     bound: float = math.inf,
 ) -> list[Hop] | None:
-    """Label-setting search; the state key is exactly spec 9.3's (no visited-set pruning).
+    dst_id = ctx.graph.table_id(dst)
+    assert dst_id is not None
+    found = _search(
+        ctx,
+        start,
+        frozenset({dst_id}),
+        mode,
+        multi=False,
+        spur_banned=spur_banned,
+        banned_nodes=banned_nodes,
+        bound=bound,
+    )
+    return found.get(dst_id)
 
-    A table may therefore be revisited, which happens on a cheapest route only when the waypoint
-    automaton forces it (a cycle never lowers cost otherwise). Hubs are never entered twice.
+
+def _search(
+    ctx: _Ctx,
+    start: _Key,
+    targets: frozenset[int],
+    mode: _Mode,
+    *,
+    multi: bool,
+    spur_banned: frozenset[tuple[str, bool]] = frozenset(),
+    banned_nodes: frozenset[_Node] = frozenset(),
+    bound: float = math.inf,
+) -> dict[int, list[Hop]]:
+    """A* over search states; the key is exactly spec 9.3's (plus pass 2's thin bit).
+
+    There is no visited-set pruning: a table may be revisited, which on a cheapest route happens
+    only when the waypoint automaton forces it. Hubs are never entered twice. The destination is
+    passed through while the automaton is not yet accepting; a route ends on arriving at the
+    destination in an accepting state. A label is dominated (skipped) by a settled label at the
+    same (table, automaton state, thin bit) that is no more constrained: no more hops, a subset
+    of its hubs entered, and not arrived on attribution unless it did too. Every completion of
+    the dominated label is open to the settled one at the same added cost, and A* settles a
+    table in cost order, so the settled label is never dearer.
+
+    Yen hooks: ``spur_banned`` hops are refused only when leaving ``start``; ``banned_nodes``
+    are product nodes (table, automaton state, thin bit) never arrived at (the root path).
     """
     graph, a = ctx.graph, mode.automaton
-    dst_id = graph.table_id(dst)
-    hub_ids = {graph.table_id(h) for h in graph.hubs.tables}
-    thin = ctx.cfg.thin_support if mode.prune_thin else None
+    hub_ids = graph.hub_ids()
+    thin = ctx.cfg.thin_support
+    prune = mode.prune_thin
+    need_thin = mode.require_thin
     limit = mode.hop_limit
-    assert dst_id is not None
-    lower = ctx.lower_bound(dst_id)  # A*: exact, prunes what can never reach dst in budget
+    assert not (multi and mode.require_thin)  # pass 2 is searched one target at a time
+    lower = ctx.lower_bound(*targets)  # admissible, consistent: A* stays exact per target
+    found: dict[int, list[Hop]] = {}
     best: dict[_Key, float] = {start: 0.0}
     back: dict[_Key, tuple[_Key, Hop]] = {}
-    done: set[_Key] = set()
+    # (table, automaton state, thin bit) -> settled (hops, hubs mask, arrived on attribution)
+    settled: dict[tuple[int, Any, bool], list[tuple[int, int, bool]]] = {}
     counter = 0
     heap: list[tuple[float, int, int, float, _Key]] = [
         (lower[start[0]], start[2], counter, 0.0, start)
@@ -375,32 +492,41 @@ def _dijkstra(
     costs, attrs = ctx.tables_by_hop()
     while heap:
         _, _, _, cost, key = heapq.heappop(heap)
-        if key in done:
-            continue
-        done.add(key)
-        table, state, hops, attr, mask = key
-        if table == dst_id:
-            if a is None or a.accepting(state):
+        table, state, hops, attr, mask, used = key
+        here = settled.get((table, state, used))
+        if here is None:
+            settled[(table, state, used)] = [(hops, mask, attr)]
+        elif any(h <= hops and not (m & ~mask) and (attr or not at) for h, m, at in here):
+            continue  # dominated (or a duplicate)
+        else:
+            here.append((hops, mask, attr))
+        # Not yet accepting at the destination: the rules may still route through it and back.
+        if table in targets and (a is None or a.accepting(state)):
+            if not (need_thin and not used) and table not in found:
                 out: list[Hop] = []
                 k = key
                 while k in back:
                     k, hop = back[k]
                     out.append(hop)
-                return out[::-1]
-            continue  # never pass through the destination
+                found[table] = out[::-1]
+                if len(found) == len(targets):
+                    return found
+            if not multi:
+                continue  # a route ends at its destination (pass 2: without a thin hop, dead)
+            # multi-target (pass 1 only): another target's route may run on through this one
         if hops >= limit:
             continue
         leaving_hub = mode.hub_guard and attr and table in hub_ids
         arcs = graph.arcs(table)
         if len(costs) < graph.hop_count():
             costs, attrs = ctx.tables_by_hop()
+        at_spur = key is start
         for hop, nxt, bit, idx in arcs:
-            if banned_tables and nxt in banned_tables:
+            if at_spur and spur_banned and hop.key in spur_banned:
                 continue
-            if banned_hops and hop.key in banned_hops:
-                continue
-            s = hop.support
-            if thin is not None and s is not None and s < thin:
+            sup = hop.support
+            is_thin = sup is not None and sup < thin
+            if prune and is_thin:
                 continue
             arrive_attr = attrs[idx]
             if arrive_attr is None:
@@ -412,23 +538,23 @@ def _dijkstra(
             c = costs[idx]
             if c is None:
                 c = costs[idx] = ctx.cost(hop)
+            if c == math.inf:
+                continue
             nc = cost + c
             f = nc + lower[nxt]
             if f > bound or f == math.inf:
                 continue  # cannot reach dst, or (Yen) never picked before k routes are found
-            nkey: _Key = (
-                nxt,
-                None if a is None else a.step(state, hop),
-                hops + 1,
-                arrive_attr,
-                mask | bit,
-            )
-            if nc < best.get(nkey, math.inf) and nkey not in done:
+            nstate = None if a is None else a.step(state, hop)
+            nused = used or (need_thin and is_thin)
+            if banned_nodes and (nxt, nstate, nused) in banned_nodes:
+                continue
+            nkey: _Key = (nxt, nstate, hops + 1, arrive_attr, mask | bit, nused)
+            if nc < best.get(nkey, math.inf):
                 best[nkey] = nc
                 back[nkey] = (key, hop)
                 counter += 1
                 heapq.heappush(heap, (f, hops + 1, counter, nc, nkey))
-    return None
+    return found
 
 
 def _route_key(hops: Sequence[Hop]) -> tuple[tuple[str, bool], ...]:
@@ -438,7 +564,12 @@ def _route_key(hops: Sequence[Hop]) -> tuple[tuple[str, bool], ...]:
 def _yen(
     ctx: _Ctx, src: ObjectRef, dst: ObjectRef, mode: _Mode, k: int
 ) -> list[tuple[float, list[Hop]]]:
-    first = _dijkstra(ctx, _replay(ctx, src, (), mode), dst, mode)
+    """Yen's k cheapest routes over the product graph (table, automaton state, thin bit).
+
+    Routes are simple in that product graph: a spur never re-enters a root node (same table
+    *and* same automaton state), and the deviation hops are banned only at the spur node.
+    """
+    first = _dijkstra(ctx, _replay(ctx, src, (), mode)[0], dst, mode)
     if first is None or k < 1:
         return []
     found: list[tuple[float, list[Hop]]] = [(ctx.total(first), first)]
@@ -449,29 +580,26 @@ def _yen(
     while len(found) < k:
         prev = found[-1][1]
         need = k - len(found)
+        keys = _replay(ctx, src, prev, mode)
         # Lawler: spurs before the previous route's deviation index were already generated.
         for i in range(deviation, len(prev)):
             root = prev[:i]
-            spur = root[-1].end if root else src
             rkey = _route_key(root)
-            banned_hops = frozenset(
+            spur_banned = frozenset(
                 p[i].key for _, p in found if len(p) > i and _route_key(p[:i]) == rkey
             )
-            # Yen: the spur never re-enters its root path
-            ids = ctx.graph.table_id
-            banned_tables = frozenset(
-                tid for r in {src, *(h.end for h in root)} - {spur} if (tid := ids(r)) is not None
-            )
+            banned_nodes = frozenset(_node(kk) for kk in keys[: i + 1])  # root incl. spur
             pooled = sorted(c for c, _, _ in pool.values())
             limit = pooled[need - 1] if len(pooled) >= need else math.inf
+            root_cost = ctx.total(root)
             tail = _dijkstra(
                 ctx,
-                _replay(ctx, src, root, mode),
+                keys[i],
                 dst,
                 mode,
-                banned_hops=banned_hops,
-                banned_tables=banned_tables,
-                bound=limit - ctx.total(root) + 1e-9,
+                spur_banned=spur_banned,
+                banned_nodes=banned_nodes,
+                bound=limit - root_cost + 1e-9,
             )
             if tail is None:
                 continue
@@ -497,10 +625,6 @@ def _path(cost: float, hops: Sequence[Hop], provisional: bool) -> Path:
     tables = [hops[0].start, *(h.end for h in hops)] if hops else []
     revisits = len(set(tables)) < len(tables)
     return Path(tuple(hops), cost, coverage, provisional, estimated, revisits)
-
-
-def _is_thin(hops: Sequence[Hop], thin: float) -> bool:
-    return any(h.support is not None and h.support < thin for h in hops)
 
 
 def _name(t: ObjectRef) -> str:
@@ -533,13 +657,22 @@ def _diagnose(ctx: _Ctx, src: ObjectRef, dst: ObjectRef, automaton: Automaton | 
     pair = f"{_name(src)} -> {_name(dst)}"
 
     def probe(mode: _Mode) -> list[Hop] | None:
-        return _dijkstra(ctx, _replay(ctx, src, (), mode), dst, mode)
+        return _dijkstra(ctx, _replay(ctx, src, (), mode)[0], dst, mode)
+
+    def ruled_needs() -> str:
+        """The rules plus a longer hop limit (capped): name both when only that opens a route."""
+        cap = 2 * cfg.hop_limit
+        longer = probe(_Mode(False, True, cap, automaton))
+        if longer is None:
+            return ""
+        return f"; the required route needs {len(longer)} hops; hop limit is {cfg.hop_limit}"
 
     if automaton is not None and probe(_Mode(False, True, cfg.hop_limit, None)) is not None:
         return PathResult(
             (),
             Refusal.RULE_REJECTS_ALL,
-            f"waypoint rules reject every route {pair}; without them a route exists",
+            f"waypoint rules reject every route {pair}; without them a route exists"
+            + ruled_needs(),
         )
     relaxed = probe(_Mode(False, False, cfg.hop_limit, automaton))
     if relaxed is not None:
@@ -569,6 +702,14 @@ def _diagnose(ctx: _Ctx, src: ObjectRef, dst: ObjectRef, automaton: Automaton | 
             Refusal.NO_ROUTE,
             f"no route {pair} within the hop limit {cfg.hop_limit}; the shortest needs {need} hops",
         )
+    if automaton is not None:
+        both = ruled_needs()
+        if both:
+            return PathResult(
+                (),
+                Refusal.RULE_REJECTS_ALL,
+                f"waypoint rules and the hop limit together reject every route {pair}{both}",
+            )
     return PathResult(
         (),
         Refusal.NO_ROUTE,
@@ -583,11 +724,12 @@ def find_paths(
     *,
     cfg: GraphConfig,
     automaton: Automaton | None = None,
+    diagnose: bool = True,
 ) -> PathResult:
     """Cheapest routes ``src`` -> ``dst`` (tables; columns are widened).
 
-    Up to ``cfg.k_paths`` well-supported routes (pass 1), then up to ``cfg.k_paths`` routes with a
-    thin hop (pass 2), de-duplicated and labelled ``provisional`` (spec 9.3).
+    Up to ``cfg.k_paths`` well-supported routes (pass 1), then up to ``cfg.k_paths`` routes that
+    each take a thin hop (pass 2), labelled ``provisional`` (spec 9.3).
     """
     s, d = src.table_ref(), dst.table_ref()
     if s == d:
@@ -614,19 +756,23 @@ def find_paths(
             Refusal.NO_ROUTE,
             f"no chain of usable joins connects {_name(s)} and {_name(d)}",
         )
-    ctx = _Ctx(graph, cfg)
+    ctx = _Ctx.of(graph, cfg)
     thin = cfg.thin_support
     firm = _yen(ctx, s, d, _Mode(True, True, cfg.hop_limit, automaton), cfg.k_paths)
     paths = [_path(c, hops, provisional=False) for c, hops in firm]
     if graph.has_thin(s, thin):
-        seen = {_route_key(p.hops) for p in paths}
-        loose = _yen(ctx, s, d, _Mode(False, True, cfg.hop_limit, automaton), cfg.k_paths)
-        paths += [
-            _path(c, hops, provisional=True)
-            for c, hops in loose
-            if _route_key(hops) not in seen and _is_thin(hops, thin)
-        ]
+        # pass 2: up to k routes that each take a thin hop (pass 1 never does: no duplicates)
+        loose = _yen(
+            ctx, s, d, _Mode(False, True, cfg.hop_limit, automaton, require_thin=True), cfg.k_paths
+        )
+        paths += [_path(c, hops, provisional=True) for c, hops in loose]
     if not paths:
+        if not diagnose:
+            return PathResult(
+                (),
+                Refusal.NO_ROUTE,
+                f"no route {_name(s)} -> {_name(d)} (not diagnosed; diagnose=True names why)",
+            )
         return _diagnose(ctx, s, d, automaton)
     provisional = [p for p in paths if p.provisional]
     note = ""
@@ -636,3 +782,53 @@ def find_paths(
         lead = "every route has" if not firm else f"{len(provisional)} provisional route(s) use"
         note = f"provisional: {lead} a hop with support below {thin:g}; narrowest support {shown}"
     return PathResult(tuple(paths), None, note)
+
+
+def best_paths_from(
+    graph: Graph,
+    src: ObjectRef,
+    targets: Collection[ObjectRef],
+    *,
+    cfg: GraphConfig,
+    automaton: Automaton | None = None,
+) -> dict[ObjectRef, Path | None]:
+    """Each target's first (cheapest) route from ``src``: ``find_paths(k_paths=1)`` per target.
+
+    One A* search settles every target (the heuristic is the relaxed distance to the nearest
+    target, 0 at each, so each target's first settlement is its optimum). Same rules as
+    :func:`find_paths`: thin pass 1, then pass 2 (thin hop required, ``provisional``) only for
+    targets still unreached; hub guard; hop limit. No Yen, no diagnosis: an unreachable target
+    (or ``src`` itself, a table without edges, another component) maps to ``None``. Columns are
+    widened to their tables.
+    """
+    s = src.table_ref()
+    out: dict[ObjectRef, Path | None] = {}
+    wanted: dict[int, list[ObjectRef]] = {}
+    sid = graph.table_id(s)
+    unsat = automaton is not None and automaton.is_empty()
+    for target in targets:
+        t = target.table_ref()
+        out[target] = None
+        tid = graph.table_id(t)
+        if sid is None or tid is None or t == s or unsat:
+            continue
+        if graph.component(t) != graph.component(s):
+            continue
+        wanted.setdefault(tid, []).append(target)
+    if not wanted:
+        return out
+    ctx = _Ctx.of(graph, cfg)
+    firm_mode = _Mode(True, True, cfg.hop_limit, automaton)
+    start = _replay(ctx, s, (), firm_mode)[0]
+    found = _search(ctx, start, frozenset(wanted), firm_mode, multi=True)
+    for tid, hops in found.items():
+        for target in wanted[tid]:
+            out[target] = _path(ctx.total(hops), hops, provisional=False)
+    if graph.has_thin(s, cfg.thin_support):
+        loose_mode = _Mode(False, True, cfg.hop_limit, automaton, require_thin=True)
+        for tid in sorted(set(wanted) - set(found)):
+            hops2 = _search(ctx, start, frozenset({tid}), loose_mode, multi=False).get(tid)
+            if hops2 is not None:
+                for target in wanted[tid]:
+                    out[target] = _path(ctx.total(hops2), hops2, provisional=True)
+    return out

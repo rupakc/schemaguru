@@ -38,6 +38,11 @@ def _graph(facts: Sequence[Fact]) -> Graph:
     return Graph.build(edges, Hubs.from_edges(edges, set(), CFG))
 
 
+def _simple(res_paths: Sequence[object]) -> list[list[str]]:
+    """Routes that visit no table twice (revisits are legitimate when a rule forces one)."""
+    return _route([p for p in res_paths if not p.revisits])  # type: ignore[attr-defined]
+
+
 def _route(res_paths: Sequence[object]) -> list[list[str]]:
     out = []
     for p in res_paths:
@@ -120,7 +125,8 @@ def test_bare_table_ref_is_node() -> None:
     auto = compile_rules(
         [pair("events", "orders", require=["shop.sessions"])], t("events"), t("orders")
     )
-    assert _route(find_paths(G, t("events"), t("orders"), cfg=CFG, automaton=auto).paths) == [
+    # the only simple route; others revisit a table, which the rule may force (spec 9.3)
+    assert _simple(find_paths(G, t("events"), t("orders"), cfg=CFG, automaton=auto).paths) == [
         ["events", "sessions", "orders"]
     ]
 
@@ -169,10 +175,10 @@ def test_require_edge_forces_route_via_sessions() -> None:
     auto = compile_rules([pair("events", "orders", require=[VIA])], t("events"), t("orders"))
     res = find_paths(G, t("events"), t("orders"), cfg=CFG, automaton=auto)
     assert res.refusal is None
-    assert _route(res.paths) == [["events", "sessions", "orders"]]
+    assert _simple(res.paths) == [["events", "sessions", "orders"]]
     # A pair rule is a property of the pair, not of the direction searched.
     back = compile_rules([pair("events", "orders", require=[VIA])], t("orders"), t("events"))
-    assert _route(find_paths(G, t("orders"), t("events"), cfg=CFG, automaton=back).paths) == [
+    assert _simple(find_paths(G, t("orders"), t("events"), cfg=CFG, automaton=back).paths) == [
         ["orders", "sessions", "events"]
     ]
     # ... and it does not govern any other pair.
@@ -188,7 +194,7 @@ def test_require_col_and_node() -> None:
     for req in ("node(shop.sessions)", "col(shop.orders.session_id)"):
         auto = compile_rules([pair("events", "orders", require=[req])], t("events"), t("orders"))
         res = find_paths(G, t("events"), t("orders"), cfg=CFG, automaton=auto)
-        assert _route(res.paths) == [["events", "sessions", "orders"]], req
+        assert _simple(res.paths) == [["events", "sessions", "orders"]], req
 
 
 def test_forbid_node() -> None:
@@ -203,7 +209,7 @@ def test_forbid_node() -> None:
         t("orders"),
     )
     res = find_paths(G, t("events"), t("orders"), cfg=CFG, automaton=auto)
-    assert _route(res.paths) == [["events", "sessions", "orders"]]
+    assert _simple(res.paths) == [["events", "sessions", "orders"]]
 
 
 def test_node_rule_bans_its_node_as_intermediate_only() -> None:

@@ -200,7 +200,8 @@ def test_automaton_forces_route() -> None:
     free = find_paths(g, t("users"), t("orders"), cfg=CFG).paths[0]
     assert _route(free) == ["users", "orders"]
     res = find_paths(g, t("users"), t("orders"), cfg=CFG, automaton=RequireTable(t("sessions")))
-    assert [_route(p) for p in res.paths] == [["users", "sessions", "orders"]]
+    assert _route(res.paths[0]) == ["users", "sessions", "orders"]
+    assert [_route(p) for p in res.paths if not p.revisits] == [["users", "sessions", "orders"]]
 
 
 def test_rule_rejects_all_and_unsatisfiable() -> None:

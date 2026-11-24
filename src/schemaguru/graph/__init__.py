@@ -12,6 +12,7 @@ from schemaguru.graph.search import (
     Path,
     PathResult,
     Refusal,
+    best_paths_from,
     find_paths,
 )
 from schemaguru.graph.waypoints import (
@@ -36,6 +37,7 @@ __all__ = [
     "Predicate",
     "Refusal",
     "RuleAutomaton",
+    "best_paths_from",
     "build_edges",
     "calibrate_hubs",
     "compile_chain",

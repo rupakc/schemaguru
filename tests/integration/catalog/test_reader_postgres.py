@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -10,18 +9,18 @@ from schemaguru.catalog import DBAPIExecutor, crawl
 from schemaguru.catalog.readers.postgres import PostgresReader
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column, Constraint, Schema
+from tests.integration.conftest import engine_dsn, require_driver
 
-DSN = os.environ.get("SCHEMAGURU_TEST_POSTGRES_DSN")
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(not DSN, reason="SCHEMAGURU_TEST_POSTGRES_DSN is not set"),
-]
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
 def conn() -> Iterator[Any]:
-    psycopg = pytest.importorskip("psycopg")
-    c = psycopg.connect(DSN, autocommit=True)
+    dsn = engine_dsn("postgres")
+    require_driver("postgres", "psycopg")
+    import psycopg
+
+    c = psycopg.connect(dsn, autocommit=True)
     c.execute("DROP SCHEMA IF EXISTS sg_test CASCADE")
     c.execute("CREATE SCHEMA sg_test")
     c.execute("COMMENT ON SCHEMA sg_test IS 'test schema'")

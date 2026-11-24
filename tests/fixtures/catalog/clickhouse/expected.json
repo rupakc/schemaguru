@@ -1,0 +1,417 @@
+{
+ "columns": [
+  {
+   "comment": null,
+   "default": null,
+   "family": "timestamp",
+   "native_type": "DateTime",
+   "nullable": false,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "at",
+    "schema": "sg_ops",
+    "table": "events"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "UInt64",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "event_id",
+    "schema": "sg_ops",
+    "table": "events"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "Enum8('a' = 1, 'b' = 2)",
+   "nullable": false,
+   "ordinal": 3,
+   "ref": {
+    "catalog": null,
+    "column": "kind",
+    "schema": "sg_ops",
+    "table": "events"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "Int8",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "id",
+    "schema": "sg_ops",
+    "table": "mem"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "UInt8",
+   "nullable": false,
+   "ordinal": 5,
+   "ref": {
+    "catalog": null,
+    "column": "alias_col",
+    "schema": "sg_shop",
+    "table": "Order Items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "UInt32",
+   "nullable": false,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "line_no",
+    "schema": "sg_shop",
+    "table": "Order Items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "struct",
+   "native_type": "Map(String, String)",
+   "nullable": false,
+   "ordinal": 4,
+   "ref": {
+    "catalog": null,
+    "column": "meta",
+    "schema": "sg_shop",
+    "table": "Order Items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "UInt64",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "order_id",
+    "schema": "sg_shop",
+    "table": "Order Items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "Int16",
+   "nullable": false,
+   "ordinal": 3,
+   "ref": {
+    "catalog": null,
+    "column": "qty",
+    "schema": "sg_shop",
+    "table": "Order Items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "UInt32",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "customer_id",
+    "schema": "sg_shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": "login address",
+   "default": null,
+   "family": "string",
+   "native_type": "LowCardinality(Nullable(String))",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "email",
+    "schema": "sg_shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": null,
+   "default": "'x'",
+   "family": "string",
+   "native_type": "String",
+   "nullable": false,
+   "ordinal": 3,
+   "ref": {
+    "catalog": null,
+    "column": "note",
+    "schema": "sg_shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "boolean",
+   "native_type": "Bool",
+   "nullable": false,
+   "ordinal": 7,
+   "ref": {
+    "catalog": null,
+    "column": "ok",
+    "schema": "sg_shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "decimal",
+   "native_type": "Decimal(10, 2)",
+   "nullable": false,
+   "ordinal": 4,
+   "ref": {
+    "catalog": null,
+    "column": "score",
+    "schema": "sg_shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "timestamp",
+   "native_type": "Nullable(DateTime64(3))",
+   "nullable": true,
+   "ordinal": 5,
+   "ref": {
+    "catalog": null,
+    "column": "seen",
+    "schema": "sg_shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "array",
+   "native_type": "Array(String)",
+   "nullable": false,
+   "ordinal": 6,
+   "ref": {
+    "catalog": null,
+    "column": "tags",
+    "schema": "sg_shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "String",
+   "nullable": false,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "name",
+    "schema": "sg_shop",
+    "table": "products"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "UInt32",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "product_id",
+    "schema": "sg_shop",
+    "table": "products"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "UInt32",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "customer_id",
+    "schema": "sg_shop",
+    "table": "v_customers"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "LowCardinality(Nullable(String))",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "email",
+    "schema": "sg_shop",
+    "table": "v_customers"
+   }
+  }
+ ],
+ "constraints": [],
+ "schemas": [
+  {
+   "catalog": null,
+   "comment": null,
+   "name": "default",
+   "table_count": 0
+  },
+  {
+   "catalog": null,
+   "comment": null,
+   "name": "sg_ops",
+   "table_count": 2
+  },
+  {
+   "catalog": null,
+   "comment": null,
+   "name": "sg_shop",
+   "table_count": 4
+  }
+ ],
+ "tables": [
+  {
+   "bytes": 0,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": "2026-11-24T16:33:02+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "sg_ops",
+    "table": "events"
+   },
+   "row_count": 0,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": 0,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": "2026-11-24T16:33:02+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "sg_ops",
+    "table": "mem"
+   },
+   "row_count": 0,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": 0,
+   "clustering": [
+    "order_id",
+    "line_no"
+   ],
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": "2026-11-24T16:33:02+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "sg_shop",
+    "table": "Order Items"
+   },
+   "row_count": 0,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": 691,
+   "clustering": [
+    "customer_id",
+    "note"
+   ],
+   "comment": "people who buy",
+   "created_at": null,
+   "kind": "table",
+   "last_altered": "2026-11-24T16:33:02+00:00",
+   "partitioning": "intDiv(customer_id, 1000)",
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "sg_shop",
+    "table": "customers"
+   },
+   "row_count": 2,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": 0,
+   "clustering": [
+    "product_id"
+   ],
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": "2026-11-24T16:33:02+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "sg_shop",
+    "table": "products"
+   },
+   "row_count": 0,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "view",
+   "last_altered": "2026-11-24T16:33:02+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "sg_shop",
+    "table": "v_customers"
+   },
+   "row_count": null,
+   "withdrawn_at": null
+  }
+ ]
+}

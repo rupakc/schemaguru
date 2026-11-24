@@ -21,6 +21,13 @@ from schemaguru.catalog.protocol import CatalogReader
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "catalog"
 
 
+def fixture_doc(dialect: str) -> dict[str, Any]:
+    doc: dict[str, Any] = json.loads(
+        (FIXTURES / dialect / "queries.json").read_text(encoding="utf-8")
+    )
+    return doc
+
+
 class UnknownSQL(AssertionError):
     def __init__(self, fingerprint: str, params: Sequence[Any]) -> None:
         super().__init__(
@@ -82,8 +89,7 @@ class ReplayExecutor:
 
     @classmethod
     def from_fixture(cls, dialect: str) -> ReplayExecutor:
-        doc = json.loads((FIXTURES / dialect / "queries.json").read_text(encoding="utf-8"))
-        return cls(doc["queries"])
+        return cls(fixture_doc(dialect)["queries"])
 
     def run(
         self, sql: str, params: Sequence[Any] = (), *, timeout_s: float | None = None
@@ -116,13 +122,17 @@ class RecordingExecutor:
         return rows
 
 
-def read_all(reader: CatalogReader) -> dict[str, Any]:
+def read_all(
+    reader: CatalogReader, *, only_catalogs: Sequence[str] | None = None
+) -> dict[str, Any]:
     """Walk a reader exactly as a crawl does and return a canonical, sorted dict."""
     from schemaguru.model.refs import ObjectRef
 
     schemas: list[Any] = []
     tables: list[Any] = []
     for catalog in _catalogs(reader):
+        if only_catalogs is not None and catalog not in only_catalogs:
+            continue
         token: str | None = None
         while True:
             page = reader.list_schemas(catalog, page_token=token)
@@ -167,17 +177,24 @@ def _catalogs(reader: CatalogReader) -> list[str | None]:
     return found or [None]
 
 
-def record(reader_factory: Any, inner: MetadataExecutor, dialect: str) -> None:
+def record(
+    reader_factory: Any,
+    inner: MetadataExecutor,
+    dialect: str,
+    *,
+    only_catalogs: Sequence[str] | None = None,
+) -> None:
     """Write ``queries.json`` and ``expected.json`` for ``dialect`` from a live executor.
 
     Review ``expected.json`` by hand against the engine before committing it.
     """
     rec = RecordingExecutor(inner)
-    out = read_all(reader_factory(rec))
+    out = read_all(reader_factory(rec), only_catalogs=only_catalogs)
     target = FIXTURES / dialect
     target.mkdir(parents=True, exist_ok=True)
+    doc = {"dialect": dialect, "only_catalogs": only_catalogs, "queries": rec.queries}
     (target / "queries.json").write_text(
-        json.dumps({"dialect": dialect, "queries": rec.queries}, indent=1, sort_keys=True) + "\n",
+        json.dumps(doc, indent=1, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     (target / "expected.json").write_text(

@@ -1,0 +1,491 @@
+{
+ "dialect": "mysql",
+ "only_catalogs": null,
+ "queries": [
+  {
+   "params": [
+    "information_schema",
+    "mysql",
+    "performance_schema",
+    "sys"
+   ],
+   "rows": [
+    {
+     "name": "sg_ops",
+     "table_count": 2
+    },
+    {
+     "name": "sg_shop",
+     "table_count": 4
+    }
+   ],
+   "sql": "select s.schema_name as name, (select count(*) from information_schema.tables t where t.table_schema = s.schema_name and t.table_type in ('base table', 'view')) as table_count from information_schema.schemata s where s.schema_name not in (?, ?, ?, ?) order by s.schema_name"
+  },
+  {
+   "params": [
+    "sg_ops",
+    null,
+    null,
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "comment": "",
+     "created_at": {
+      "$datetime": "2026-11-24T16:33:02"
+     },
+     "data_length": 16384,
+     "index_length": 0,
+     "name": "events",
+     "table_rows": 0,
+     "table_type": "BASE TABLE",
+     "updated_at": null
+    },
+    {
+     "comment": "",
+     "created_at": {
+      "$datetime": "2026-11-24T16:33:02"
+     },
+     "data_length": 16384,
+     "index_length": 0,
+     "name": "odd`name",
+     "table_rows": 0,
+     "table_type": "BASE TABLE",
+     "updated_at": null
+    }
+   ],
+   "sql": "select t.table_name as name, t.table_type as table_type, t.table_comment as comment, t.table_rows as table_rows, t.data_length as data_length, t.index_length as index_length, convert_tz(t.create_time, @@session.time_zone, '+00:00') as created_at, convert_tz(t.update_time, @@session.time_zone, '+00:00') as updated_at from information_schema.tables t where t.table_schema = ? and t.table_type in ('base table', 'view') and (? is null or binary t.table_name > binary ?) and (? is null or t.update_time is null or convert_tz(t.update_time, @@session.time_zone, '+00:00') > ?) order by binary t.table_name limit ?"
+  },
+  {
+   "params": [
+    "sg_shop",
+    null,
+    null,
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "comment": "",
+     "created_at": {
+      "$datetime": "2026-11-24T16:33:02"
+     },
+     "data_length": 16384,
+     "index_length": 16384,
+     "name": "Order Items",
+     "table_rows": 0,
+     "table_type": "BASE TABLE",
+     "updated_at": null
+    },
+    {
+     "comment": "people who buy",
+     "created_at": {
+      "$datetime": "2026-11-24T16:33:02"
+     },
+     "data_length": 16384,
+     "index_length": 0,
+     "name": "customers",
+     "table_rows": 2,
+     "table_type": "BASE TABLE",
+     "updated_at": {
+      "$datetime": "2026-11-24T16:33:02"
+     }
+    },
+    {
+     "comment": "",
+     "created_at": {
+      "$datetime": "2026-11-24T16:33:02"
+     },
+     "data_length": 16384,
+     "index_length": 0,
+     "name": "products",
+     "table_rows": 0,
+     "table_type": "BASE TABLE",
+     "updated_at": null
+    },
+    {
+     "comment": "VIEW",
+     "created_at": {
+      "$datetime": "2026-11-24T16:33:02"
+     },
+     "data_length": null,
+     "index_length": null,
+     "name": "v_customers",
+     "table_rows": null,
+     "table_type": "VIEW",
+     "updated_at": null
+    }
+   ],
+   "sql": "select t.table_name as name, t.table_type as table_type, t.table_comment as comment, t.table_rows as table_rows, t.data_length as data_length, t.index_length as index_length, convert_tz(t.create_time, @@session.time_zone, '+00:00') as created_at, convert_tz(t.update_time, @@session.time_zone, '+00:00') as updated_at from information_schema.tables t where t.table_schema = ? and t.table_type in ('base table', 'view') and (? is null or binary t.table_name > binary ?) and (? is null or t.update_time is null or convert_tz(t.update_time, @@session.time_zone, '+00:00') > ?) order by binary t.table_name limit ?"
+  },
+  {
+   "params": [
+    "sg_ops",
+    "events",
+    "sg_ops",
+    "odd`name",
+    "sg_shop",
+    "Order Items",
+    "sg_shop",
+    "customers",
+    "sg_shop",
+    "products",
+    "sg_shop",
+    "v_customers"
+   ],
+   "rows": [
+    {
+     "column_default": null,
+     "column_name": "event_id",
+     "comment": "",
+     "data_type": "bigint",
+     "is_mariadb": 0,
+     "is_nullable": "NO",
+     "ordinal": 1,
+     "schema_name": "sg_ops",
+     "table_name": "events",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "at",
+     "comment": "",
+     "data_type": "timestamp",
+     "is_mariadb": 0,
+     "is_nullable": "YES",
+     "ordinal": 2,
+     "schema_name": "sg_ops",
+     "table_name": "events",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "kind",
+     "comment": "",
+     "data_type": "enum('a','b')",
+     "is_mariadb": 0,
+     "is_nullable": "YES",
+     "ordinal": 3,
+     "schema_name": "sg_ops",
+     "table_name": "events",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "id",
+     "comment": "",
+     "data_type": "int",
+     "is_mariadb": 0,
+     "is_nullable": "YES",
+     "ordinal": 1,
+     "schema_name": "sg_ops",
+     "table_name": "odd`name",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "order_id",
+     "comment": "",
+     "data_type": "int",
+     "is_mariadb": 0,
+     "is_nullable": "NO",
+     "ordinal": 1,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "line_no",
+     "comment": "",
+     "data_type": "int",
+     "is_mariadb": 0,
+     "is_nullable": "NO",
+     "ordinal": 2,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "customer_id",
+     "comment": "",
+     "data_type": "int",
+     "is_mariadb": 0,
+     "is_nullable": "YES",
+     "ordinal": 3,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "qty",
+     "comment": "",
+     "data_type": "smallint",
+     "is_mariadb": 0,
+     "is_nullable": "YES",
+     "ordinal": 4,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "customer_id",
+     "comment": "",
+     "data_type": "int",
+     "is_mariadb": 0,
+     "is_nullable": "NO",
+     "ordinal": 1,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "email",
+     "comment": "login address",
+     "data_type": "varchar(255)",
+     "is_mariadb": 0,
+     "is_nullable": "NO",
+     "ordinal": 2,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "note",
+     "comment": "",
+     "data_type": "text",
+     "is_mariadb": 0,
+     "is_nullable": "YES",
+     "ordinal": 3,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": "1.50",
+     "column_name": "score",
+     "comment": "",
+     "data_type": "decimal(10,2)",
+     "is_mariadb": 0,
+     "is_nullable": "YES",
+     "ordinal": 4,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "seen",
+     "comment": "",
+     "data_type": "datetime",
+     "is_mariadb": 0,
+     "is_nullable": "YES",
+     "ordinal": 5,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "flags",
+     "comment": "",
+     "data_type": "mediumint unsigned",
+     "is_mariadb": 0,
+     "is_nullable": "YES",
+     "ordinal": 6,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "product_id",
+     "comment": "",
+     "data_type": "int",
+     "is_mariadb": 0,
+     "is_nullable": "NO",
+     "ordinal": 1,
+     "schema_name": "sg_shop",
+     "table_name": "products",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "name",
+     "comment": "",
+     "data_type": "varchar(100)",
+     "is_mariadb": 0,
+     "is_nullable": "YES",
+     "ordinal": 2,
+     "schema_name": "sg_shop",
+     "table_name": "products",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "body",
+     "comment": "",
+     "data_type": "longtext",
+     "is_mariadb": 0,
+     "is_nullable": "YES",
+     "ordinal": 3,
+     "schema_name": "sg_shop",
+     "table_name": "products",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "payload",
+     "comment": "",
+     "data_type": "json",
+     "is_mariadb": 0,
+     "is_nullable": "YES",
+     "ordinal": 4,
+     "schema_name": "sg_shop",
+     "table_name": "products",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "customer_id",
+     "comment": "",
+     "data_type": "int",
+     "is_mariadb": 0,
+     "is_nullable": "NO",
+     "ordinal": 1,
+     "schema_name": "sg_shop",
+     "table_name": "v_customers",
+     "table_type": "VIEW"
+    },
+    {
+     "column_default": null,
+     "column_name": "email",
+     "comment": "login address",
+     "data_type": "varchar(255)",
+     "is_mariadb": 0,
+     "is_nullable": "NO",
+     "ordinal": 2,
+     "schema_name": "sg_shop",
+     "table_name": "v_customers",
+     "table_type": "VIEW"
+    }
+   ],
+   "sql": "select c.table_schema as schema_name, c.table_name as table_name, t.table_type as table_type, c.column_name as column_name, c.ordinal_position as ordinal, c.column_type as data_type, c.is_nullable as is_nullable, c.column_default as column_default, c.column_comment as comment, locate('mariadb', @@version) > 0 as is_mariadb from information_schema.columns c join information_schema.tables t on t.table_schema = c.table_schema and t.table_name = c.table_name where (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) order by c.table_schema, c.table_name, c.ordinal_position"
+  },
+  {
+   "params": [
+    "sg_ops",
+    "events",
+    "sg_ops",
+    "odd`name",
+    "sg_shop",
+    "Order Items",
+    "sg_shop",
+    "customers",
+    "sg_shop",
+    "products",
+    "sg_shop",
+    "v_customers"
+   ],
+   "rows": [
+    {
+     "cname": "PRIMARY",
+     "column_name": "event_id",
+     "ctype": "PRIMARY KEY",
+     "pos": 1,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "sg_ops",
+     "table_name": "events"
+    },
+    {
+     "cname": "uq_cust_line",
+     "column_name": "customer_id",
+     "ctype": "UNIQUE",
+     "pos": 1,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "cname": "uq_cust_line",
+     "column_name": "line_no",
+     "ctype": "UNIQUE",
+     "pos": 2,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "cname": "PRIMARY",
+     "column_name": "order_id",
+     "ctype": "PRIMARY KEY",
+     "pos": 1,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "cname": "PRIMARY",
+     "column_name": "line_no",
+     "ctype": "PRIMARY KEY",
+     "pos": 2,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "cname": "fk_cust",
+     "column_name": "customer_id",
+     "ctype": "FOREIGN KEY",
+     "pos": 1,
+     "ref_column": "customer_id",
+     "ref_schema": "sg_shop",
+     "ref_table": "customers",
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "cname": "PRIMARY",
+     "column_name": "customer_id",
+     "ctype": "PRIMARY KEY",
+     "pos": 1,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "sg_shop",
+     "table_name": "customers"
+    },
+    {
+     "cname": "PRIMARY",
+     "column_name": "product_id",
+     "ctype": "PRIMARY KEY",
+     "pos": 1,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "sg_shop",
+     "table_name": "products"
+    }
+   ],
+   "sql": "select tc.table_schema as schema_name, tc.table_name as table_name, tc.constraint_type as ctype, tc.constraint_name as cname, k.ordinal_position as pos, k.column_name as column_name, k.referenced_table_schema as ref_schema, k.referenced_table_name as ref_table, k.referenced_column_name as ref_column from information_schema.table_constraints tc join information_schema.key_column_usage k on k.constraint_schema = tc.constraint_schema and k.constraint_name = tc.constraint_name and k.table_schema = tc.table_schema and k.table_name = tc.table_name where tc.constraint_type in ('primary key', 'unique', 'foreign key') and ((tc.table_schema = ? and tc.table_name = ?) or (tc.table_schema = ? and tc.table_name = ?) or (tc.table_schema = ? and tc.table_name = ?) or (tc.table_schema = ? and tc.table_name = ?) or (tc.table_schema = ? and tc.table_name = ?) or (tc.table_schema = ? and tc.table_name = ?)) order by tc.table_schema, tc.table_name, tc.constraint_type desc, tc.constraint_name, k.ordinal_position"
+  }
+ ]
+}

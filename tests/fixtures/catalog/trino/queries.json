@@ -1,0 +1,375 @@
+{
+ "dialect": "trino",
+ "only_catalogs": [
+  "memory"
+ ],
+ "queries": [
+  {
+   "params": [],
+   "rows": [
+    {
+     "Catalog": "jmx"
+    },
+    {
+     "Catalog": "memory"
+    },
+    {
+     "Catalog": "system"
+    },
+    {
+     "Catalog": "tpcds"
+    },
+    {
+     "Catalog": "tpch"
+    }
+   ],
+   "sql": "show catalogs"
+  },
+  {
+   "params": [
+    "information_schema"
+   ],
+   "rows": [
+    {
+     "schema_name": "default"
+    },
+    {
+     "schema_name": "sg_ops"
+    },
+    {
+     "schema_name": "sg_shop"
+    }
+   ],
+   "sql": "select schema_name from \"memory\".information_schema.schemata where schema_name <> ? order by schema_name"
+  },
+  {
+   "params": [
+    "memory",
+    "default",
+    "default",
+    null,
+    null,
+    1001
+   ],
+   "rows": [],
+   "sql": "select t.table_name as name, t.table_type as table_type, c.comment as comment from \"memory\".information_schema.tables t left join system.metadata.table_comments c on c.catalog_name = ? and c.schema_name = ? and c.table_name = t.table_name where t.table_schema = ? and t.table_type in ('base table', 'view') and (cast(? as varchar) is null or t.table_name > cast(? as varchar)) order by t.table_name limit ?"
+  },
+  {
+   "params": [
+    "memory",
+    "sg_ops",
+    "sg_ops",
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "comment": null,
+     "name": "events",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "comment": null,
+     "name": "odd name",
+     "table_type": "BASE TABLE"
+    }
+   ],
+   "sql": "select t.table_name as name, t.table_type as table_type, c.comment as comment from \"memory\".information_schema.tables t left join system.metadata.table_comments c on c.catalog_name = ? and c.schema_name = ? and c.table_name = t.table_name where t.table_schema = ? and t.table_type in ('base table', 'view') and (cast(? as varchar) is null or t.table_name > cast(? as varchar)) order by t.table_name limit ?"
+  },
+  {
+   "params": [
+    "memory",
+    "sg_shop",
+    "sg_shop",
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "comment": "people who buy",
+     "name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "comment": null,
+     "name": "order items",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "comment": null,
+     "name": "products",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "comment": null,
+     "name": "v_customers",
+     "table_type": "VIEW"
+    }
+   ],
+   "sql": "select t.table_name as name, t.table_type as table_type, c.comment as comment from \"memory\".information_schema.tables t left join system.metadata.table_comments c on c.catalog_name = ? and c.schema_name = ? and c.table_name = t.table_name where t.table_schema = ? and t.table_type in ('base table', 'view') and (cast(? as varchar) is null or t.table_name > cast(? as varchar)) order by t.table_name limit ?"
+  },
+  {
+   "params": [
+    "sg_ops",
+    "events",
+    "sg_ops",
+    "odd name",
+    "sg_shop",
+    "customers",
+    "sg_shop",
+    "order items",
+    "sg_shop",
+    "products",
+    "sg_shop",
+    "v_customers"
+   ],
+   "rows": [
+    {
+     "column_default": null,
+     "column_name": "event_id",
+     "comment": null,
+     "data_type": "bigint",
+     "is_nullable": "YES",
+     "ordinal": 1,
+     "schema_name": "sg_ops",
+     "table_name": "events",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "at",
+     "comment": null,
+     "data_type": "date",
+     "is_nullable": "YES",
+     "ordinal": 2,
+     "schema_name": "sg_ops",
+     "table_name": "events",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "kind",
+     "comment": null,
+     "data_type": "char(1)",
+     "is_nullable": "YES",
+     "ordinal": 3,
+     "schema_name": "sg_ops",
+     "table_name": "events",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "id",
+     "comment": null,
+     "data_type": "integer",
+     "is_nullable": "YES",
+     "ordinal": 1,
+     "schema_name": "sg_ops",
+     "table_name": "odd name",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "customer_id",
+     "comment": null,
+     "data_type": "integer",
+     "is_nullable": "YES",
+     "ordinal": 1,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "email",
+     "comment": "login address",
+     "data_type": "varchar",
+     "is_nullable": "YES",
+     "ordinal": 2,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "note",
+     "comment": null,
+     "data_type": "varchar",
+     "is_nullable": "YES",
+     "ordinal": 3,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "score",
+     "comment": null,
+     "data_type": "decimal(10,2)",
+     "is_nullable": "YES",
+     "ordinal": 4,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "seen",
+     "comment": null,
+     "data_type": "timestamp(3) with time zone",
+     "is_nullable": "YES",
+     "ordinal": 5,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "tags",
+     "comment": null,
+     "data_type": "array(varchar)",
+     "is_nullable": "YES",
+     "ordinal": 6,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "addr",
+     "comment": null,
+     "data_type": "row(\"city\" varchar, \"zip\" varchar)",
+     "is_nullable": "YES",
+     "ordinal": 7,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "order_id",
+     "comment": null,
+     "data_type": "bigint",
+     "is_nullable": "YES",
+     "ordinal": 1,
+     "schema_name": "sg_shop",
+     "table_name": "order items",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "line_no",
+     "comment": null,
+     "data_type": "integer",
+     "is_nullable": "YES",
+     "ordinal": 2,
+     "schema_name": "sg_shop",
+     "table_name": "order items",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "customer_id",
+     "comment": null,
+     "data_type": "integer",
+     "is_nullable": "YES",
+     "ordinal": 3,
+     "schema_name": "sg_shop",
+     "table_name": "order items",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "qty",
+     "comment": null,
+     "data_type": "smallint",
+     "is_nullable": "YES",
+     "ordinal": 4,
+     "schema_name": "sg_shop",
+     "table_name": "order items",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "meta",
+     "comment": null,
+     "data_type": "map(varchar, varchar)",
+     "is_nullable": "YES",
+     "ordinal": 5,
+     "schema_name": "sg_shop",
+     "table_name": "order items",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "product_id",
+     "comment": null,
+     "data_type": "integer",
+     "is_nullable": "YES",
+     "ordinal": 1,
+     "schema_name": "sg_shop",
+     "table_name": "products",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "name",
+     "comment": null,
+     "data_type": "varchar(100)",
+     "is_nullable": "YES",
+     "ordinal": 2,
+     "schema_name": "sg_shop",
+     "table_name": "products",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "payload",
+     "comment": null,
+     "data_type": "varbinary",
+     "is_nullable": "YES",
+     "ordinal": 3,
+     "schema_name": "sg_shop",
+     "table_name": "products",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "ok",
+     "comment": null,
+     "data_type": "boolean",
+     "is_nullable": "YES",
+     "ordinal": 4,
+     "schema_name": "sg_shop",
+     "table_name": "products",
+     "table_type": "BASE TABLE"
+    },
+    {
+     "column_default": null,
+     "column_name": "customer_id",
+     "comment": null,
+     "data_type": "integer",
+     "is_nullable": "YES",
+     "ordinal": 1,
+     "schema_name": "sg_shop",
+     "table_name": "v_customers",
+     "table_type": "VIEW"
+    },
+    {
+     "column_default": null,
+     "column_name": "email",
+     "comment": null,
+     "data_type": "varchar",
+     "is_nullable": "YES",
+     "ordinal": 2,
+     "schema_name": "sg_shop",
+     "table_name": "v_customers",
+     "table_type": "VIEW"
+    }
+   ],
+   "sql": "select c.table_schema as schema_name, c.table_name as table_name, t.table_type as table_type, c.column_name as column_name, c.ordinal_position as ordinal, c.data_type as data_type, c.is_nullable as is_nullable, c.column_default as column_default, c.comment as comment from \"memory\".information_schema.columns c join \"memory\".information_schema.tables t on t.table_schema = c.table_schema and t.table_name = c.table_name where (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) order by c.table_schema, c.table_name, c.ordinal_position"
+  }
+ ]
+}

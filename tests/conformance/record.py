@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import sys
+from collections.abc import Callable
 
 from schemaguru.catalog import DBAPIExecutor, reader_for
 from tests.conformance.replay import record
@@ -28,7 +30,27 @@ def _duckdb() -> None:
     record(lambda ex: reader_for("duckdb", ex), DBAPIExecutor(conn), "duckdb")
 
 
-RECORDERS = {"duckdb": _duckdb}
+def _engine(name: str) -> Callable[[], None]:
+    def run() -> None:
+        from tests.integration.catalog.engines import ENGINES
+
+        engine = ENGINES[name]
+        conn = engine.connect(os.environ[f"SCHEMAGURU_TEST_{name.upper()}_DSN"])
+        engine.seed(conn)
+        record(
+            lambda ex: reader_for(name, ex),
+            engine.executor(conn),
+            name,
+            only_catalogs=engine.only_catalogs,
+        )
+
+    return run
+
+
+RECORDERS: dict[str, Callable[[], None]] = {
+    "duckdb": _duckdb,
+    **{name: _engine(name) for name in ("mysql", "clickhouse", "tsql", "trino")},
+}
 
 if __name__ == "__main__":
     RECORDERS[sys.argv[1]]()

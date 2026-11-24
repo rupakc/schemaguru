@@ -1,0 +1,550 @@
+{
+ "dialect": "tsql",
+ "only_catalogs": null,
+ "queries": [
+  {
+   "params": [
+    "sys",
+    "INFORMATION_SCHEMA",
+    "guest"
+   ],
+   "rows": [
+    {
+     "comment": null,
+     "name": "dbo",
+     "table_count": 0
+    },
+    {
+     "comment": null,
+     "name": "sg_ops",
+     "table_count": 2
+    },
+    {
+     "comment": "storefront",
+     "name": "sg_shop",
+     "table_count": 4
+    }
+   ],
+   "sql": "select s.name as name, cast((select top 1 ep.value from sys.extended_properties ep where ep.class = 3 and ep.major_id = s.schema_id and ep.minor_id = 0 and ep.name = 'ms_description') as nvarchar(4000)) as comment, (select count(*) from sys.objects o where o.schema_id = s.schema_id and o.type in ('u', 'v') and o.is_ms_shipped = 0) as table_count from sys.schemas s where s.name not in (?, ?, ?) and s.schema_id not between 16384 and 16399 order by s.name collate latin1_general_bin2"
+  },
+  {
+   "params": [
+    1001,
+    "dbo",
+    null,
+    null
+   ],
+   "rows": [],
+   "sql": "select top (?) o.name as name, o.type as obj_type, cast((select top 1 ep.value from sys.extended_properties ep where ep.class = 1 and ep.major_id = o.object_id and ep.minor_id = 0 and ep.name = 'ms_description') as nvarchar(4000)) as comment, case when o.type = 'u' then (select sum(p.rows) from sys.partitions p where p.object_id = o.object_id and p.index_id < 2) end as row_count from sys.objects o join sys.schemas s on s.schema_id = o.schema_id where s.name = ? and o.type in ('u', 'v') and o.is_ms_shipped = 0 and (cast(? as nvarchar(256)) is null or o.name collate latin1_general_bin2 > cast(? as nvarchar(256)) collate latin1_general_bin2) order by o.name collate latin1_general_bin2"
+  },
+  {
+   "params": [
+    1001,
+    "sg_ops",
+    null,
+    null
+   ],
+   "rows": [
+    {
+     "comment": null,
+     "name": "events",
+     "obj_type": "U ",
+     "row_count": 0
+    },
+    {
+     "comment": null,
+     "name": "odd]name",
+     "obj_type": "U ",
+     "row_count": 0
+    }
+   ],
+   "sql": "select top (?) o.name as name, o.type as obj_type, cast((select top 1 ep.value from sys.extended_properties ep where ep.class = 1 and ep.major_id = o.object_id and ep.minor_id = 0 and ep.name = 'ms_description') as nvarchar(4000)) as comment, case when o.type = 'u' then (select sum(p.rows) from sys.partitions p where p.object_id = o.object_id and p.index_id < 2) end as row_count from sys.objects o join sys.schemas s on s.schema_id = o.schema_id where s.name = ? and o.type in ('u', 'v') and o.is_ms_shipped = 0 and (cast(? as nvarchar(256)) is null or o.name collate latin1_general_bin2 > cast(? as nvarchar(256)) collate latin1_general_bin2) order by o.name collate latin1_general_bin2"
+  },
+  {
+   "params": [
+    1001,
+    "sg_shop",
+    null,
+    null
+   ],
+   "rows": [
+    {
+     "comment": null,
+     "name": "Order Items",
+     "obj_type": "U ",
+     "row_count": 0
+    },
+    {
+     "comment": "people who buy",
+     "name": "customers",
+     "obj_type": "U ",
+     "row_count": 2
+    },
+    {
+     "comment": null,
+     "name": "products",
+     "obj_type": "U ",
+     "row_count": 0
+    },
+    {
+     "comment": null,
+     "name": "v_customers",
+     "obj_type": "V ",
+     "row_count": null
+    }
+   ],
+   "sql": "select top (?) o.name as name, o.type as obj_type, cast((select top 1 ep.value from sys.extended_properties ep where ep.class = 1 and ep.major_id = o.object_id and ep.minor_id = 0 and ep.name = 'ms_description') as nvarchar(4000)) as comment, case when o.type = 'u' then (select sum(p.rows) from sys.partitions p where p.object_id = o.object_id and p.index_id < 2) end as row_count from sys.objects o join sys.schemas s on s.schema_id = o.schema_id where s.name = ? and o.type in ('u', 'v') and o.is_ms_shipped = 0 and (cast(? as nvarchar(256)) is null or o.name collate latin1_general_bin2 > cast(? as nvarchar(256)) collate latin1_general_bin2) order by o.name collate latin1_general_bin2"
+  },
+  {
+   "params": [
+    "sg_ops",
+    "events",
+    "sg_ops",
+    "odd]name",
+    "sg_shop",
+    "Order Items",
+    "sg_shop",
+    "customers",
+    "sg_shop",
+    "products",
+    "sg_shop",
+    "v_customers"
+   ],
+   "rows": [
+    {
+     "base_name": "bigint",
+     "column_default": null,
+     "column_name": "event_id",
+     "comment": null,
+     "is_nullable": false,
+     "is_user_defined": false,
+     "max_length": 8,
+     "obj_type": "U ",
+     "ordinal": 1,
+     "prec": 19,
+     "scale": 0,
+     "schema_name": "sg_ops",
+     "table_name": "events",
+     "type_name": "bigint"
+    },
+    {
+     "base_name": "datetimeoffset",
+     "column_default": null,
+     "column_name": "at",
+     "comment": null,
+     "is_nullable": true,
+     "is_user_defined": false,
+     "max_length": 10,
+     "obj_type": "U ",
+     "ordinal": 2,
+     "prec": 34,
+     "scale": 7,
+     "schema_name": "sg_ops",
+     "table_name": "events",
+     "type_name": "datetimeoffset"
+    },
+    {
+     "base_name": "char",
+     "column_default": null,
+     "column_name": "kind",
+     "comment": null,
+     "is_nullable": true,
+     "is_user_defined": false,
+     "max_length": 1,
+     "obj_type": "U ",
+     "ordinal": 3,
+     "prec": 0,
+     "scale": 0,
+     "schema_name": "sg_ops",
+     "table_name": "events",
+     "type_name": "char"
+    },
+    {
+     "base_name": "int",
+     "column_default": null,
+     "column_name": "id",
+     "comment": null,
+     "is_nullable": true,
+     "is_user_defined": false,
+     "max_length": 4,
+     "obj_type": "U ",
+     "ordinal": 1,
+     "prec": 10,
+     "scale": 0,
+     "schema_name": "sg_ops",
+     "table_name": "odd]name",
+     "type_name": "int"
+    },
+    {
+     "base_name": "int",
+     "column_default": null,
+     "column_name": "customer_id",
+     "comment": null,
+     "is_nullable": false,
+     "is_user_defined": false,
+     "max_length": 4,
+     "obj_type": "U ",
+     "ordinal": 1,
+     "prec": 10,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "type_name": "int"
+    },
+    {
+     "base_name": "nvarchar",
+     "column_default": null,
+     "column_name": "email",
+     "comment": "login address",
+     "is_nullable": false,
+     "is_user_defined": false,
+     "max_length": 510,
+     "obj_type": "U ",
+     "ordinal": 2,
+     "prec": 0,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "type_name": "nvarchar"
+    },
+    {
+     "base_name": "nvarchar",
+     "column_default": null,
+     "column_name": "note",
+     "comment": null,
+     "is_nullable": true,
+     "is_user_defined": false,
+     "max_length": -1,
+     "obj_type": "U ",
+     "ordinal": 3,
+     "prec": 0,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "type_name": "nvarchar"
+    },
+    {
+     "base_name": "decimal",
+     "column_default": "((1.50))",
+     "column_name": "score",
+     "comment": null,
+     "is_nullable": true,
+     "is_user_defined": false,
+     "max_length": 9,
+     "obj_type": "U ",
+     "ordinal": 4,
+     "prec": 10,
+     "scale": 2,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "type_name": "decimal"
+    },
+    {
+     "base_name": "datetime2",
+     "column_default": null,
+     "column_name": "seen",
+     "comment": null,
+     "is_nullable": true,
+     "is_user_defined": false,
+     "max_length": 7,
+     "obj_type": "U ",
+     "ordinal": 5,
+     "prec": 23,
+     "scale": 3,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "type_name": "datetime2"
+    },
+    {
+     "base_name": "bit",
+     "column_default": null,
+     "column_name": "ok",
+     "comment": null,
+     "is_nullable": true,
+     "is_user_defined": false,
+     "max_length": 1,
+     "obj_type": "U ",
+     "ordinal": 6,
+     "prec": 1,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "customers",
+     "type_name": "bit"
+    },
+    {
+     "base_name": "int",
+     "column_default": null,
+     "column_name": "order_id",
+     "comment": null,
+     "is_nullable": false,
+     "is_user_defined": false,
+     "max_length": 4,
+     "obj_type": "U ",
+     "ordinal": 1,
+     "prec": 10,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items",
+     "type_name": "int"
+    },
+    {
+     "base_name": "int",
+     "column_default": null,
+     "column_name": "line_no",
+     "comment": null,
+     "is_nullable": false,
+     "is_user_defined": false,
+     "max_length": 4,
+     "obj_type": "U ",
+     "ordinal": 2,
+     "prec": 10,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items",
+     "type_name": "int"
+    },
+    {
+     "base_name": "int",
+     "column_default": null,
+     "column_name": "customer_id",
+     "comment": null,
+     "is_nullable": true,
+     "is_user_defined": false,
+     "max_length": 4,
+     "obj_type": "U ",
+     "ordinal": 3,
+     "prec": 10,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items",
+     "type_name": "int"
+    },
+    {
+     "base_name": "smallint",
+     "column_default": null,
+     "column_name": "qty",
+     "comment": null,
+     "is_nullable": true,
+     "is_user_defined": false,
+     "max_length": 2,
+     "obj_type": "U ",
+     "ordinal": 4,
+     "prec": 5,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items",
+     "type_name": "smallint"
+    },
+    {
+     "base_name": "int",
+     "column_default": null,
+     "column_name": "product_id",
+     "comment": null,
+     "is_nullable": false,
+     "is_user_defined": false,
+     "max_length": 4,
+     "obj_type": "U ",
+     "ordinal": 1,
+     "prec": 10,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "products",
+     "type_name": "int"
+    },
+    {
+     "base_name": "varchar",
+     "column_default": null,
+     "column_name": "name",
+     "comment": null,
+     "is_nullable": true,
+     "is_user_defined": false,
+     "max_length": 100,
+     "obj_type": "U ",
+     "ordinal": 2,
+     "prec": 0,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "products",
+     "type_name": "varchar"
+    },
+    {
+     "base_name": "varbinary",
+     "column_default": null,
+     "column_name": "payload",
+     "comment": null,
+     "is_nullable": true,
+     "is_user_defined": false,
+     "max_length": -1,
+     "obj_type": "U ",
+     "ordinal": 3,
+     "prec": 0,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "products",
+     "type_name": "varbinary"
+    },
+    {
+     "base_name": "uniqueidentifier",
+     "column_default": null,
+     "column_name": "token",
+     "comment": null,
+     "is_nullable": true,
+     "is_user_defined": false,
+     "max_length": 16,
+     "obj_type": "U ",
+     "ordinal": 4,
+     "prec": 0,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "products",
+     "type_name": "uniqueidentifier"
+    },
+    {
+     "base_name": "int",
+     "column_default": null,
+     "column_name": "customer_id",
+     "comment": null,
+     "is_nullable": false,
+     "is_user_defined": false,
+     "max_length": 4,
+     "obj_type": "V ",
+     "ordinal": 1,
+     "prec": 10,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "v_customers",
+     "type_name": "int"
+    },
+    {
+     "base_name": "nvarchar",
+     "column_default": null,
+     "column_name": "email",
+     "comment": null,
+     "is_nullable": false,
+     "is_user_defined": false,
+     "max_length": 510,
+     "obj_type": "V ",
+     "ordinal": 2,
+     "prec": 0,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "v_customers",
+     "type_name": "nvarchar"
+    }
+   ],
+   "sql": "select s.name as schema_name, o.name as table_name, o.type as obj_type, c.column_id as ordinal, c.name as column_name, ty.name as type_name, ty.is_user_defined as is_user_defined, bt.name as base_name, c.max_length as max_length, c.precision as prec, c.scale as scale, c.is_nullable as is_nullable, dc.definition as column_default, cast((select top 1 ep.value from sys.extended_properties ep where ep.class = 1 and ep.major_id = o.object_id and ep.minor_id = c.column_id and ep.name = 'ms_description') as nvarchar(4000)) as comment from sys.columns c join sys.objects o on o.object_id = c.object_id join sys.schemas s on s.schema_id = o.schema_id join sys.types ty on ty.user_type_id = c.user_type_id join sys.types bt on bt.user_type_id = ty.system_type_id left join sys.default_constraints dc on dc.parent_object_id = c.object_id and dc.parent_column_id = c.column_id where o.type in ('u', 'v') and ((s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?)) order by s.name, o.name, c.column_id"
+  },
+  {
+   "params": [
+    "sg_ops",
+    "events",
+    "sg_ops",
+    "odd]name",
+    "sg_shop",
+    "Order Items",
+    "sg_shop",
+    "customers",
+    "sg_shop",
+    "products",
+    "sg_shop",
+    "v_customers"
+   ],
+   "rows": [
+    {
+     "cname": "PK__events__2370F7271C59854E",
+     "column_name": "event_id",
+     "ctype": "PK",
+     "enforced": 1,
+     "pos": 1,
+     "schema_name": "sg_ops",
+     "table_name": "events"
+    },
+    {
+     "cname": "PK__customer__CD65CB85E1E6F59A",
+     "column_name": "customer_id",
+     "ctype": "PK",
+     "enforced": 1,
+     "pos": 1,
+     "schema_name": "sg_shop",
+     "table_name": "customers"
+    },
+    {
+     "cname": "uq_cust_line",
+     "column_name": "customer_id",
+     "ctype": "UQ",
+     "enforced": 1,
+     "pos": 1,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "cname": "uq_cust_line",
+     "column_name": "line_no",
+     "ctype": "UQ",
+     "enforced": 1,
+     "pos": 2,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "cname": "PK__Order It__5903824AC8090FCD",
+     "column_name": "order_id",
+     "ctype": "PK",
+     "enforced": 1,
+     "pos": 1,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "cname": "PK__Order It__5903824AC8090FCD",
+     "column_name": "line_no",
+     "ctype": "PK",
+     "enforced": 1,
+     "pos": 2,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "cname": "PK__products__47027DF54BD4E6B3",
+     "column_name": "product_id",
+     "ctype": "PK",
+     "enforced": 1,
+     "pos": 1,
+     "schema_name": "sg_shop",
+     "table_name": "products"
+    }
+   ],
+   "sql": "select s.name as schema_name, o.name as table_name, kc.type as ctype, kc.name as cname, ic.key_ordinal as pos, c.name as column_name, case when cast(serverproperty('engineedition') as int) = 6 then 0 else 1 end as enforced from sys.key_constraints kc join sys.objects o on o.object_id = kc.parent_object_id join sys.schemas s on s.schema_id = o.schema_id join sys.index_columns ic on ic.object_id = kc.parent_object_id and ic.index_id = kc.unique_index_id and ic.is_included_column = 0 join sys.columns c on c.object_id = ic.object_id and c.column_id = ic.column_id where kc.type in ('pk', 'uq') and ((s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?)) order by s.name, o.name, kc.type desc, kc.name, ic.key_ordinal"
+  },
+  {
+   "params": [
+    "sg_ops",
+    "events",
+    "sg_ops",
+    "odd]name",
+    "sg_shop",
+    "Order Items",
+    "sg_shop",
+    "customers",
+    "sg_shop",
+    "products",
+    "sg_shop",
+    "v_customers"
+   ],
+   "rows": [
+    {
+     "cname": "fk_cust",
+     "column_name": "customer_id",
+     "enforced": 1,
+     "pos": 1,
+     "ref_column": "customer_id",
+     "ref_schema": "sg_shop",
+     "ref_table": "customers",
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    }
+   ],
+   "sql": "select s.name as schema_name, o.name as table_name, fk.name as cname, fkc.constraint_column_id as pos, pc.name as column_name, rs.name as ref_schema, ro.name as ref_table, rc.name as ref_column, case when fk.is_disabled = 1 then 0 else case when cast(serverproperty('engineedition') as int) = 6 then 0 else 1 end end as enforced from sys.foreign_keys fk join sys.objects o on o.object_id = fk.parent_object_id join sys.schemas s on s.schema_id = o.schema_id join sys.foreign_key_columns fkc on fkc.constraint_object_id = fk.object_id join sys.columns pc on pc.object_id = fkc.parent_object_id and pc.column_id = fkc.parent_column_id join sys.objects ro on ro.object_id = fkc.referenced_object_id join sys.schemas rs on rs.schema_id = ro.schema_id join sys.columns rc on rc.object_id = fkc.referenced_object_id and rc.column_id = fkc.referenced_column_id where ((s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?)) order by s.name, o.name, fk.name, fkc.constraint_column_id"
+  }
+ ]
+}

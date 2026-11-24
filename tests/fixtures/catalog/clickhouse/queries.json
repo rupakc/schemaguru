@@ -1,0 +1,360 @@
+{
+ "dialect": "clickhouse",
+ "only_catalogs": null,
+ "queries": [
+  {
+   "params": [
+    "system",
+    "INFORMATION_SCHEMA",
+    "information_schema"
+   ],
+   "rows": [
+    {
+     "comment": "",
+     "name": "default",
+     "table_count": 0
+    },
+    {
+     "comment": "",
+     "name": "sg_ops",
+     "table_count": 2
+    },
+    {
+     "comment": "",
+     "name": "sg_shop",
+     "table_count": 4
+    }
+   ],
+   "sql": "select d.name as name, d.comment as comment, countif(t.name != '') as table_count from system.databases d left join system.tables t on t.database = d.name and not t.is_temporary where d.name not in (?, ?, ?) group by d.name, d.comment order by d.name"
+  },
+  {
+   "params": [
+    "default",
+    null,
+    null,
+    null,
+    null,
+    1001
+   ],
+   "rows": [],
+   "sql": "select name, engine, comment, total_rows, total_bytes, totimezone(metadata_modification_time, 'utc') as modified_at, partition_key, sorting_key from system.tables where database = ? and not is_temporary and (? is null or name > ?) and (? is null or metadata_modification_time > todatetime(?, 'utc')) order by name limit ?"
+  },
+  {
+   "params": [
+    "sg_ops",
+    null,
+    null,
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "comment": "",
+     "engine": "MergeTree",
+     "modified_at": {
+      "$datetime": "2026-11-24T16:33:02"
+     },
+     "name": "events",
+     "partition_key": "",
+     "sorting_key": "toDate(at)",
+     "total_bytes": 0,
+     "total_rows": 0
+    },
+    {
+     "comment": "",
+     "engine": "Memory",
+     "modified_at": {
+      "$datetime": "2026-11-24T16:33:02"
+     },
+     "name": "mem",
+     "partition_key": "",
+     "sorting_key": "",
+     "total_bytes": 0,
+     "total_rows": 0
+    }
+   ],
+   "sql": "select name, engine, comment, total_rows, total_bytes, totimezone(metadata_modification_time, 'utc') as modified_at, partition_key, sorting_key from system.tables where database = ? and not is_temporary and (? is null or name > ?) and (? is null or metadata_modification_time > todatetime(?, 'utc')) order by name limit ?"
+  },
+  {
+   "params": [
+    "sg_shop",
+    null,
+    null,
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "comment": "",
+     "engine": "MergeTree",
+     "modified_at": {
+      "$datetime": "2026-11-24T16:33:02"
+     },
+     "name": "Order Items",
+     "partition_key": "",
+     "sorting_key": "order_id, line_no",
+     "total_bytes": 0,
+     "total_rows": 0
+    },
+    {
+     "comment": "people who buy",
+     "engine": "MergeTree",
+     "modified_at": {
+      "$datetime": "2026-11-24T16:33:02"
+     },
+     "name": "customers",
+     "partition_key": "intDiv(customer_id, 1000)",
+     "sorting_key": "customer_id, note",
+     "total_bytes": 691,
+     "total_rows": 2
+    },
+    {
+     "comment": "",
+     "engine": "MergeTree",
+     "modified_at": {
+      "$datetime": "2026-11-24T16:33:02"
+     },
+     "name": "products",
+     "partition_key": "",
+     "sorting_key": "product_id",
+     "total_bytes": 0,
+     "total_rows": 0
+    },
+    {
+     "comment": "",
+     "engine": "View",
+     "modified_at": {
+      "$datetime": "2026-11-24T16:33:02"
+     },
+     "name": "v_customers",
+     "partition_key": "",
+     "sorting_key": "",
+     "total_bytes": null,
+     "total_rows": null
+    }
+   ],
+   "sql": "select name, engine, comment, total_rows, total_bytes, totimezone(metadata_modification_time, 'utc') as modified_at, partition_key, sorting_key from system.tables where database = ? and not is_temporary and (? is null or name > ?) and (? is null or metadata_modification_time > todatetime(?, 'utc')) order by name limit ?"
+  },
+  {
+   "params": [
+    "sg_ops",
+    "events",
+    "sg_ops",
+    "mem",
+    "sg_shop",
+    "Order Items",
+    "sg_shop",
+    "customers",
+    "sg_shop",
+    "products",
+    "sg_shop",
+    "v_customers"
+   ],
+   "rows": [
+    {
+     "column_name": "event_id",
+     "comment": "",
+     "data_type": "UInt64",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 1,
+     "schema_name": "sg_ops",
+     "table_name": "events"
+    },
+    {
+     "column_name": "at",
+     "comment": "",
+     "data_type": "DateTime",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 2,
+     "schema_name": "sg_ops",
+     "table_name": "events"
+    },
+    {
+     "column_name": "kind",
+     "comment": "",
+     "data_type": "Enum8('a' = 1, 'b' = 2)",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 3,
+     "schema_name": "sg_ops",
+     "table_name": "events"
+    },
+    {
+     "column_name": "id",
+     "comment": "",
+     "data_type": "Int8",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 1,
+     "schema_name": "sg_ops",
+     "table_name": "mem"
+    },
+    {
+     "column_name": "order_id",
+     "comment": "",
+     "data_type": "UInt64",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 1,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "column_name": "line_no",
+     "comment": "",
+     "data_type": "UInt32",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 2,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "column_name": "qty",
+     "comment": "",
+     "data_type": "Int16",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 3,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "column_name": "meta",
+     "comment": "",
+     "data_type": "Map(String, String)",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 4,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "column_name": "alias_col",
+     "comment": "",
+     "data_type": "UInt8",
+     "default_expression": "qty + 1",
+     "default_kind": "ALIAS",
+     "ordinal": 5,
+     "schema_name": "sg_shop",
+     "table_name": "Order Items"
+    },
+    {
+     "column_name": "customer_id",
+     "comment": "",
+     "data_type": "UInt32",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 1,
+     "schema_name": "sg_shop",
+     "table_name": "customers"
+    },
+    {
+     "column_name": "email",
+     "comment": "login address",
+     "data_type": "LowCardinality(Nullable(String))",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 2,
+     "schema_name": "sg_shop",
+     "table_name": "customers"
+    },
+    {
+     "column_name": "note",
+     "comment": "",
+     "data_type": "String",
+     "default_expression": "'x'",
+     "default_kind": "DEFAULT",
+     "ordinal": 3,
+     "schema_name": "sg_shop",
+     "table_name": "customers"
+    },
+    {
+     "column_name": "score",
+     "comment": "",
+     "data_type": "Decimal(10, 2)",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 4,
+     "schema_name": "sg_shop",
+     "table_name": "customers"
+    },
+    {
+     "column_name": "seen",
+     "comment": "",
+     "data_type": "Nullable(DateTime64(3))",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 5,
+     "schema_name": "sg_shop",
+     "table_name": "customers"
+    },
+    {
+     "column_name": "tags",
+     "comment": "",
+     "data_type": "Array(String)",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 6,
+     "schema_name": "sg_shop",
+     "table_name": "customers"
+    },
+    {
+     "column_name": "ok",
+     "comment": "",
+     "data_type": "Bool",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 7,
+     "schema_name": "sg_shop",
+     "table_name": "customers"
+    },
+    {
+     "column_name": "product_id",
+     "comment": "",
+     "data_type": "UInt32",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 1,
+     "schema_name": "sg_shop",
+     "table_name": "products"
+    },
+    {
+     "column_name": "name",
+     "comment": "",
+     "data_type": "String",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 2,
+     "schema_name": "sg_shop",
+     "table_name": "products"
+    },
+    {
+     "column_name": "customer_id",
+     "comment": "",
+     "data_type": "UInt32",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 1,
+     "schema_name": "sg_shop",
+     "table_name": "v_customers"
+    },
+    {
+     "column_name": "email",
+     "comment": "",
+     "data_type": "LowCardinality(Nullable(String))",
+     "default_expression": "",
+     "default_kind": "",
+     "ordinal": 2,
+     "schema_name": "sg_shop",
+     "table_name": "v_customers"
+    }
+   ],
+   "sql": "select database as schema_name, `table` as table_name, name as column_name, position as ordinal, type as data_type, default_kind, default_expression, comment from system.columns where (database = ? and `table` = ?) or (database = ? and `table` = ?) or (database = ? and `table` = ?) or (database = ? and `table` = ?) or (database = ? and `table` = ?) or (database = ? and `table` = ?) order by database, `table`, position"
+  }
+ ]
+}

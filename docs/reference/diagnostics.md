@@ -17,6 +17,11 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG207 | overlay waiver has expired and is ignored |
 | SG208 | overlay file is unreadable or an entry is malformed |
 | SG209 | dbt manifest is unreadable |
+| SG301 | probe over the per-probe byte budget was not run (fact ERROR over_budget) |
+| SG302 | total measurement budget exhausted; the remaining tables stay queued |
+| SG303 | a measurement probe failed (fact ERROR for that subject only) |
+| SG304 | the installed FactLang does not provide a needed measurement capability |
+| SG305 | a table asked to be measured is not in the store (crawl it first) |
 | SG701 | SQLite FTS5 is unavailable; search falls back to a slower LIKE scan |
 | SG702 | the store was written by a newer schema version than this library supports |
 | SG801 | guard refused the SQL: not a single read-only SELECT/WITH statement |

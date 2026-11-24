@@ -47,14 +47,14 @@ def test_expectation_kept_and_contradiction_shown() -> None:
     exp = Fact.make(
         FactKind.VALUES,
         STATUS,
-        {"values": ["a", "b"], "case_sensitive": True},
+        {"values": ["a", "b"], "case_sensitive": True, "split": None},
         Provenance.HUMAN,
         Status.UNVERIFIED,
     )
     obs = Fact.make(
         FactKind.VALUES, STATUS,
         {
-            "case_sensitive": True,
+            "case_sensitive": True, "split": None,
             "observed": [{"value": "a", "count": 5}, {"value": "c", "count": 412}],
         },
         Provenance.MEASURED, Status.OBSERVED, method="exact", observed_at=_ago(1),
@@ -71,13 +71,13 @@ def test_declared_values_not_contradicted_when_observed_within() -> None:
     exp = Fact.make(
         FactKind.VALUES,
         STATUS,
-        {"values": ["a", "b"], "case_sensitive": True},
+        {"values": ["a", "b"], "case_sensitive": True, "split": None},
         Provenance.DECLARED,
         Status.UNVERIFIED,
     )
     obs = Fact.make(
         FactKind.VALUES, STATUS,
-        {"observed": [{"value": "a", "count": 5}], "case_sensitive": True},
+        {"observed": [{"value": "a", "count": 5}], "case_sensitive": True, "split": None},
         Provenance.MEASURED, Status.OBSERVED, method="exact", observed_at=_ago(1),
     )  # fmt: skip
     eff = resolve([exp, obs], now=NOW, ttl_days=14)[_key(FactKind.VALUES, STATUS)]
@@ -89,7 +89,7 @@ def test_catalog_type_beats_note_and_both_shown() -> None:
     cat = Fact.make(
         FactKind.TYPE_NOTE,
         col,
-        {"stored_as": "STRING"},
+        {"stored_as": "STRING", "means": None},
         Provenance.CATALOG,
         Status.OBSERVED,
         observed_at=_ago(1),
@@ -286,12 +286,13 @@ def test_estimated_never_confirms() -> None:
     exp = Fact.make(
         FactKind.VALUES,
         STATUS,
-        {"values": ["a"], "case_sensitive": True},
+        {"values": ["a"], "case_sensitive": True, "split": None},
         Provenance.HUMAN,
         Status.UNVERIFIED,
     )
     est = Fact.make(
-        FactKind.VALUES, STATUS, {"observed": [{"value": "a", "count": 1}], "case_sensitive": True},
+        FactKind.VALUES, STATUS,
+        {"observed": [{"value": "a", "count": 1}], "case_sensitive": True, "split": None},
         Provenance.MEASURED, Status.ESTIMATED, method="sampled:1%", observed_at=_ago(1),
     )  # fmt: skip
     eff = resolve([exp, est], now=NOW, ttl_days=14)[_key(FactKind.VALUES, STATUS)]
@@ -322,21 +323,21 @@ def test_declared_expectation_checked_alongside_human() -> None:
     human = Fact.make(
         FactKind.VALUES,
         STATUS,
-        {"values": ["a", "b", "c"], "case_sensitive": True},
+        {"values": ["a", "b", "c"], "case_sensitive": True, "split": None},
         Provenance.HUMAN,
         Status.UNVERIFIED,
     )
     decl = Fact.make(
         FactKind.VALUES,
         STATUS,
-        {"values": ["a", "b"], "case_sensitive": True},
+        {"values": ["a", "b"], "case_sensitive": True, "split": None},
         Provenance.DECLARED,
         Status.UNVERIFIED,
     )
     obs = Fact.make(
         FactKind.VALUES, STATUS,
         {
-            "case_sensitive": True,
+            "case_sensitive": True, "split": None,
             "observed": [{"value": "a", "count": 1}, {"value": "c", "count": 9}],
         },
         Provenance.MEASURED, Status.OBSERVED, method="exact", observed_at=_ago(1),
@@ -408,13 +409,13 @@ def test_values_union_of_exact_and_newer_sample() -> None:
     exp = Fact.make(
         FactKind.VALUES,
         STATUS,
-        {"values": ["a"], "case_sensitive": True},
+        {"values": ["a"], "case_sensitive": True, "split": None},
         Provenance.HUMAN,
         Status.UNVERIFIED,
     )
     exact = Fact.make(
         FactKind.VALUES, STATUS,
-        {"case_sensitive": True, "observed": [
+        {"case_sensitive": True, "split": None, "observed": [
             {"value": "a", "count": 1}, {"value": "PAID", "count": 7}
         ]},
         Provenance.MEASURED, Status.OBSERVED, method="exact", observed_at=_ago(3),

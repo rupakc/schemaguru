@@ -23,7 +23,12 @@ def _fact(i: int, prov: Provenance, days: int, v: str) -> Fact:
     ][i % 4]
     status = Status.OBSERVED if prov is Provenance.MEASURED else Status.UNVERIFIED
     value = (
-        {"values": [v], "observed": [{"value": v + "x", "count": 2}]}
+        {
+            "values": [v],
+            "observed": [{"value": v + "x", "count": 2}],
+            "case_sensitive": True,
+            "split": None,
+        }
         if kind is FactKind.VALUES
         else {"category": v, "text": v, "rows": len(v)}
     )

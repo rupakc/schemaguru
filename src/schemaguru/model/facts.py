@@ -38,9 +38,22 @@ class Status(Enum):
 
 
 def _value_identity(kind: KindSpec, value: Mapping[str, Any]) -> dict[str, Any]:
+    """The payload part of a fact's id. A missing identity field is a programmer error.
+
+    Present-but-``None`` is a known unknown and is fine; an absent key would silently merge
+    facts that differ in that field (e.g. two FRESHNESS columns), so it raises.
+    """
     if kind.identity_fields is None:
         return dict(value)
-    return {f: value.get(f) for f in kind.identity_fields}
+    missing = [f for f in kind.identity_fields if f not in value]
+    if missing:
+        raise ValueError(f"{kind.name} value lacks identity field(s): {', '.join(missing)}")
+    return {f: value[f] for f in kind.identity_fields}
+
+
+def method_class(method: str | None) -> str:
+    """``"sampled"`` for a ``sampled:...`` method, else ``"exact"`` (spec 8.5, 8.6)."""
+    return "sampled" if (method or "").startswith("sampled:") else "exact"
 
 
 @dataclass(frozen=True)
@@ -104,7 +117,12 @@ class Fact:
         subject_key = (
             subject.identity_key() if isinstance(subject, JoinRef) else subject.canonical()
         )
-        fid = stable_hash([spec.name, subject_key, provenance.value, _value_identity(spec, value)])
+        ident: list[Any] = [spec.name, subject_key, provenance.value, _value_identity(spec, value)]
+        if provenance is Provenance.MEASURED:
+            # Exact and sampled measurements of one subject coexist: a newer sample must never
+            # overwrite an older exact number in the store (spec 8.5: never compare methods).
+            ident.append(method_class(method))
+        fid = stable_hash(ident)
         return cls(
             fid, spec, subject, value, provenance, status, method, evidence, source,
             observed_at, snapshot_id,

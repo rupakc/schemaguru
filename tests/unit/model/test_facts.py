@@ -90,10 +90,13 @@ def test_identity_fields_per_kind() -> None:
         )
 
     assert (
-        vals({"case_sensitive": True, "observed": [1]}).id
-        == vals({"case_sensitive": True, "observed": [2]}).id
+        vals({"case_sensitive": True, "split": None, "observed": [1]}).id
+        == vals({"case_sensitive": True, "split": None, "observed": [2]}).id
     )
-    assert vals({"case_sensitive": True}).id != vals({"case_sensitive": False}).id
+    assert (
+        vals({"case_sensitive": True, "split": None}).id
+        != vals({"case_sensitive": False, "split": None}).id
+    )
     d1 = Fact.make(FactKind.DESCRIPTION, ORD, {"text": "a"}, Provenance.HUMAN, Status.UNVERIFIED)
     d2 = Fact.make(FactKind.DESCRIPTION, ORD, {"text": "b"}, Provenance.HUMAN, Status.UNVERIFIED)
     assert d1.id != d2.id  # meaning kinds hash the whole value
@@ -147,3 +150,46 @@ def test_sampled_never_verified_any_provenance() -> None:
                 FactKind.PRIMARY_KEY, CUS.table_ref(), {"columns": ["id"]}, prov, Status.VERIFIED,
                 method="sampled:keyhash:0.1:1", evidence=Evidence(verdict="PASS"),
             )  # fmt: skip
+
+
+def _nr(method: str) -> Fact:
+    return Fact.make(
+        FactKind.NULL_RATE, ORD, {"rate": 0.1}, Provenance.MEASURED,
+        Status.ESTIMATED if method.startswith("sampled:") else Status.OBSERVED, method=method,
+    )  # fmt: skip
+
+
+def test_exact_and_sampled_measurements_of_one_subject_coexist() -> None:
+    exact = _nr("exact")
+    sampled = _nr("sampled:system:0.01:7")
+    assert exact.id != sampled.id  # a newer sample must not overwrite an older exact number
+
+
+def test_exact_remeasure_keeps_id() -> None:
+    assert _nr("exact").id == _nr("exact").id
+
+
+def test_sampled_remeasure_keeps_id_across_fraction_and_seed() -> None:
+    assert _nr("sampled:system:0.01:7").id == _nr("sampled:keyhash:0.5:9").id
+
+
+def test_method_class_only_for_measured() -> None:
+    a = Fact.make(FactKind.DESCRIPTION, ORD, {"text": "a"}, Provenance.HUMAN, Status.UNVERIFIED)
+    b = Fact.make(
+        FactKind.DESCRIPTION, ORD, {"text": "a"}, Provenance.HUMAN, Status.UNVERIFIED,
+        method="sampled:system:0.1:1",
+    )  # fmt: skip
+    assert a.id == b.id
+
+
+def test_missing_identity_field_fails_loudly() -> None:
+    with pytest.raises(ValueError, match="column"):
+        Fact.make(
+            FactKind.FRESHNESS, ORD.table_ref(), {"age_seconds": 3}, Provenance.MEASURED,
+            Status.OBSERVED, method="exact",
+        )  # fmt: skip
+    # present-but-None is a known unknown, not a missing field
+    Fact.make(
+        FactKind.VALUES, ORD, {"case_sensitive": True, "split": None}, Provenance.MEASURED,
+        Status.OBSERVED, method="exact",
+    )  # fmt: skip

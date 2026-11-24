@@ -74,3 +74,20 @@ payload keys (possibly empty). Built-ins: JOIN, NULL_RATE, ROW_COUNT, DISTINCT `
 VALUES `("case_sensitive","split")`; TYPE_NOTE `("stored_as","means")`; PII `("category",)`;
 PRIMARY_KEY `("columns",)`; SOFT_DELETE `("predicate",)`. JOIN ids also include `cast_to` (`JoinRef.identity_key()`). The id is `stable_hash([kind, subject,
 provenance, identity])` and is always computed, never supplied.
+
+## 2026-11-24 - MEASURED fact ids carry the method class (exact | sampled)
+Why: a newer sampled measurement of one subject overwrote the older exact one (same id), and a
+sample may refute but never replace an exact number (spec 8.5, 8.6).
+How to apply: `Fact.make` appends `method_class(method)` (`"sampled"` iff the method starts with
+`sampled:`, else `"exact"`) to the id input for MEASURED facts only. A missing identity field
+now raises `ValueError` (present-but-`None` is fine): write `"split": None`, `"means": None`.
+
+## 2026-11-24 - Measurement: plan, price, sample, admit, measure, convert (Task 6)
+Why: spec 8; SchemaGuru never writes measurement SQL.
+How to apply: `measure.scheduler.Scheduler` per table: `plan_table` -> `backend.estimate` (catalog
+bytes as `heuristic` fallback) -> `choose_sample` -> `BudgetGuard.admit` -> one `measure` batch ->
+`to_facts` -> `put_facts`; enum discovery (`TopValues`) is a second phase gated on the measured
+distinct <= `enum_max_distinct`. A large table's row count is a CATALOG fact from stats, never
+MEASURED. A failed/over-budget *heuristic or LLM* join candidate leaves no JOIN fact (diagnostic
+only); a declared one gets an ERROR fact. Unit tests use `tests/unit/measure/fake_backend.py`
+(DuckDB SQL in tests only; `system` rendered as seeded bernoulli). Codes SG301-SG305.

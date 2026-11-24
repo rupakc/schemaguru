@@ -21,9 +21,9 @@ def test_version_recorded_and_reopen(tmp_path: Path) -> None:
     SQLiteStore(p).close()
     SQLiteStore(p).close()
     con = sqlite3.connect(p)
-    rows = con.execute("SELECT version FROM schema_version").fetchall()
+    rows = con.execute("SELECT version FROM schema_version ORDER BY version").fetchall()
     con.close()
-    assert rows == [(schema_sql.LATEST_VERSION,)]
+    assert rows == [(v,) for v in range(1, schema_sql.LATEST_VERSION + 1)]
 
 
 def test_newer_store_refused(tmp_path: Path) -> None:

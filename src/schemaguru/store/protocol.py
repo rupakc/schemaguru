@@ -76,6 +76,13 @@ class Store(Protocol):
         """Lexical search over live tables; higher score is better; name hits rank first."""
         ...
 
+    def tables_named(self, names: Iterable[str], *, limit: int) -> list[ObjectRef]:
+        """Live tables whose bare table name equals one of ``names``, case-insensitively.
+
+        Ordered by canonical ref, at most ``limit``.
+        """
+        ...
+
     def snapshot(self, label: str | None = None, *, checks_run: Iterable[str] = ()) -> str: ...
 
     def snapshot_facts(self, snapshot_id: str) -> list[Fact]: ...

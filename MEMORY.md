@@ -109,3 +109,13 @@ How to apply: `BudgetGuard` charges an unknown cost at `max_bytes_per_probe` (el
 never more than the total) for admission and the committed total, and ledgers it under
 `measure.unknown_bytes` (count + charge). `Budget.period_s` (default 86400, `None` = lifetime)
 refills a shared guard's total; `MeasureReport.bytes` uses `lifetime_spent_bytes` deltas.
+
+## 2026-11-24 - Scoping reads the store by index only; store schema version 2 (Task 13)
+Why: scoping must stay fast at 500k tables (spec 12.4) and agents type bare table names.
+How to apply: `facts_for` filters kinds in SQL (index `facts_subject_kind`); bare names resolve
+via `Store.tables_named` (column `tables.name_lower`), never by suffix-matching in `resolve`;
+embedding vectors live in `table_embeddings` (float32, keyed `(model, table)`, `doc_hash`).
+`scope.fit` reserves every kept table's NAME_ONLY cost before giving richer levels, so detail
+degrades before tables drop. `TableRenderer.render(ref, level)` is the render-layer contract;
+LITE columns come from `scope.lite_columns`. Retrieval writes nothing; enqueueing `Scope.unmeasured`
+for lazy measurement is the host's job.

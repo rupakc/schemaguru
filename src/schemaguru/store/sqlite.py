@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sqlite3
+import struct
 import threading
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -257,12 +258,14 @@ class SQLiteStore:
                 del d["withdrawn_at"]
                 key = t.ref.canonical()
                 self._conn.execute(
-                    "INSERT INTO tables(ref, ref_lower, data, withdrawn_at) VALUES (?, ?, ?, ?) "
+                    "INSERT INTO tables(ref, ref_lower, name_lower, data, withdrawn_at) "
+                    "VALUES (?, ?, lower(?), ?, ?) "
                     "ON CONFLICT(ref) DO UPDATE SET data=excluded.data, "
                     "withdrawn_at=excluded.withdrawn_at",
                     (
                         key,
                         key.lower(),
+                        t.ref.table,
                         _dumps(d),
                         None if t.withdrawn_at is None else to_iso(t.withdrawn_at),
                     ),
@@ -432,16 +435,19 @@ class SQLiteStore:
         kinds: Iterable[str] | None,
     ) -> list[Fact]:
         kind_list = None if kinds is None else sorted(set(kinds))
+        if kind_list is not None and not kind_list:
+            return []
         out: dict[str, str] = {}
         if subjects is not None:
             keys = sorted({_subject_key(s) for s in subjects})
+            kind_sql = "" if kind_list is None else f" AND kind IN ({_marks(len(kind_list))})"
             for chunk in _chunks(keys):
-                for fid, kind, data in self._q(
-                    f"SELECT id, kind, data FROM facts WHERE subject_key IN ({_marks(len(chunk))})",
-                    chunk,
+                for fid, data in self._q(
+                    f"SELECT id, data FROM facts WHERE subject_key IN ({_marks(len(chunk))})"
+                    + kind_sql,
+                    [*chunk, *(kind_list or ())],
                 ):
-                    if kind_list is None or kind in kind_list:
-                        out[fid] = data
+                    out[fid] = data
         elif kind_list is None:
             return list(self.iter_facts())
         else:
@@ -451,6 +457,71 @@ class SQLiteStore:
                 ):
                     out[fid] = data
         return [Fact.from_dict(json.loads(out[i])) for i in sorted(out)]
+
+    def tables_named(self, names: Iterable[str], *, limit: int) -> list[ObjectRef]:
+        """Live tables whose bare table name equals one of ``names`` (case-insensitive).
+
+        Ordered by canonical ref, at most ``limit``. Used by retrieval to honour identifiers an
+        agent types verbatim ("orders") without suffix-matching in :meth:`resolve`.
+        """
+        wanted = sorted(set(names))
+        if not wanted or limit <= 0:
+            return []
+        found: set[str] = set()
+        for chunk in _chunks(wanted):
+            for (ref,) in self._q(
+                f"SELECT ref FROM tables WHERE name_lower IN "
+                f"({','.join('lower(?)' for _ in chunk)}) AND withdrawn_at IS NULL "
+                "ORDER BY ref LIMIT ?",
+                (*chunk, limit),
+            ):
+                found.add(ref)
+        return [_table_from_key(r) for r in sorted(found)[:limit]]
+
+    # ----- embeddings (extra ``embeddings``) ---------------------------------------------
+
+    def embeddings_put(
+        self, model: str, rows: Iterable[tuple[ObjectRef, str, Sequence[float]]]
+    ) -> None:
+        """Upsert one vector per ``(model, table)`` as little-endian float32."""
+        params = []
+        for ref, doc_hash, vec in rows:
+            if not vec:
+                raise ValueError(f"empty embedding vector for {ref.canonical()}")
+            params.append(
+                (
+                    model,
+                    ref.table_ref().canonical(),
+                    doc_hash,
+                    len(vec),
+                    struct.pack(f"<{len(vec)}f", *vec),
+                )
+            )
+        with self.transaction():
+            self._conn.executemany(
+                "INSERT INTO table_embeddings(model, table_ref, doc_hash, dim, vector) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(model, table_ref) DO UPDATE SET "
+                "doc_hash=excluded.doc_hash, dim=excluded.dim, vector=excluded.vector",
+                params,
+            )
+
+    def embeddings_get(self, model: str) -> list[tuple[ObjectRef, str, int, bytes]]:
+        """``(table, doc_hash, dim, float32 blob)`` for live tables, ordered by ref."""
+        rows = self._q(
+            "SELECT e.table_ref, e.doc_hash, e.dim, e.vector FROM table_embeddings e "
+            "JOIN tables t ON t.ref = e.table_ref "
+            "WHERE e.model=? AND t.withdrawn_at IS NULL ORDER BY e.table_ref",
+            (model,),
+        )
+        return [(_table_from_key(r), str(h), int(d), bytes(v)) for r, h, d, v in rows]
+
+    def embeddings_hashes(self, model: str) -> dict[ObjectRef, str]:
+        """Every stored ``doc_hash`` for ``model`` (withdrawn tables included)."""
+        rows = self._q(
+            "SELECT table_ref, doc_hash FROM table_embeddings WHERE model=? ORDER BY table_ref",
+            (model,),
+        )
+        return {_table_from_key(r): str(h) for r, h in rows}
 
     # ----- search ------------------------------------------------------------------------
 

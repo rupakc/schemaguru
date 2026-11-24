@@ -21,7 +21,12 @@ class Severity(Enum):
     INFO = "INFO"
 
 
-CODES: Mapping[str, str] = MappingProxyType({})
+CODES: Mapping[str, str] = MappingProxyType(
+    {
+        "SG701": "SQLite FTS5 is unavailable; search falls back to a slower LIKE scan",
+        "SG702": "the store was written by a newer schema version than this library supports",
+    }
+)
 
 
 @dataclass(frozen=True)

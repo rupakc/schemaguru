@@ -1,0 +1,606 @@
+"""``SQLiteStore``: the default single-file store (spec 7.2)."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sqlite3
+import threading
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from schemaguru._util.text import name_tokens
+from schemaguru._util.timeutil import to_iso, utcnow
+from schemaguru.diagnostics import CODES, Diagnostic, DiagnosticBag, Severity
+from schemaguru.errors import SchemaGuruError, StoreVersionError
+from schemaguru.model.facts import Fact
+from schemaguru.model.joins import JoinRef
+from schemaguru.model.refs import ObjectRef
+from schemaguru.model.structure import Column, Constraint, Schema, Table
+from schemaguru.store import schema_sql
+from schemaguru.store.protocol import LedgerUnit
+
+log = logging.getLogger("schemaguru.store")
+
+_PAGE = 1000
+_CHUNK = 500
+_MEANING_KINDS = ("DESCRIPTION", "USE_CASES", "ENTITY_TYPE", "PITFALL")
+_FTS_WEIGHTS = "0.0, 10.0, 3.0, 1.0"  # ref, name_tokens, columns, text
+
+
+def _fts5_available(conn: sqlite3.Connection) -> bool:
+    try:
+        conn.execute("CREATE VIRTUAL TABLE temp._fts5_probe USING fts5(x)")
+        conn.execute("DROP TABLE temp._fts5_probe")
+    except sqlite3.Error:
+        return False
+    return True
+
+
+def _dumps(obj: Any) -> str:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _subject_key(subject: ObjectRef | JoinRef) -> str:
+    return subject.identity_key() if isinstance(subject, JoinRef) else subject.canonical()
+
+
+def _table_from_key(key: str) -> ObjectRef:
+    return ObjectRef.parse(key, has_column=False)
+
+
+def _strings(obj: Any) -> Iterator[str]:
+    if isinstance(obj, str):
+        yield obj
+    elif isinstance(obj, Mapping):
+        for v in obj.values():
+            yield from _strings(v)
+    elif isinstance(obj, (list, tuple)):
+        for v in obj:
+            yield from _strings(v)
+
+
+def _chunks(items: Sequence[str]) -> Iterator[Sequence[str]]:
+    for i in range(0, len(items), _CHUNK):
+        yield items[i : i + _CHUNK]
+
+
+def _marks(n: int) -> str:
+    return ",".join("?" * n)
+
+
+def _like(token: str) -> str:
+    return "%" + token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+class SQLiteStore:
+    """One SQLite file, WAL mode, one connection guarded by a re-entrant lock.
+
+    Every public write runs in a transaction; nest freely inside :meth:`transaction`.
+    Search uses FTS5 when the local SQLite has it, otherwise a LIKE scan over ``docs``
+    (diagnostic ``SG701`` in :attr:`diagnostics`).
+    """
+
+    def __init__(self, path: str | os.PathLike[str], *, readonly: bool = False) -> None:
+        self.path = os.fspath(path)
+        self.readonly = readonly
+        self.diagnostics = DiagnosticBag()
+        self._lock = threading.RLock()
+        self._depth = 0
+        if readonly:
+            uri = Path(self.path).resolve().as_uri() + "?mode=ro"
+            self._conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+        else:
+            if self.path != ":memory:":
+                Path(self.path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(self.path, check_same_thread=False)
+        self._conn.isolation_level = None  # explicit BEGIN/COMMIT only
+        try:
+            self._conn.execute("PRAGMA busy_timeout=30000")
+            if not readonly:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA synchronous=NORMAL")
+            self._migrate()
+            self._fts = self._setup_search()
+        except BaseException:
+            self._conn.close()
+            raise
+
+    # ----- lifecycle ---------------------------------------------------------------------
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
+    def __enter__(self) -> SQLiteStore:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def _migrate(self) -> None:
+        conn = self._conn
+        have = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
+        ).fetchone()
+        current = 0
+        if have:
+            current = conn.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version"
+            ).fetchone()[0]
+        self._check_version(current)
+        if current == schema_sql.LATEST_VERSION:
+            return
+        if self.readonly:
+            raise StoreVersionError(
+                f"store at {self.path!r} is at schema version {current}, library needs "
+                f"{schema_sql.LATEST_VERSION}; open it read-write once to migrate it"
+            )
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(schema_sql.VERSION_DDL)
+            current = conn.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version"
+            ).fetchone()[0]
+            self._check_version(current)  # another process may have migrated meanwhile
+            for version, sql in schema_sql.migrations():
+                if version <= current:
+                    continue
+                for stmt in schema_sql.statements(sql):
+                    conn.execute(stmt)
+                conn.execute(
+                    "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)",
+                    (version, to_iso(utcnow())),
+                )
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+
+    def _check_version(self, current: int) -> None:
+        if current > schema_sql.LATEST_VERSION:
+            raise StoreVersionError(
+                f"SG702: store at {self.path!r} has schema version {current}, but this "
+                f"SchemaGuru supports up to {schema_sql.LATEST_VERSION}; upgrade SchemaGuru "
+                "or use a different store file"
+            )
+
+    def _setup_search(self) -> bool:
+        if not _fts5_available(self._conn):
+            self._warn_fallback()
+            return False
+        exists = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='table_docs'"
+        ).fetchone()
+        if not exists:
+            if self.readonly:
+                return False
+            self._conn.execute(schema_sql.FTS_DDL)
+        return True
+
+    def _warn_fallback(self) -> None:
+        msg = f"{CODES['SG701']}; install a SQLite build with FTS5 for ranked search"
+        self.diagnostics.add(Diagnostic("SG701", Severity.WARNING, msg, location=self.path))
+        log.warning("SG701 %s", msg)
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        if self.readonly:
+            raise SchemaGuruError("the store was opened read-only")
+        with self._lock:
+            if self._depth:
+                self._depth += 1
+                try:
+                    yield
+                finally:
+                    self._depth -= 1
+                return
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._depth = 1
+            try:
+                yield
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+            else:
+                self._conn.execute("COMMIT")
+            finally:
+                self._depth = 0
+
+    def _q(self, sql: str, params: Sequence[Any] = ()) -> list[tuple[Any, ...]]:
+        with self._lock:
+            return self._conn.execute(sql, params).fetchall()
+
+    # ----- structure ---------------------------------------------------------------------
+
+    def upsert_schemas(self, items: Iterable[Schema]) -> None:
+        with self.transaction():
+            self._conn.executemany(
+                "INSERT INTO schemas(key, data) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+                [(s.key(), _dumps(s.to_dict())) for s in items],
+            )
+
+    def iter_schemas(self) -> Iterator[Schema]:
+        for (data,) in self._q("SELECT data FROM schemas ORDER BY key"):
+            yield Schema.from_dict(json.loads(data))
+
+    def upsert_tables(self, items: Iterable[Table]) -> None:
+        with self.transaction():
+            for t in items:
+                d = t.to_dict()
+                del d["withdrawn_at"]
+                key = t.ref.canonical()
+                self._conn.execute(
+                    "INSERT INTO tables(ref, ref_lower, data, withdrawn_at) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(ref) DO UPDATE SET data=excluded.data, "
+                    "withdrawn_at=excluded.withdrawn_at",
+                    (
+                        key,
+                        key.lower(),
+                        _dumps(d),
+                        None if t.withdrawn_at is None else to_iso(t.withdrawn_at),
+                    ),
+                )
+                self._reindex(key)
+
+    def _row_to_table(self, data: str, withdrawn_at: str | None) -> Table:
+        d = json.loads(data)
+        d["withdrawn_at"] = withdrawn_at
+        if withdrawn_at is not None:
+            d["withdrawn_at"] = (
+                datetime.strptime(withdrawn_at, "%Y-%m-%dT%H:%M:%S.%fZ")
+                .replace(tzinfo=timezone.utc)
+                .isoformat()
+            )
+        return Table.from_dict(d)
+
+    def table(self, ref: ObjectRef) -> Table | None:
+        rows = self._q(
+            "SELECT data, withdrawn_at FROM tables WHERE ref=?", (ref.table_ref().canonical(),)
+        )
+        return self._row_to_table(*rows[0]) if rows else None
+
+    def iter_tables(self, *, include_withdrawn: bool = False) -> Iterator[Table]:
+        last = ""
+        where = "" if include_withdrawn else "AND withdrawn_at IS NULL"
+        while True:
+            rows = self._q(
+                f"SELECT ref, data, withdrawn_at FROM tables WHERE ref > ? {where} "
+                "ORDER BY ref LIMIT ?",
+                (last, _PAGE),
+            )
+            if not rows:
+                return
+            for _ref, data, wat in rows:
+                yield self._row_to_table(data, wat)
+            last = rows[-1][0]
+
+    def upsert_columns(self, table: ObjectRef, cols: Sequence[Column]) -> None:
+        key = table.table_ref().canonical()
+        with self.transaction():
+            self._conn.execute("DELETE FROM columns WHERE table_ref=?", (key,))
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO columns(table_ref, name, ordinal, data) VALUES (?,?,?,?)",
+                [(key, c.ref.column, c.ordinal, _dumps(c.to_dict())) for c in cols],
+            )
+            self._reindex(key)
+
+    def columns(self, ref: ObjectRef) -> list[Column]:
+        rows = self._q(
+            "SELECT data FROM columns WHERE table_ref=? ORDER BY ordinal, name",
+            (ref.table_ref().canonical(),),
+        )
+        return [Column.from_dict(json.loads(r[0])) for r in rows]
+
+    def upsert_constraints(self, table: ObjectRef, cons: Sequence[Constraint]) -> None:
+        key = table.table_ref().canonical()
+        with self.transaction():
+            self._conn.execute("DELETE FROM constraints WHERE table_ref=?", (key,))
+            self._conn.executemany(
+                "INSERT INTO constraints(table_ref, seq, data) VALUES (?,?,?)",
+                [(key, i, _dumps(c.to_dict())) for i, c in enumerate(cons)],
+            )
+
+    def constraints(self, ref: ObjectRef) -> list[Constraint]:
+        rows = self._q(
+            "SELECT data FROM constraints WHERE table_ref=? ORDER BY seq",
+            (ref.table_ref().canonical(),),
+        )
+        return [Constraint.from_dict(json.loads(r[0])) for r in rows]
+
+    def mark_withdrawn(self, refs: Iterable[ObjectRef], at: datetime) -> None:
+        stamp = to_iso(at)  # rejects naive datetimes
+        with self.transaction():
+            self._conn.executemany(
+                "UPDATE tables SET withdrawn_at=COALESCE(withdrawn_at, ?) WHERE ref=?",
+                [(stamp, r.table_ref().canonical()) for r in refs],
+            )
+
+    # ----- resolve -----------------------------------------------------------------------
+
+    def resolve(self, text: str) -> tuple[ObjectRef | None, list[ObjectRef]]:
+        try:
+            ref = ObjectRef.parse(text)
+        except ValueError:
+            return None, []
+        if ref.column is None:
+            found, cands = self._resolve_table(ref)
+            if found is not None or cands:
+                return found, cands
+            try:
+                with_col = ObjectRef.parse(text, has_column=True)
+            except ValueError:
+                return None, []
+        else:
+            with_col = ref
+        assert with_col.column is not None
+        found, cands = self._resolve_table(with_col.table_ref())
+        if found is None:
+            return None, cands  # ambiguous or unknown table; do not guess a column
+        return self._resolve_column(found, with_col.column)
+
+    def _resolve_table(self, ref: ObjectRef) -> tuple[ObjectRef | None, list[ObjectRef]]:
+        key = ref.canonical()
+        if self._q("SELECT 1 FROM tables WHERE ref=?", (key,)):
+            return ref, []
+        rows = self._q("SELECT ref FROM tables WHERE ref_lower=? ORDER BY ref", (key.lower(),))
+        refs = [_table_from_key(r[0]) for r in rows]
+        if len(refs) == 1:
+            return refs[0], []
+        return None, refs
+
+    def _resolve_column(
+        self, table: ObjectRef, column: str
+    ) -> tuple[ObjectRef | None, list[ObjectRef]]:
+        names = [
+            r[0]
+            for r in self._q(
+                "SELECT name FROM columns WHERE table_ref=? ORDER BY name", (table.canonical(),)
+            )
+        ]
+
+        def with_col(n: str) -> ObjectRef:
+            return ObjectRef(table.catalog, table.schema, table.table, n)
+
+        if column in names:
+            return with_col(column), []
+        ci = [n for n in names if n.lower() == column.lower()]
+        if len(ci) == 1:
+            return with_col(ci[0]), []
+        return None, [with_col(n) for n in ci]
+
+    # ----- facts -------------------------------------------------------------------------
+
+    def put_facts(self, facts: Iterable[Fact]) -> None:
+        with self.transaction():
+            touched: set[str] = set()
+            rows = []
+            for f in facts:
+                key = _subject_key(f.subject)
+                rows.append((f.id, f.kind.name, key, _dumps(f.to_dict())))
+                if f.kind.name in _MEANING_KINDS and isinstance(f.subject, ObjectRef):
+                    touched.add(f.subject.table_ref().canonical())
+            self._conn.executemany(
+                "INSERT INTO facts(id, kind, subject_key, data) VALUES (?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, "
+                "subject_key=excluded.subject_key, data=excluded.data",
+                rows,
+            )
+            for key in sorted(touched):
+                self._reindex(key)
+
+    def iter_facts(self) -> Iterator[Fact]:
+        last = ""
+        while True:
+            rows = self._q("SELECT id, data FROM facts WHERE id > ? ORDER BY id LIMIT ?",
+                           (last, _PAGE))  # fmt: skip
+            if not rows:
+                return
+            for _, data in rows:
+                yield Fact.from_dict(json.loads(data))
+            last = rows[-1][0]
+
+    def facts_for(
+        self,
+        subjects: Iterable[ObjectRef | JoinRef] | None,
+        kinds: Iterable[str] | None,
+    ) -> list[Fact]:
+        kind_list = None if kinds is None else sorted(set(kinds))
+        out: dict[str, str] = {}
+        if subjects is not None:
+            keys = sorted({_subject_key(s) for s in subjects})
+            for chunk in _chunks(keys):
+                for fid, kind, data in self._q(
+                    f"SELECT id, kind, data FROM facts WHERE subject_key IN ({_marks(len(chunk))})",
+                    chunk,
+                ):
+                    if kind_list is None or kind in kind_list:
+                        out[fid] = data
+        elif kind_list is None:
+            return list(self.iter_facts())
+        else:
+            for chunk in _chunks(kind_list):
+                for fid, data in self._q(
+                    f"SELECT id, data FROM facts WHERE kind IN ({_marks(len(chunk))})", chunk
+                ):
+                    out[fid] = data
+        return [Fact.from_dict(json.loads(out[i])) for i in sorted(out)]
+
+    # ----- search ------------------------------------------------------------------------
+
+    def _reindex(self, key: str) -> None:
+        """Rebuild the search document of one table (caller holds the write transaction)."""
+        conn = self._conn
+        row = conn.execute("SELECT rowid, data FROM tables WHERE ref=?", (key,)).fetchone()
+        if row is None:
+            return
+        rowid, data = row
+        t = json.loads(data)
+        ref = ObjectRef.from_dict(t["ref"])
+        col_tokens: list[str] = []
+        text: list[str] = [*name_tokens(ref.schema or ""), t.get("comment") or ""]
+        for (cdata,) in conn.execute(
+            "SELECT data FROM columns WHERE table_ref=? ORDER BY ordinal", (key,)
+        ):
+            c = json.loads(cdata)
+            col_tokens.extend(name_tokens(c["ref"]["column"]))
+            if c.get("comment"):
+                text.append(c["comment"])
+        for (fdata,) in conn.execute(
+            "SELECT data FROM facts WHERE subject_key=? "
+            f"AND kind IN ({_marks(len(_MEANING_KINDS))})",
+            (key, *_MEANING_KINDS),
+        ):
+            text.extend(_strings(json.loads(fdata)["value"]))
+        name = " ".join(name_tokens(ref.table))
+        cols = " ".join(col_tokens)
+        body = " ".join(x for x in text if x)
+        if self._fts:
+            conn.execute("DELETE FROM table_docs WHERE rowid=?", (rowid,))
+            conn.execute(
+                "INSERT INTO table_docs(rowid, ref, name_tokens, columns, text) VALUES (?,?,?,?,?)",
+                (rowid, key, name, cols, body),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO docs(ref, name_tokens, columns, text) VALUES (?,?,?,?) "
+                "ON CONFLICT(ref) DO UPDATE SET name_tokens=excluded.name_tokens, "
+                "columns=excluded.columns, text=excluded.text",
+                (key, name, cols, body),
+            )
+
+    def search(self, query: str, k: int) -> list[tuple[ObjectRef, float]]:
+        tokens = list(dict.fromkeys(name_tokens(query)))
+        if not tokens or k <= 0:
+            return []
+        if self._fts:
+            match = " OR ".join(f'"{t}"*' if len(t) >= 3 else f'"{t}"' for t in tokens)
+            rows = self._q(
+                "SELECT t.ref, -bm25(table_docs, " + _FTS_WEIGHTS + ") AS score "
+                "FROM table_docs JOIN tables t ON t.rowid = table_docs.rowid "
+                "WHERE table_docs MATCH ? AND t.withdrawn_at IS NULL "
+                "ORDER BY score DESC, t.ref LIMIT ?",
+                (match, k),
+            )
+        else:
+            parts = []
+            params: list[Any] = []
+            for t in tokens:
+                p = _like(t)
+                parts.append(
+                    "(CASE WHEN d.name_tokens LIKE ? ESCAPE '\\' THEN 10 ELSE 0 END"
+                    " + CASE WHEN d.columns LIKE ? ESCAPE '\\' THEN 3 ELSE 0 END"
+                    " + CASE WHEN d.text LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END)"
+                )
+                params.extend([p, p, p])
+            rows = self._q(
+                f"SELECT * FROM (SELECT d.ref AS ref, {' + '.join(parts)} AS score FROM docs d "
+                "JOIN tables t ON t.ref = d.ref WHERE t.withdrawn_at IS NULL) "
+                "WHERE score > 0 ORDER BY score DESC, ref LIMIT ?",
+                (*params, k),
+            )
+        return [(_table_from_key(r[0]), float(r[1])) for r in rows]
+
+    # ----- snapshots ---------------------------------------------------------------------
+
+    def snapshot(self, label: str | None = None, *, checks_run: Iterable[str] = ()) -> str:
+        with self.transaction():
+            cur = self._conn.execute(
+                "INSERT INTO snapshots(id, label, created_at, checks_run) VALUES ('', ?, ?, ?)",
+                (label, to_iso(utcnow()), _dumps(sorted(set(checks_run)))),
+            )
+            seq = cur.lastrowid
+            sid = f"snap-{seq:06d}"
+            self._conn.execute("UPDATE snapshots SET id=? WHERE seq=?", (sid, seq))
+            for fid, data in self._conn.execute("SELECT id, data FROM facts").fetchall():
+                d = json.loads(data)
+                d["snapshot_id"] = sid
+                self._conn.execute(
+                    "INSERT INTO snapshot_facts(snapshot_id, fact_id, data) VALUES (?,?,?)",
+                    (sid, fid, _dumps(d)),
+                )
+            return sid
+
+    def snapshot_facts(self, snapshot_id: str) -> list[Fact]:
+        rows = self._q(
+            "SELECT data FROM snapshot_facts WHERE snapshot_id=? ORDER BY fact_id", (snapshot_id,)
+        )
+        return [Fact.from_dict(json.loads(r[0])) for r in rows]
+
+    def snapshot_checks_run(self, snapshot_id: str) -> frozenset[str]:
+        rows = self._q("SELECT checks_run FROM snapshots WHERE id=?", (snapshot_id,))
+        return frozenset(json.loads(rows[0][0])) if rows else frozenset()
+
+    def latest_snapshot(self) -> str | None:
+        rows = self._q("SELECT id FROM snapshots ORDER BY seq DESC LIMIT 1")
+        return str(rows[0][0]) if rows else None
+
+    # ----- state, ledger, queue, feedback ------------------------------------------------
+
+    def crawl_state_get(self, key: str) -> Mapping[str, object] | None:
+        rows = self._q("SELECT value FROM crawl_state WHERE key=?", (key,))
+        return None if not rows else dict(json.loads(rows[0][0]))
+
+    def crawl_state_set(self, key: str, value: Mapping[str, object]) -> None:
+        with self.transaction():
+            self._conn.execute(
+                "INSERT INTO crawl_state(key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, _dumps(dict(value))),
+            )
+
+    def ledger_add(self, kind: str, amount: int, unit: LedgerUnit, note: str) -> None:
+        with self.transaction():
+            self._conn.execute(
+                "INSERT INTO ledger(kind, unit, amount, note, at) VALUES (?,?,?,?,?)",
+                (kind, unit, amount, note, to_iso(utcnow())),
+            )
+
+    def ledger_total(self, kind: str, unit: LedgerUnit, since: datetime | None) -> int:
+        sql = "SELECT COALESCE(SUM(amount), 0) FROM ledger WHERE kind=? AND unit=?"
+        params: list[Any] = [kind, unit]
+        if since is not None:
+            sql += " AND at >= ?"
+            params.append(to_iso(since))
+        return int(self._q(sql, params)[0][0])
+
+    def queue_push(self, table: ObjectRef, reason: str, priority: float) -> None:
+        with self.transaction():
+            self._conn.execute(
+                "INSERT INTO queue(table_ref, reason, priority, seq) VALUES "
+                "(?, ?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM queue)) "
+                "ON CONFLICT(table_ref, reason) DO UPDATE SET "
+                "priority=MAX(priority, excluded.priority)",
+                (table.table_ref().canonical(), reason, priority),
+            )
+
+    def queue_pop(self, n: int) -> list[tuple[ObjectRef, str]]:
+        with self.transaction():
+            rows = self._conn.execute(
+                "SELECT table_ref, reason FROM queue ORDER BY priority DESC, seq LIMIT ?", (n,)
+            ).fetchall()
+            self._conn.executemany(
+                "DELETE FROM queue WHERE table_ref=? AND reason=?", [(r[0], r[1]) for r in rows]
+            )
+        return [(_table_from_key(r[0]), r[1]) for r in rows]
+
+    def feedback_add(self, table: ObjectRef, column: str | None, failure_class: str) -> None:
+        with self.transaction():
+            self._conn.execute(
+                "INSERT INTO feedback(table_ref, column_name, failure_class, at) VALUES (?,?,?,?)",
+                (table.table_ref().canonical(), column, failure_class, to_iso(utcnow())),
+            )
+
+    def feedback_summary(self) -> list[dict[str, object]]:
+        rows = self._q(
+            "SELECT table_ref, column_name, failure_class, COUNT(*) FROM feedback "
+            "GROUP BY table_ref, column_name, failure_class "
+            "ORDER BY COUNT(*) DESC, table_ref, column_name, failure_class"
+        )
+        return [{"table": r[0], "column": r[1], "failure_class": r[2], "count": r[3]} for r in rows]

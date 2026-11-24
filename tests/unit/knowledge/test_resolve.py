@@ -361,3 +361,73 @@ def test_pii_human_beats_measured() -> None:
     eff = resolve([m, h], now=NOW, ttl_days=14)[_key(FactKind.PII, STATUS)]
     assert eff.primary is not None and eff.primary.id == h.id
     assert eff.observed is not None and eff.observed.id == m.id
+
+
+def _nr(cat: str, status: Status, days: float, method: str = "exact") -> Fact:
+    # PII identity is the category, so distinct categories are distinct measured facts
+    return Fact.make(
+        FactKind.PII, STATUS, {"category": cat}, Provenance.MEASURED, status,
+        method=method, observed_at=_ago(days),
+    )  # fmt: skip
+
+
+def _eff_nr(*fs: Fact):  # type: ignore[no-untyped-def]
+    return resolve(list(fs), now=NOW, ttl_days=14)[_key(FactKind.PII, STATUS)]
+
+
+def test_newer_sample_does_not_clear_exact_contradiction() -> None:
+    bad = _nr("email", Status.CONTRADICTED, 3)
+    ok_sample = _nr("phone", Status.ESTIMATED, 1, method="sampled:1%")
+    eff = _eff_nr(bad, ok_sample)
+    assert len(eff.contradictions) == 1
+    assert next(f for f in eff.all if f.id == bad.id).status is Status.CONTRADICTED
+
+
+def test_newer_sample_contradiction_shown_marked_sampled() -> None:
+    ok = _nr("phone", Status.OBSERVED, 3)
+    bad_sample = _nr("email", Status.CONTRADICTED, 1, method="sampled:1%")
+    eff = _eff_nr(ok, bad_sample)
+    assert len(eff.contradictions) == 1 and "[sampled]" in eff.contradictions[0]
+
+
+def test_newer_exact_ok_supersedes_older_contradiction() -> None:
+    bad = _nr("email", Status.CONTRADICTED, 3)
+    ok = _nr("phone", Status.OBSERVED, 1)
+    eff = _eff_nr(bad, ok)
+    assert eff.contradictions == ()
+    assert next(f for f in eff.all if f.id == bad.id).status is Status.STALE
+
+
+def test_older_sample_contradiction_not_cleared_by_newer_sample() -> None:
+    bad = _nr("email", Status.CONTRADICTED, 3, method="sampled:1%")
+    ok = _nr("phone", Status.ESTIMATED, 1, method="sampled:2%")
+    assert len(_eff_nr(bad, ok).contradictions) == 1
+
+
+def test_values_union_of_exact_and_newer_sample() -> None:
+    exp = Fact.make(
+        FactKind.VALUES,
+        STATUS,
+        {"values": ["a"], "case_sensitive": True},
+        Provenance.HUMAN,
+        Status.UNVERIFIED,
+    )
+    exact = Fact.make(
+        FactKind.VALUES, STATUS,
+        {"case_sensitive": True, "observed": [
+            {"value": "a", "count": 1}, {"value": "PAID", "count": 7}
+        ]},
+        Provenance.MEASURED, Status.OBSERVED, method="exact", observed_at=_ago(3),
+    )  # fmt: skip
+    sample = Fact.make(
+        FactKind.VALUES, STATUS,
+        {"case_sensitive": True, "split": ";", "observed": [
+            {"value": "a", "count": 1}, {"value": "z", "count": 2}
+        ]},
+        Provenance.MEASURED, Status.ESTIMATED, method="sampled:1%", observed_at=_ago(1),
+    )  # fmt: skip
+    eff = resolve([exp, exact, sample], now=NOW, ttl_days=14)[_key(FactKind.VALUES, STATUS)]
+    assert len(eff.contradictions) == 1
+    msg = eff.contradictions[0]
+    assert "PAID (7 rows)" in msg and "z (2 rows) [sampled]" in msg
+    assert "PAID (7 rows) [sampled]" not in msg

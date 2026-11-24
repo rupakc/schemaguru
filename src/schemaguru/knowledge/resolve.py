@@ -97,37 +97,66 @@ def _declared_values(f: Fact) -> list[str] | None:
     return None if not isinstance(v, list) else [str(x) for x in v]
 
 
+def _is_sample(f: Fact) -> bool:
+    return f.status is Status.ESTIMATED or (f.method or "").startswith("sampled:")
+
+
+def _supersession(measured: Sequence[Fact]) -> tuple[list[Fact], list[Fact]]:
+    """Split newest-first measurements into (warning, superseded).
+
+    The pivot is the newest NON-sampled measurement: a sample can refute but never confirm
+    (spec 8.6), so only an exact measurement supersedes older ones. Samples newer than the pivot
+    keep warning alongside it. With no exact measurement nothing is superseded.
+    """
+    pivot = next((i for i, m in enumerate(measured) if not _is_sample(m)), None)
+    if pivot is None:
+        return list(measured), []
+    return list(measured[: pivot + 1]), list(measured[pivot + 1 :])
+
+
 def _contradictions(
     kind: KindSpec, facts: Sequence[Fact], expectations: Sequence[Fact], measured: Sequence[Fact]
 ) -> list[str]:
     out: list[str] = []
-    newest = measured[0].id if measured else None
+    warn_ids = {m.id for m in measured}
     for f in facts:
         if f.status is Status.CONTRADICTED:
             if f.provenance is Provenance.MEASURED:
-                if f.id != newest:
+                if f.id not in warn_ids:
                     continue  # a superseded measurement no longer warns
                 at = "" if f.observed_at is None else f" at {f.observed_at.isoformat()}"
-                out.append(f"measured contradiction{at}: {canonical_json(f.value)}")
+                tag = " [sampled]" if _is_sample(f) else ""
+                out.append(f"measured contradiction{at}{tag}: {canonical_json(f.value)}")
             else:
                 out.append(f"{f.provenance.value} fact failed its check: {canonical_json(f.value)}")
     for expectation in expectations if kind.name == "VALUES" else ():
         declared = _declared_values(expectation)
-        obs_fact = next((m for m in measured if isinstance(m.value.get("observed"), list)), None)
-        if declared is not None and obs_fact is not None:
+        obs_facts = [m for m in measured if isinstance(m.value.get("observed"), list)]
+        if declared is not None and obs_facts:
             cs = bool(expectation.value.get("case_sensitive", True))
             known = {_fold(d, cs) for d in declared}
-            extra: list[tuple[str, int | None]] = []
-            for item in obs_fact.value["observed"]:
-                if isinstance(item, dict) and _fold(str(item.get("value")), cs) not in known:
-                    n = item.get("count")
-                    extra.append((str(item.get("value")), n if isinstance(n, int) else None))
+            # value -> (count, seen by an exact measurement); union over pivot and newer samples
+            extra: dict[str, tuple[int | None, bool]] = {}
+            for of in obs_facts:
+                for item in of.value["observed"]:
+                    if not isinstance(item, dict) or _fold(str(item.get("value")), cs) in known:
+                        continue
+                    v, n = str(item.get("value")), item.get("count")
+                    n = n if isinstance(n, int) else None
+                    old = extra.get(v)
+                    exact = (old[1] if old else False) or not _is_sample(of)
+                    cnt = max(
+                        (c for c in (old[0] if old else None, n) if c is not None), default=None
+                    )
+                    extra[v] = (cnt, exact)
             if extra:
-                extra.sort(key=lambda t: (-(t[1] or 0), t[0]))
-                shown = ", ".join(v if n is None else f"{v} ({n} rows)" for v, n in extra)
-                sampled = " [sampled]" if obs_fact.status is Status.ESTIMATED else ""
+                rows = sorted(extra.items(), key=lambda t: (-(t[1][0] or 0), t[0]))
+                shown = ", ".join(
+                    (v if n is None else f"{v} ({n} rows)") + ("" if ex else " [sampled]")
+                    for v, (n, ex) in rows
+                )
                 decl = ", ".join(sorted(declared))
-                out.append(f"declared values {decl} - observed also: {shown}{sampled}")
+                out.append(f"declared values {decl} - observed also: {shown}")
     if kind.name in CATALOG_CHECKED_KINDS:
         cat = _pick([f for f in facts if f.provenance is Provenance.CATALOG], (_P.CATALOG,))
         if cat is not None:
@@ -185,8 +214,9 @@ def resolve(
         fs = groups[key]
         kind, subject = fs[0].kind, fs[0].subject
         measured = sorted((f for f in fs if f.provenance is Provenance.MEASURED), key=_newest_first)
-        if len(measured) > 1:  # a newer measurement supersedes the older ones: kept, not warning
-            older = {m.id for m in measured[1:]}
+        measured_warn, superseded = _supersession(measured)
+        if superseded:  # kept in `all`, but no longer warning
+            older = {m.id for m in superseded}
             fs = [
                 replace(f, status=Status.STALE)
                 if f.id in older
@@ -215,7 +245,7 @@ def resolve(
             else []
         )
         exp = exps[0] if exps else None  # HUMAN-first pick; every expectation is still checked
-        msgs = _contradictions(kind, fs, exps, measured)
+        msgs = _contradictions(kind, fs, exps, measured_warn)
 
         waiver = next((w for w in live if w.matches(key[0], key[1])), None)
         if waiver is not None:

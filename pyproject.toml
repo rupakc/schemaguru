@@ -36,7 +36,7 @@ clickhouse = ["clickhouse-connect>=0.7"]
 mssql = ["pyodbc>=5"]
 oracle = ["oracledb>=2"]
 trino = ["trino>=0.330"]
-mysql = ["pymysql>=1.1"]
+mysql = ["pymysql[rsa]>=1.1"]
 postgres-store = ["psycopg[binary]>=3.1"]
 anthropic = ["anthropic>=0.40"]
 openai = ["openai>=1.50"]
@@ -58,7 +58,7 @@ all = [
   "pyodbc>=5",
   "oracledb>=2",
   "trino>=0.330",
-  "pymysql>=1.1",
+  "pymysql[rsa]>=1.1",
   "anthropic>=0.40",
   "openai>=1.50",
   "numpy>=1.26",

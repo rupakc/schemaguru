@@ -87,6 +87,13 @@ class ReplayExecutor:
             self._rows[key] = q["rows"]
         self.seen: list[str] = []
 
+    def assert_all_consumed(self) -> None:
+        """Every recorded query was used; a leftover means the fixture is stale."""
+        stale = sorted(set(self._rows) - set(self.seen))
+        assert not stale, f"{len(stale)} recorded queries never ran (stale fixture): " + "; ".join(
+            k.split("\x00")[0][:100] for k in stale[:5]
+        )
+
     @classmethod
     def from_fixture(cls, dialect: str) -> ReplayExecutor:
         return cls(fixture_doc(dialect)["queries"])

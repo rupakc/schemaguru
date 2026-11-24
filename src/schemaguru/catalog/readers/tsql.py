@@ -94,7 +94,12 @@ class TSQLReader:
             _SYSTEM_SCHEMAS,
             timeout_s=self.timeout_s,
         )
-        return Page([Schema(None, r["name"], r["comment"], int(r["table_count"])) for r in rows])
+        return Page(
+            [
+                Schema(None, r["name"], blank_to_none(r["comment"]), int(r["table_count"]))
+                for r in rows
+            ]
+        )
 
     def list_tables(
         self, schema: Schema, *, page_token: str | None, changed_since: datetime | None
@@ -141,7 +146,7 @@ class TSQLReader:
             "FROM sys.columns c JOIN sys.objects o ON o.object_id = c.object_id "
             "JOIN sys.schemas s ON s.schema_id = o.schema_id "
             "JOIN sys.types ty ON ty.user_type_id = c.user_type_id "
-            "JOIN sys.types bt ON bt.user_type_id = ty.system_type_id "
+            "LEFT JOIN sys.types bt ON bt.user_type_id = ty.system_type_id "
             "LEFT JOIN sys.default_constraints dc ON dc.parent_object_id = c.object_id "
             " AND dc.parent_column_id = c.column_id "
             f"WHERE o.type IN ('U', 'V') AND ({clause}) "
@@ -164,7 +169,7 @@ class TSQLReader:
                     ObjectRef(None, r["schema_name"], r["table_name"], r["column_name"]),
                     int(r["ordinal"]),
                     native,
-                    family_by(_RULES, r["base_name"]),
+                    family_by(_RULES, r["base_name"] or r["type_name"]),
                     nullable,
                     blank_to_none(r["comment"]),
                     r["column_default"],

@@ -199,6 +199,20 @@
   {
    "comment": null,
    "default": null,
+   "family": "other",
+   "native_type": "geography",
+   "nullable": true,
+   "ordinal": 5,
+   "ref": {
+    "catalog": null,
+    "column": "loc",
+    "schema": "sg_shop",
+    "table": "products"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
    "family": "string",
    "native_type": "varchar(100)",
    "nullable": true,

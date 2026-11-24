@@ -97,3 +97,38 @@ def test_changed_since_in_the_future_lists_nothing(live: tuple[Engine, Any]) -> 
     assert all(t.last_altered is None for t in later)
     past = datetime.now(timezone.utc) - timedelta(days=1)
     assert len(reader.list_tables(schema, page_token=None, changed_since=past).items) >= 1
+
+
+def test_mysql_timestamps_are_utc_whatever_the_session_zone() -> None:
+    engine = ENGINES["mysql"]
+    dsn = engine_dsn("mysql")
+    require_driver("mysql", "pymysql")
+    conn = engine.connect(dsn)
+    try:
+        engine.seed(conn)
+        cur = conn.cursor()
+        cur.execute("SET time_zone = '+00:00'")
+        utc_reader = reader_for("mysql", engine.executor(conn))
+        base = {
+            t.ref.table: t
+            for t in utc_reader.list_tables(
+                Schema(None, "sg_shop"), page_token=None, changed_since=None
+            ).items
+        }
+        cur.execute("SET time_zone = '+05:00'")
+        shifted = {
+            t.ref.table: t
+            for t in reader_for("mysql", engine.executor(conn))
+            .list_tables(Schema(None, "sg_shop"), page_token=None, changed_since=None)
+            .items
+        }
+        cur.close()
+    finally:
+        conn.close()
+    cust = base["customers"]
+    assert cust.created_at is not None and cust.last_altered is not None
+    now = datetime.now(timezone.utc)
+    assert abs((now - cust.created_at).total_seconds()) < 3600
+    # the stored instant does not move with the session zone
+    assert shifted["customers"].created_at == cust.created_at
+    assert shifted["customers"].last_altered == cust.last_altered

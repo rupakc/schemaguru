@@ -150,7 +150,7 @@ def _tsql_seed(conn: Any) -> None:
         "CONSTRAINT fk_cust FOREIGN KEY (customer_id) REFERENCES sg_shop.customers(customer_id), "
         "CONSTRAINT uq_cust_line UNIQUE (customer_id, line_no))",
         "CREATE TABLE sg_shop.products(product_id int NOT NULL PRIMARY KEY, name varchar(100), "
-        "payload varbinary(max), token uniqueidentifier)",
+        "payload varbinary(max), token uniqueidentifier, loc geography NULL)",
         "EXEC('CREATE VIEW sg_shop.v_customers AS "
         "SELECT customer_id, email FROM sg_shop.customers')",
         "CREATE TABLE sg_ops.events(event_id bigint NOT NULL PRIMARY KEY, at datetimeoffset NULL, "

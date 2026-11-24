@@ -91,7 +91,7 @@ jobs:
           MSSQL_SA_PASSWORD: Sg_Passw0rd!
         ports: ["1433:1433"]
       trino:
-        image: trinodb/trino:latest
+        image: trinodb/trino:484
         ports: ["8080:8080"]
     steps:
       - uses: actions/checkout@v4
@@ -100,13 +100,15 @@ jobs:
           python-version: "3.12"
       - name: Install the Microsoft ODBC Driver 18 for SQL Server
         run: |
-          curl -sSL -O "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb"
-          sudo dpkg -i packages-microsoft-prod.deb
+          # Some runner images already ship the Microsoft repo; installing it again conflicts.
+          if [ ! -e /etc/apt/sources.list.d/microsoft-prod.list ]; then
+            curl -sSL -O "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb"
+            sudo dpkg -i packages-microsoft-prod.deb
+          fi
           sudo apt-get update
           sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 unixodbc-dev
       - run: pip install "factlang @ git+https://github.com/rupakc/factlang@main"
-      # cryptography: MySQL 8 authenticates root with caching_sha2_password, which pymysql needs it for.
-      - run: pip install -e ".[dev,postgres,mysql,clickhouse,mssql,trino]" cryptography
+      - run: pip install -e ".[dev,postgres,mysql,clickhouse,mssql,trino]"
       - name: Wait for the slow engines (SQL Server, Trino)
         run: |
           python - <<'PY'

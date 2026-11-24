@@ -28,3 +28,17 @@ def test_unknown_sql_fails_and_prints_the_fingerprint() -> None:
 def test_a_reader_with_an_empty_fixture_fails_not_passes() -> None:
     with pytest.raises(UnknownSQL):
         read_all(DuckDBReader(ReplayExecutor([])))
+
+
+def test_a_stale_recording_is_reported() -> None:
+    ex = ReplayExecutor(
+        [
+            {"sql": "select 1", "params": [], "rows": []},
+            {"sql": "select 2", "params": [], "rows": []},
+        ]
+    )
+    ex.run("select 1")
+    with pytest.raises(AssertionError, match="stale"):
+        ex.assert_all_consumed()
+    ex.run("select 2")
+    ex.assert_all_consumed()

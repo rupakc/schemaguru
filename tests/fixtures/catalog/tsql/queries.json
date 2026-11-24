@@ -400,6 +400,22 @@
      "type_name": "uniqueidentifier"
     },
     {
+     "base_name": null,
+     "column_default": null,
+     "column_name": "loc",
+     "comment": null,
+     "is_nullable": true,
+     "is_user_defined": false,
+     "max_length": -1,
+     "obj_type": "U ",
+     "ordinal": 5,
+     "prec": 0,
+     "scale": 0,
+     "schema_name": "sg_shop",
+     "table_name": "products",
+     "type_name": "geography"
+    },
+    {
      "base_name": "int",
      "column_default": null,
      "column_name": "customer_id",
@@ -432,7 +448,7 @@
      "type_name": "nvarchar"
     }
    ],
-   "sql": "select s.name as schema_name, o.name as table_name, o.type as obj_type, c.column_id as ordinal, c.name as column_name, ty.name as type_name, ty.is_user_defined as is_user_defined, bt.name as base_name, c.max_length as max_length, c.precision as prec, c.scale as scale, c.is_nullable as is_nullable, dc.definition as column_default, cast((select top 1 ep.value from sys.extended_properties ep where ep.class = 1 and ep.major_id = o.object_id and ep.minor_id = c.column_id and ep.name = 'ms_description') as nvarchar(4000)) as comment from sys.columns c join sys.objects o on o.object_id = c.object_id join sys.schemas s on s.schema_id = o.schema_id join sys.types ty on ty.user_type_id = c.user_type_id join sys.types bt on bt.user_type_id = ty.system_type_id left join sys.default_constraints dc on dc.parent_object_id = c.object_id and dc.parent_column_id = c.column_id where o.type in ('u', 'v') and ((s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?)) order by s.name, o.name, c.column_id"
+   "sql": "select s.name as schema_name, o.name as table_name, o.type as obj_type, c.column_id as ordinal, c.name as column_name, ty.name as type_name, ty.is_user_defined as is_user_defined, bt.name as base_name, c.max_length as max_length, c.precision as prec, c.scale as scale, c.is_nullable as is_nullable, dc.definition as column_default, cast((select top 1 ep.value from sys.extended_properties ep where ep.class = 1 and ep.major_id = o.object_id and ep.minor_id = c.column_id and ep.name = 'ms_description') as nvarchar(4000)) as comment from sys.columns c join sys.objects o on o.object_id = c.object_id join sys.schemas s on s.schema_id = o.schema_id join sys.types ty on ty.user_type_id = c.user_type_id left join sys.types bt on bt.user_type_id = ty.system_type_id left join sys.default_constraints dc on dc.parent_object_id = c.object_id and dc.parent_column_id = c.column_id where o.type in ('u', 'v') and ((s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?) or (s.name = ? and o.name = ?)) order by s.name, o.name, c.column_id"
   },
   {
    "params": [
@@ -451,7 +467,7 @@
    ],
    "rows": [
     {
-     "cname": "PK__events__2370F7271C59854E",
+     "cname": "PK__events__2370F7277EE14AC5",
      "column_name": "event_id",
      "ctype": "PK",
      "enforced": 1,
@@ -460,7 +476,7 @@
      "table_name": "events"
     },
     {
-     "cname": "PK__customer__CD65CB85E1E6F59A",
+     "cname": "PK__customer__CD65CB8562A9CAF7",
      "column_name": "customer_id",
      "ctype": "PK",
      "enforced": 1,
@@ -487,7 +503,7 @@
      "table_name": "Order Items"
     },
     {
-     "cname": "PK__Order It__5903824AC8090FCD",
+     "cname": "PK__Order It__5903824AF8096AD5",
      "column_name": "order_id",
      "ctype": "PK",
      "enforced": 1,
@@ -496,7 +512,7 @@
      "table_name": "Order Items"
     },
     {
-     "cname": "PK__Order It__5903824AC8090FCD",
+     "cname": "PK__Order It__5903824AF8096AD5",
      "column_name": "line_no",
      "ctype": "PK",
      "enforced": 1,
@@ -505,7 +521,7 @@
      "table_name": "Order Items"
     },
     {
-     "cname": "PK__products__47027DF54BD4E6B3",
+     "cname": "PK__products__47027DF5F1B68D56",
      "column_name": "product_id",
      "ctype": "PK",
      "enforced": 1,

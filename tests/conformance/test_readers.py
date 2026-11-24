@@ -9,6 +9,8 @@ import pytest
 from schemaguru.catalog import dialects, reader_for
 from tests.conformance.replay import FIXTURES, ReplayExecutor, fixture_doc, read_all
 
+# Engines without foreign keys (or that expose none in metadata).
+NO_FOREIGN_KEYS = {"clickhouse", "trino"}
 FIXTURE_DIALECTS = [d for d in dialects() if (FIXTURES / d / "queries.json").is_file()]
 
 
@@ -25,6 +27,7 @@ def test_reader_matches_recorded_fixture(dialect: str) -> None:
     )
     expected = json.loads((FIXTURES / dialect / "expected.json").read_text(encoding="utf-8"))
     assert got == expected
+    executor.assert_all_consumed()
 
 
 @pytest.mark.parametrize("dialect", FIXTURE_DIALECTS)
@@ -45,3 +48,7 @@ def test_fixture_covers_the_shapes_every_reader_must_handle(dialect: str) -> Non
     if reader.capabilities().constraints:
         composite = [c for c in expected["constraints"] if c["kind"] == "primary_key"]
         assert any(len(c["columns"]) >= 2 for c in composite)
+        if dialect not in NO_FOREIGN_KEYS:
+            assert any(c["kind"] == "foreign_key" for c in expected["constraints"]), (
+                "fixture needs a foreign key"
+            )

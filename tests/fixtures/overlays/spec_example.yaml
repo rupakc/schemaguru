@@ -1,0 +1,41 @@
+version: 1
+warehouse: shop
+tables:
+  shop.orders:
+    description: One row per order placed on the storefront.
+    use_cases: [revenue by month, average basket size]
+    entity_type: order
+    soft_delete: "deleted IS NULL OR NOT deleted"
+    pitfalls:
+      - rule: Refunds are a second row with negative amount.
+        fix: Filter amount > 0 for gross revenue.
+    columns:
+      status:
+        description: Payment state of the order.
+        values: [paid, refunded, cancelled]      # an expectation: checked, never auto-edited
+        values_split: ":"                        # optional
+      created_at:
+        type_note: ISO-8601 timestamp stored as STRING
+    joins:
+      - to: shop.customers.customer_id
+        from: customer_id
+        cardinality: N:1
+chains:
+  - name: order to payment provider
+    because: payments are matched via the order reference, not the customer
+    steps: [shop.orders.order_id -> shop.payments.order_id]
+waypoints:
+  - pair: [shop.events, shop.orders]
+    require: "edge(shop.events.session_id->shop.sessions.session_id)"
+    because: events link to orders only through sessions (measured 0% direct match)
+glossary:
+  - term: active customer
+    definition: ordered in the last 90 days
+    maps_to: [shop.orders, shop.customers]
+never_query:
+  - table: shop.orders_backup_2019
+    reason: frozen copy, not maintained
+waivers:
+  - fact: "VALUES shop.orders.status"
+    reason: legacy upper-case rows being migrated
+    expires: 2027-01-31

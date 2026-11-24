@@ -1,0 +1,35 @@
+{
+  "nodes": {
+    "model.shop.orders": {
+      "resource_type": "model", "name": "orders", "schema": "shop",
+      "description": "One row per order.",
+      "columns": {"status": {"description": "Order state."}, "customer_id": {"description": ""}}
+    },
+    "model.shop.customers": {
+      "resource_type": "model", "name": "customers", "schema": "shop",
+      "description": "", "columns": {}
+    },
+    "model.shop.ghost": {"resource_type": "model", "name": "ghost", "schema": "shop",
+      "description": "not in the store", "columns": {}},
+    "test.shop.rel": {
+      "resource_type": "test", "attached_node": "model.shop.orders",
+      "depends_on": {"nodes": ["model.shop.customers", "model.shop.orders"]},
+      "test_metadata": {"name": "relationships", "kwargs": {
+        "column_name": "customer_id", "to": "ref('customers')", "field": "customer_id"}}
+    },
+    "test.shop.acc": {
+      "resource_type": "test", "attached_node": "model.shop.orders",
+      "test_metadata": {"name": "accepted_values", "kwargs": {
+        "column_name": "status", "values": ["paid", "refunded"]}}
+    },
+    "test.shop.uniq": {
+      "resource_type": "test", "attached_node": "model.shop.orders",
+      "test_metadata": {"name": "unique", "kwargs": {"column_name": "order_id"}}
+    },
+    "test.shop.nn": {
+      "resource_type": "test", "attached_node": "model.shop.orders",
+      "test_metadata": {"name": "not_null", "kwargs": {"column_name": "order_id"}}
+    }
+  },
+  "sources": {}
+}

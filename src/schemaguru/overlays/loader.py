@@ -121,9 +121,7 @@ class _FileLoader:
         v = self.scalar(node)
         if v is None:
             return None
-        if isinstance(v, (date, datetime)):
-            return str(node.value)
-        if isinstance(v, bool):
+        if node.style is None:  # unquoted: keep the source text (01, 1.10, 0x1F, yes, dates)
             return str(node.value)
         return str(v)
 

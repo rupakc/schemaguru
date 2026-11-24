@@ -199,3 +199,13 @@ def test_directory_load(store: SQLiteStore, tmp_path: Path) -> None:
     )
     facts, *_ = load_overlays([d], store, today=TODAY)
     assert [f.value["text"] for f in facts] == ["a"]
+
+
+def test_unquoted_numbers_keep_source_text(store: SQLiteStore, tmp_path: Path) -> None:
+    text = (
+        "version: 1\ntables:\n  shop.orders:\n    columns:\n      status:\n"
+        "        values: [01, 007, 1.10, 0x1F, yes, '05', 2027-01-01]\n"
+    )
+    facts, *_, bag = load(store, tmp_path, text)
+    assert list(bag) == []
+    assert facts[0].value["values"] == ["01", "007", "1.10", "0x1F", "yes", "05", "2027-01-01"]

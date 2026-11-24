@@ -1,5 +1,3 @@
-"""Import dbt ``manifest.json`` descriptions and tests as DECLARED facts (spec 14.2)."""
-
 from __future__ import annotations
 
 import json
@@ -19,6 +17,14 @@ _REF = re.compile(r"""(?:ref|source)\(\s*(['"])(.+?)\1(?:\s*,\s*(['"])(.+?)\3)?\
 SOURCE = "dbt:manifest"
 
 
+def _list(x: Any) -> list[Any]:
+    return x if isinstance(x, list) else []
+
+
+def _dict(x: Any) -> dict[str, Any]:
+    return x if isinstance(x, dict) else {}
+
+
 def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
@@ -29,7 +35,7 @@ class _Importer:
         self.bag = bag
         self.nodes: dict[str, dict[str, Any]] = {}
         for section in ("nodes", "sources"):
-            for uid, node in (manifest.get(section) or {}).items():
+            for uid, node in _dict(manifest.get(section)).items():
                 if isinstance(node, dict):
                     self.nodes[str(uid)] = node
         self.facts: list[Fact] = []
@@ -88,7 +94,7 @@ class _Importer:
     def parent_table(self, kwarg_to: Any, test: dict[str, Any]) -> ObjectRef | None:
         """A relationships test's ``to`` (``ref()``/``source()``), resolved via depends_on."""
         attached = test.get("attached_node")
-        deps = [d for d in (test.get("depends_on") or {}).get("nodes") or [] if d != attached]
+        deps = [d for d in _list(_dict(test.get("depends_on")).get("nodes")) if d != attached]
         if isinstance(kwarg_to, str):
             m = _REF.search(kwarg_to)
             if m:
@@ -102,22 +108,20 @@ class _Importer:
         return None
 
     def tests(self) -> None:
+        uniques: dict[ObjectRef, list[tuple[ObjectRef, str]]] = {}
+        not_null: set[ObjectRef] = set()
         for uid, test in self.nodes.items():
             if test.get("resource_type") != "test":
                 continue
-            meta = test.get("test_metadata")
-            if not isinstance(meta, dict):
-                continue
-            name, kw = meta.get("name"), meta.get("kwargs") or {}
+            meta = _dict(test.get("test_metadata"))
+            name, kw = meta.get("name"), _dict(meta.get("kwargs"))
             attached = test.get("attached_node")
             col_name = kw.get("column_name") or test.get("column_name")
             if not isinstance(attached, str) or not isinstance(col_name, str):
                 continue
             table = self.table_of(attached)
-            if table is None:
-                continue
-            col = self.column_of(table, col_name)
-            if col is None:
+            col = None if table is None else self.column_of(table, col_name)
+            if table is None or col is None:
                 continue
             if name == "relationships":
                 parent = self.parent_table(kw.get("to"), test)
@@ -126,7 +130,8 @@ class _Importer:
                     continue
                 pcol = self.column_of(parent, field)
                 if pcol is not None:
-                    self.add(FactKind.JOIN, JoinRef((col,), (pcol,)), {"cardinality": "N:1"}, uid)
+                    # dbt asserts only that child values exist in the parent: cardinality unknown
+                    self.add(FactKind.JOIN, JoinRef((col,), (pcol,)), {"cardinality": None}, uid)
             elif name == "accepted_values":
                 vals = kw.get("values")
                 if isinstance(vals, list) and vals:
@@ -138,9 +143,15 @@ class _Importer:
                         uid,
                     )  # fmt: skip
             elif name == "unique":
-                self.add(FactKind.PRIMARY_KEY, table, {"columns": [col.column]}, uid)
+                uniques.setdefault(table, []).append((col, uid))
             elif name == "not_null":
-                self.add(FactKind.NULL_RATE, col, {"rate": 0.0}, uid)
+                not_null.add(col)
+        # `unique` alone is not a key; it is PRIMARY_KEY only as the table's single unique test
+        # on a column that is also not_null. (not_null itself is not imported.)
+        for table, found in uniques.items():
+            if len(found) == 1 and found[0][0] in not_null:
+                col, uid = found[0]
+                self.add(FactKind.PRIMARY_KEY, table, {"columns": [col.column]}, uid)
 
 
 def import_dbt(
@@ -149,9 +160,10 @@ def import_dbt(
     """Facts from a dbt manifest; only relations and columns present in ``store`` are mapped.
 
     Descriptions become DECLARED ``DESCRIPTION``; ``relationships`` -> ``JOIN``,
-    ``accepted_values`` -> ``VALUES``, ``unique`` -> ``PRIMARY_KEY`` (a uniqueness expectation),
-    ``not_null`` -> ``NULL_RATE`` 0.0 — all DECLARED and UNVERIFIED. An unreadable manifest is
-    reported as ``SG209`` on ``diagnostics`` (if given) and yields no facts.
+    ``accepted_values`` -> ``VALUES``; ``unique`` -> ``PRIMARY_KEY`` only as a table's single
+    ``unique`` test on a column that also has ``not_null``; ``not_null`` itself is not imported.
+    All are DECLARED and UNVERIFIED. An unreadable or malformed manifest is reported as
+    ``SG209`` on ``diagnostics`` (if given) and yields no facts; it never raises.
     """
     bag = diagnostics if diagnostics is not None else DiagnosticBag()
     path = Path(manifest_path)
@@ -163,7 +175,13 @@ def import_dbt(
     if not isinstance(manifest, dict):
         bag.add(Diagnostic("SG209", Severity.ERROR, "dbt manifest is not a JSON object", str(path)))
         return []
-    imp = _Importer(manifest, store, bag)
-    imp.descriptions()
-    imp.tests()
+    try:
+        imp = _Importer(manifest, store, bag)
+        imp.descriptions()
+        imp.tests()
+    except Exception as e:  # a hostile manifest must never sink the caller
+        bag.add(
+            Diagnostic("SG209", Severity.ERROR, f"cannot interpret dbt manifest: {e}", str(path))
+        )
+        return []
     return imp.facts

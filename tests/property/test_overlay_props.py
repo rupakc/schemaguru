@@ -101,3 +101,53 @@ def test_loader_never_raises(text: str) -> None:
             assert isinstance(list(bag), list)
         finally:
             s.close()
+
+
+_DBT_KEYS = [
+    "nodes",
+    "sources",
+    "resource_type",
+    "name",
+    "schema",
+    "database",
+    "alias",
+    "description",
+    "columns",
+    "attached_node",
+    "depends_on",
+    "test_metadata",
+    "kwargs",
+    "column_name",
+    "to",
+    "field",
+    "values",
+    "model",
+    "test",
+    "orders",
+    "customers",
+]
+_JSONISH = st.recursive(
+    st.one_of(st.none(), st.booleans(), st.integers(), st.text(max_size=8)),
+    lambda c: st.one_of(
+        st.lists(c, max_size=3), st.dictionaries(st.sampled_from(_DBT_KEYS), c, max_size=4)
+    ),
+    max_leaves=20,
+)
+
+
+@settings(max_examples=150, deadline=None)
+@given(_JSONISH)
+def test_import_dbt_never_raises(manifest: object) -> None:
+    import json
+
+    from schemaguru.diagnostics import DiagnosticBag
+    from schemaguru.overlays import import_dbt
+
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        (tmp / "m.json").write_text(json.dumps(manifest))
+        s = _store(tmp)
+        try:
+            import_dbt(tmp / "m.json", s, diagnostics=DiagnosticBag())
+        finally:
+            s.close()

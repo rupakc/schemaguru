@@ -13,6 +13,11 @@ by default.
 | `raw` | values unmasked — only on your explicit opt-in | no |
 | `none` | no values at all: names, types, comments and statistics only | no |
 
+`masked` masks values that **look** personal. A value with no personal shape — an enum
+code, a filter literal, the maximum of a timestamp column — is shown as it is. If a table's
+values must not leave in any form, use `none`: it hides every value and keeps only names,
+types, comments and counts.
+
 Override per table glob with `per_glob` — the narrowest matching glob wins, and between
 equally narrow globs the most restrictive mode wins, so an ambiguous config never widens
 access:

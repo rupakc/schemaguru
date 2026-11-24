@@ -326,6 +326,21 @@ RS_COLS: dict[tuple[str, str], list[tuple[Any, ...]]] = {
 }
 
 
+RS_TABLES: dict[str, list[tuple[Any, ...]]] = {
+    "shop": [
+        ("Order Items", "TABLE", None, 25000, 12, None),
+        ("customers", "TABLE", "people who buy", 1000, 2, None),
+        ("orders", "TABLE", None, 10000, 8, None),
+        ("v_open_orders", "VIEW", None, None, None, None),
+    ],
+    "ops": [
+        ("events", "TABLE", None, 500000, 64, None),
+        ("sessions", "TABLE", None, 90000, 10, None),
+    ],
+    "spectrum": [("lake_events", "EXTERNAL TABLE", None, None, None, "lake_events")],
+}
+
+
 def _rs(sql: str, params: Sequence[Any]) -> Rows:
     if sql.startswith("select current_database()"):
         return [{"name": "dev"}]
@@ -336,20 +351,18 @@ def _rs(sql: str, params: Sequence[Any]) -> Rows:
             {"schema_name": "spectrum", "table_count": 1},
         ]
     if "from svv_all_tables" in sql:
-        tables = {
-            "shop": [("Order Items", "TABLE", None, 25000, 12, None),
-                     ("customers", "TABLE", "people who buy", 1000, 2, None),
-                     ("orders", "TABLE", None, 10000, 8, None),
-                     ("v_open_orders", "VIEW", None, None, None, None)],
-            "ops": [("events", "TABLE", None, 500000, 64, None),
-                    ("sessions", "TABLE", None, 90000, 10, None)],
-            "spectrum": [("lake_events", "EXTERNAL TABLE", None, None, None, "lake_events")],
-        }  # fmt: skip
         return [
-            {"table_name": n, "table_type": k, "remarks": c, "tbl_rows": r, "size_mb": s,
-             "external_name": e}
-            for n, k, c, r, s, e in tables[params[1]]
-        ]  # fmt: skip
+            {"table_name": n, "table_type": k, "remarks": c}
+            for n, k, c, _r, _s, _e in RS_TABLES[params[1]]
+        ]
+    if "from svv_table_info" in sql:
+        return [
+            {"table_name": n, "tbl_rows": r, "size_mb": z}
+            for n, _k, _c, r, z, _e in RS_TABLES.get(params[0], [])
+            if r is not None
+        ]
+    if "from svv_external_tables" in sql:
+        return [{"table_name": n} for n, _k, _c, _r, _z, e in RS_TABLES.get(params[0], []) if e]
     if "from svv_all_columns" in sql:
         wanted = _pairs(params[1:])
         out: Rows = []
@@ -411,8 +424,8 @@ def _dbx(sql: str, params: Sequence[Any]) -> Rows:
     if "information_schema.schemata" in sql:
         schemas = {"main": [("ops", None), ("shop", "retail data")], "lake": [("raw", None)]}
         return [
-            {"catalog_name": params[0], "schema_name": s, "comment": c}
-            for s, c in schemas[params[0]]
+            {"catalog_name": params[1], "schema_name": s, "comment": c}
+            for s, c in schemas[params[1]]
         ]
     if "information_schema.tables" in sql:
         tables = {
@@ -516,7 +529,7 @@ def _ora(sql: str, params: Sequence[Any]) -> Rows:
             for n, k, r, c, p in tables[params[0]]
         ]
     if "from all_tab_columns" in sql:
-        wanted = _pairs(params[1:])
+        wanted = _pairs(params)
         cols = {
             ("SHOP", "CUSTOMERS"): [
                 ("CUSTOMER_ID", "NUMBER", 22, 0, 10, 0, "N", None, "surrogate key"),

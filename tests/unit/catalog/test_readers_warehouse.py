@@ -369,35 +369,17 @@ def test_redshift_local_and_external() -> None:
                 {"schema_name": "spectrum", "table_count": 1},
             ],
         ),
+        (["CURRENT_DATABASE"], [{"name": "dev"}]),
         (
-            ["SVV_ALL_TABLES"],
+            ["FROM SVV_ALL_TABLES"],
             [
-                {
-                    "table_name": "orders",
-                    "table_type": "TABLE",
-                    "remarks": "o",
-                    "tbl_rows": 7,
-                    "size_mb": 3,
-                    "external_name": None,
-                },
-                {
-                    "table_name": "lake_events",
-                    "table_type": "EXTERNAL TABLE",
-                    "remarks": None,
-                    "tbl_rows": None,
-                    "size_mb": None,
-                    "external_name": "lake_events",
-                },
-                {
-                    "table_name": "v",
-                    "table_type": "VIEW",
-                    "remarks": None,
-                    "tbl_rows": None,
-                    "size_mb": None,
-                    "external_name": None,
-                },
+                {"table_name": "orders", "table_type": "TABLE", "remarks": "o"},
+                {"table_name": "lake_events", "table_type": "EXTERNAL TABLE", "remarks": None},
+                {"table_name": "v", "table_type": "VIEW", "remarks": None},
             ],
         ),
+        (["FROM SVV_TABLE_INFO"], [{"table_name": "orders", "tbl_rows": 7, "size_mb": 3}]),
+        (["FROM SVV_EXTERNAL_TABLES"], [{"table_name": "lake_events"}]),
         (
             ["FROM SVV_ALL_COLUMNS"],
             [
@@ -481,12 +463,17 @@ def test_redshift_local_and_external() -> None:
             ],
         ),
     )
-    r = RedshiftReader(fake, database="dev")  # type: ignore[arg-type]
+    r = RedshiftReader(fake)  # type: ignore[arg-type]
     schemas = r.list_schemas(None, page_token=None).items
     assert [s.name for s in schemas] == ["public", "spectrum"] and schemas[0].table_count == 3
     o, ext, v = r.list_tables(schemas[0], page_token=None, changed_since=None).items
     assert (o.row_count, o.bytes, o.comment) == (7, 3 * 1024 * 1024, "o")
     assert ext.kind == "external" and v.kind == "view"
+    # leader-node and compute-node views are never joined in one statement
+    for sql, _, _ in fake.calls:
+        low = sql.lower()
+        assert not ("svv_table_info" in low and "svv_all_tables" in low), sql
+        assert not ("svv_table_info" in low and "svv_external_tables" in low), sql
     refs = [ObjectRef("dev", "public", "orders"), ObjectRef("dev", "spectrum", "lake_events")]
     cols = r.columns(refs)
     assert [c.family for c in cols[refs[0]]] == ["integer", "json"]
@@ -583,7 +570,9 @@ def test_databricks() -> None:
     assert [x.kind for x in t] == ["table", "external", "view"]
     assert t[0].row_count is None and t[0].last_altered == datetime(2026, 1, 2, tzinfo=UTC)
     ref = ObjectRef("main", "shop", "orders")
-    assert [c.family for c in r.columns([ref])[ref]] == ["integer", "struct"]
+    cols = r.columns([ref])[ref]
+    assert [c.family for c in cols] == ["integer", "struct"]
+    assert [c.ordinal for c in cols] == [1, 2]  # Unity Catalog is 0-based; normalised
     items = ObjectRef("main", "shop", "items")
     [fk] = r.constraints([items])[items]
     assert fk.kind == "foreign_key" and fk.ref_table == ref and fk.enforced is False
@@ -743,3 +732,69 @@ def test_timeout_is_passed_through() -> None:
     fake = Fake((["all_users"], []))
     OracleReader(fake, timeout_s=7.5).list_schemas(None, page_token=None)  # type: ignore[arg-type]
     assert fake.calls[0][2] == 7.5
+
+
+def _no_null_binds(fake: Fake) -> None:
+    for sql, params, _ in fake.calls:
+        assert None not in params, (sql, params)
+
+
+def test_oracle_columns_do_not_use_hidden_column() -> None:
+    fake = Fake((["all_tab_columns"], []))
+    OracleReader(fake).columns([ObjectRef(None, "SHOP", "ORDERS")])  # type: ignore[arg-type]
+    sql, params, _ = fake.calls[0]
+    assert "hidden_column" not in sql.lower() and params == ("SHOP", "ORDERS")
+
+
+def test_databricks_first_page_binds_no_null() -> None:
+    fake = Fake((["tables"], []), (["schemata"], []))
+    r = DatabricksReader(fake)  # type: ignore[arg-type]
+    r.list_tables(Schema("main", "shop"), page_token=None, changed_since=None)
+    r.list_schemas(None, page_token=None)
+    _no_null_binds(fake)
+    assert "table_name > ?" not in fake.calls[0][0] and "last_altered >=" not in fake.calls[0][0]
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+    r.list_tables(Schema("main", "shop"), page_token="m", changed_since=ts)
+    sql, params, _ = fake.calls[-1]
+    assert "table_name > ?" in sql and "last_altered >= ?" in sql
+    assert params == ("main", "shop", "m", ts, 1001)
+
+
+def test_bigquery_incremental_keeps_views_and_skips_deleted_storage() -> None:
+    fake = Fake((["TABLES"], []))
+    r = BigQueryReader(fake, project="p1")  # type: ignore[arg-type]
+    r.list_tables(Schema("p1", "shop"), page_token=None, changed_since=None)
+    sql, params, _ = fake.calls[0]
+    assert None not in params and "NOT s.deleted" in sql and "WHERE" not in sql
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+    r.list_tables(Schema("p1", "shop"), page_token="a", changed_since=ts)
+    sql, params, _ = fake.calls[1]
+    assert "s.table_name IS NULL" in sql and "t.creation_time >= ?" in sql
+    assert params == ("description", "a", ts, ts, 1001)
+
+
+def test_redshift_skips_constraints_and_external_columns_for_other_databases() -> None:
+    fake = Fake(
+        (["CURRENT_DATABASE"], [{"name": "dev"}]),
+        (["FROM SVV_ALL_COLUMNS"], []),
+    )
+    r = RedshiftReader(fake, database="dev")  # type: ignore[arg-type]
+    other = ObjectRef("shared_db", "s", "t")
+    assert r.constraints([other])[other] == []
+    r.columns([other])
+    assert all(
+        "pg_constraint" not in c[0] and "svv_external" not in c[0].lower() for c in fake.calls
+    )
+
+
+def test_crawl_report_flags_estimated_bytes() -> None:
+    from schemaguru.catalog import crawl
+    from schemaguru.store.sqlite import SQLiteStore
+
+    fake = Fake(
+        (["SCHEMATA"], [{"catalog_name": "p1", "schema_name": "shop"}]),
+        (["TABLES"], []),
+    )
+    store = SQLiteStore(":memory:")
+    report = crawl(BigQueryReader(fake), store)  # type: ignore[arg-type]
+    assert report.bytes_billed == 2 * MIN_BILLED_BYTES and report.bytes_billed_is_estimate

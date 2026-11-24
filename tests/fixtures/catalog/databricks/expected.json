@@ -6,7 +6,7 @@
    "family": "date",
    "native_type": "date",
    "nullable": true,
-   "ordinal": 1,
+   "ordinal": 2,
    "ref": {
     "catalog": "lake",
     "column": "event_date",
@@ -20,7 +20,7 @@
    "family": "integer",
    "native_type": "bigint",
    "nullable": true,
-   "ordinal": 0,
+   "ordinal": 1,
    "ref": {
     "catalog": "lake",
     "column": "event_id",
@@ -34,7 +34,7 @@
    "family": "struct",
    "native_type": "map<string,string>",
    "nullable": true,
-   "ordinal": 2,
+   "ordinal": 3,
    "ref": {
     "catalog": "main",
     "column": "attrs",
@@ -48,7 +48,7 @@
    "family": "integer",
    "native_type": "bigint",
    "nullable": false,
-   "ordinal": 0,
+   "ordinal": 1,
    "ref": {
     "catalog": "main",
     "column": "event_id",
@@ -62,7 +62,7 @@
    "family": "string",
    "native_type": "string",
    "nullable": true,
-   "ordinal": 1,
+   "ordinal": 2,
    "ref": {
     "catalog": "main",
     "column": "session_id",
@@ -76,7 +76,7 @@
    "family": "string",
    "native_type": "string",
    "nullable": false,
-   "ordinal": 0,
+   "ordinal": 1,
    "ref": {
     "catalog": "main",
     "column": "session_id",
@@ -90,7 +90,7 @@
    "family": "timestamp",
    "native_type": "timestamp",
    "nullable": true,
-   "ordinal": 1,
+   "ordinal": 2,
    "ref": {
     "catalog": "main",
     "column": "started_at",
@@ -104,7 +104,7 @@
    "family": "integer",
    "native_type": "int",
    "nullable": false,
-   "ordinal": 1,
+   "ordinal": 2,
    "ref": {
     "catalog": "main",
     "column": "line_no",
@@ -118,7 +118,7 @@
    "family": "integer",
    "native_type": "bigint",
    "nullable": false,
-   "ordinal": 0,
+   "ordinal": 1,
    "ref": {
     "catalog": "main",
     "column": "order_id",
@@ -132,7 +132,7 @@
    "family": "integer",
    "native_type": "bigint",
    "nullable": false,
-   "ordinal": 0,
+   "ordinal": 1,
    "ref": {
     "catalog": "main",
     "column": "customer_id",
@@ -146,7 +146,7 @@
    "family": "string",
    "native_type": "string",
    "nullable": true,
-   "ordinal": 1,
+   "ordinal": 2,
    "ref": {
     "catalog": "main",
     "column": "email",
@@ -160,7 +160,7 @@
    "family": "array",
    "native_type": "array<string>",
    "nullable": true,
-   "ordinal": 2,
+   "ordinal": 3,
    "ref": {
     "catalog": "main",
     "column": "tags",
@@ -174,7 +174,7 @@
    "family": "integer",
    "native_type": "bigint",
    "nullable": true,
-   "ordinal": 1,
+   "ordinal": 2,
    "ref": {
     "catalog": "main",
     "column": "customer_id",
@@ -188,7 +188,7 @@
    "family": "integer",
    "native_type": "bigint",
    "nullable": false,
-   "ordinal": 0,
+   "ordinal": 1,
    "ref": {
     "catalog": "main",
     "column": "order_id",
@@ -202,7 +202,7 @@
    "family": "decimal",
    "native_type": "decimal(10,2)",
    "nullable": true,
-   "ordinal": 2,
+   "ordinal": 3,
    "ref": {
     "catalog": "main",
     "column": "total",
@@ -216,7 +216,7 @@
    "family": "integer",
    "native_type": "bigint",
    "nullable": true,
-   "ordinal": 0,
+   "ordinal": 1,
    "ref": {
     "catalog": "main",
     "column": "order_id",

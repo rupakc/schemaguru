@@ -40,93 +40,139 @@
    "params": [
     "dev",
     "ops",
-    null,
-    null,
     1001
    ],
    "rows": [
     {
-     "external_name": null,
      "remarks": null,
+     "table_name": "events",
+     "table_type": "TABLE"
+    },
+    {
+     "remarks": null,
+     "table_name": "sessions",
+     "table_type": "TABLE"
+    }
+   ],
+   "sql": "select t.table_name as table_name, t.table_type as table_type, t.remarks as remarks from svv_all_tables t where t.database_name = ? and t.schema_name = ? order by t.table_name limit ?"
+  },
+  {
+   "params": [
+    "ops"
+   ],
+   "rows": [
+    {
      "size_mb": 64,
      "table_name": "events",
-     "table_type": "TABLE",
      "tbl_rows": 500000
     },
     {
-     "external_name": null,
-     "remarks": null,
      "size_mb": 10,
      "table_name": "sessions",
-     "table_type": "TABLE",
      "tbl_rows": 90000
     }
    ],
-   "sql": "select t.table_name as table_name, t.table_type as table_type, t.remarks as remarks, i.tbl_rows as tbl_rows, i.\"size\" as size_mb, e.tablename as external_name from svv_all_tables t left join svv_table_info i on i.\"schema\" = t.schema_name and i.\"table\" = t.table_name and t.database_name = current_database() left join svv_external_tables e on e.schemaname = t.schema_name and e.tablename = t.table_name where t.database_name = ? and t.schema_name = ? and (cast(? as varchar) is null or t.table_name > ?) order by t.table_name limit ?"
+   "sql": "select \"table\" as table_name, tbl_rows, \"size\" as size_mb from svv_table_info where \"schema\" = ?"
+  },
+  {
+   "params": [
+    "ops"
+   ],
+   "rows": [],
+   "sql": "select tablename as table_name from svv_external_tables where schemaname = ?"
   },
   {
    "params": [
     "dev",
     "shop",
-    null,
-    null,
     1001
    ],
    "rows": [
     {
-     "external_name": null,
      "remarks": null,
+     "table_name": "Order Items",
+     "table_type": "TABLE"
+    },
+    {
+     "remarks": "people who buy",
+     "table_name": "customers",
+     "table_type": "TABLE"
+    },
+    {
+     "remarks": null,
+     "table_name": "orders",
+     "table_type": "TABLE"
+    },
+    {
+     "remarks": null,
+     "table_name": "v_open_orders",
+     "table_type": "VIEW"
+    }
+   ],
+   "sql": "select t.table_name as table_name, t.table_type as table_type, t.remarks as remarks from svv_all_tables t where t.database_name = ? and t.schema_name = ? order by t.table_name limit ?"
+  },
+  {
+   "params": [
+    "shop"
+   ],
+   "rows": [
+    {
      "size_mb": 12,
      "table_name": "Order Items",
-     "table_type": "TABLE",
      "tbl_rows": 25000
     },
     {
-     "external_name": null,
-     "remarks": "people who buy",
      "size_mb": 2,
      "table_name": "customers",
-     "table_type": "TABLE",
      "tbl_rows": 1000
     },
     {
-     "external_name": null,
-     "remarks": null,
      "size_mb": 8,
      "table_name": "orders",
-     "table_type": "TABLE",
      "tbl_rows": 10000
-    },
-    {
-     "external_name": null,
-     "remarks": null,
-     "size_mb": null,
-     "table_name": "v_open_orders",
-     "table_type": "VIEW",
-     "tbl_rows": null
     }
    ],
-   "sql": "select t.table_name as table_name, t.table_type as table_type, t.remarks as remarks, i.tbl_rows as tbl_rows, i.\"size\" as size_mb, e.tablename as external_name from svv_all_tables t left join svv_table_info i on i.\"schema\" = t.schema_name and i.\"table\" = t.table_name and t.database_name = current_database() left join svv_external_tables e on e.schemaname = t.schema_name and e.tablename = t.table_name where t.database_name = ? and t.schema_name = ? and (cast(? as varchar) is null or t.table_name > ?) order by t.table_name limit ?"
+   "sql": "select \"table\" as table_name, tbl_rows, \"size\" as size_mb from svv_table_info where \"schema\" = ?"
+  },
+  {
+   "params": [
+    "shop"
+   ],
+   "rows": [],
+   "sql": "select tablename as table_name from svv_external_tables where schemaname = ?"
   },
   {
    "params": [
     "dev",
     "spectrum",
-    null,
-    null,
     1001
    ],
    "rows": [
     {
-     "external_name": "lake_events",
      "remarks": null,
-     "size_mb": null,
      "table_name": "lake_events",
-     "table_type": "EXTERNAL TABLE",
-     "tbl_rows": null
+     "table_type": "EXTERNAL TABLE"
     }
    ],
-   "sql": "select t.table_name as table_name, t.table_type as table_type, t.remarks as remarks, i.tbl_rows as tbl_rows, i.\"size\" as size_mb, e.tablename as external_name from svv_all_tables t left join svv_table_info i on i.\"schema\" = t.schema_name and i.\"table\" = t.table_name and t.database_name = current_database() left join svv_external_tables e on e.schemaname = t.schema_name and e.tablename = t.table_name where t.database_name = ? and t.schema_name = ? and (cast(? as varchar) is null or t.table_name > ?) order by t.table_name limit ?"
+   "sql": "select t.table_name as table_name, t.table_type as table_type, t.remarks as remarks from svv_all_tables t where t.database_name = ? and t.schema_name = ? order by t.table_name limit ?"
+  },
+  {
+   "params": [
+    "spectrum"
+   ],
+   "rows": [],
+   "sql": "select \"table\" as table_name, tbl_rows, \"size\" as size_mb from svv_table_info where \"schema\" = ?"
+  },
+  {
+   "params": [
+    "spectrum"
+   ],
+   "rows": [
+    {
+     "table_name": "lake_events"
+    }
+   ],
+   "sql": "select tablename as table_name from svv_external_tables where schemaname = ?"
   },
   {
    "params": [

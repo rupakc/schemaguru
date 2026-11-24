@@ -79,16 +79,22 @@ class RedshiftReader:
         self.database = database
         self.page_size = page_size
         self.timeout_s = timeout_s
+        self._current_db: str | None = None
 
     def _run(self, sql: str, params: Sequence[Any] = ()) -> list[Row]:
         return lower_keys(self._ex.run(sql, params, timeout_s=self.timeout_s))
+
+    def _current(self) -> str:
+        if self._current_db is None:
+            rows = self._run("SELECT CURRENT_DATABASE() AS name")
+            self._current_db = str(rows[0]["name"])
+        return self._current_db
 
     def _db(self, catalog: str | None) -> str:
         if catalog:
             return catalog
         if self.database is None:
-            rows = self._run("SELECT CURRENT_DATABASE() AS name")
-            self.database = str(rows[0]["name"])
+            self.database = self._current()
         return self.database
 
     def list_catalogs(self) -> Iterator[str]:
@@ -113,34 +119,54 @@ class RedshiftReader:
         self, schema: Schema, *, page_token: str | None, changed_since: datetime | None
     ) -> Page[Table]:
         db = self._db(schema.catalog)
+        where = ""
+        params: list[Any] = [db, schema.name]
+        if page_token is not None:
+            where = "AND t.table_name > ? "
+            params.append(page_token)
+        params.append(self.page_size + 1)
+        # Leader-node (SVV_ALL_*, SVV_EXTERNAL_*) and compute-node (SVV_TABLE_INFO) views
+        # cannot be joined reliably: separate queries, merged here.
         rows = self._run(
             "SELECT t.table_name AS table_name, t.table_type AS table_type, "
-            't.remarks AS remarks, i.tbl_rows AS tbl_rows, i."size" AS size_mb, '
-            "e.tablename AS external_name "
-            "FROM SVV_ALL_TABLES t "
-            'LEFT JOIN SVV_TABLE_INFO i ON i."schema" = t.schema_name '
-            'AND i."table" = t.table_name AND t.database_name = CURRENT_DATABASE() '
-            "LEFT JOIN SVV_EXTERNAL_TABLES e ON e.schemaname = t.schema_name "
-            "AND e.tablename = t.table_name "
-            "WHERE t.database_name = ? AND t.schema_name = ? "
-            "AND (CAST(? AS VARCHAR) IS NULL OR t.table_name > ?) "
+            "t.remarks AS remarks FROM SVV_ALL_TABLES t "
+            f"WHERE t.database_name = ? AND t.schema_name = ? {where}"
             "ORDER BY t.table_name LIMIT ?",
-            (db, schema.name, page_token, page_token, self.page_size + 1),
+            params,
         )
+        info: dict[str, Row] = {}
+        external: set[str] = set()
+        if rows and db == self._current():
+            info = {
+                r["table_name"]: r
+                for r in self._run(
+                    'SELECT "table" AS table_name, tbl_rows, "size" AS size_mb '
+                    'FROM SVV_TABLE_INFO WHERE "schema" = ?',
+                    (schema.name,),
+                )
+            }
+            external = {
+                r["table_name"]
+                for r in self._run(
+                    "SELECT tablename AS table_name FROM SVV_EXTERNAL_TABLES WHERE schemaname = ?",
+                    (schema.name,),
+                )
+            }
         more = len(rows) > self.page_size
         rows = rows[: self.page_size]
         items: list[Table] = []
         for r in rows:
             kind = _KINDS.get(str(r["table_type"]).upper(), "other")
-            if r["external_name"] is not None:
+            if r["table_name"] in external:
                 kind = "external"
-            size = opt_int(r["size_mb"])
+            i = info.get(r["table_name"], {})
+            size = opt_int(i.get("size_mb"))
             items.append(
                 Table(
                     ObjectRef(db, schema.name, r["table_name"]),
                     kind,
                     r["remarks"] or None,
-                    opt_int(r["tbl_rows"]),
+                    opt_int(i.get("tbl_rows")),
                     None if size is None else size * _MB,
                 )
             )
@@ -176,7 +202,7 @@ class RedshiftReader:
                     )
                 )
             missing = [t for t in group if not out.get(t.table_ref())]
-            if missing:
+            if missing and db == self._current():  # SVV_EXTERNAL_* see the current database only
                 self._external_columns(db, missing, out)
         return out
 
@@ -209,6 +235,8 @@ class RedshiftReader:
         for t in tables:
             by_db.setdefault(self._db(t.catalog), []).append(t)
         for db, group in by_db.items():
+            if db != self._current():
+                continue  # pg_constraint covers the current database only: unknown, not guessed
             clause, params = pairs(group, "n.nspname", "c.relname")
             rows = self._run(
                 "SELECT n.nspname AS schema_name, c.relname AS table_name, "

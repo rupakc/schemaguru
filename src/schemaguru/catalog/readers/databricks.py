@@ -86,34 +86,33 @@ class DatabricksReader:
         return iter([r["catalog_name"] for r in rows])
 
     def list_schemas(self, catalog: str | None, *, page_token: str | None) -> Page[Schema]:
+        where = "" if catalog is None else "AND s.catalog_name = ? "
         rows = self._run(
             "SELECT s.catalog_name AS catalog_name, s.schema_name AS schema_name, "
             "s.comment AS comment FROM "
-            f"{_IS}.schemata s "
-            "WHERE (CAST(? AS STRING) IS NULL OR s.catalog_name = ?) "
-            "AND s.schema_name <> ? ORDER BY s.catalog_name, s.schema_name",
-            (catalog, catalog, "information_schema"),
+            f"{_IS}.schemata s WHERE s.schema_name <> ? {where}"
+            "ORDER BY s.catalog_name, s.schema_name",
+            ("information_schema",) if catalog is None else ("information_schema", catalog),
         )
         return Page([Schema(r["catalog_name"], r["schema_name"], r["comment"]) for r in rows])
 
     def list_tables(
         self, schema: Schema, *, page_token: str | None, changed_since: datetime | None
     ) -> Page[Table]:
+        where = ""
+        params: list[Any] = [schema.catalog, schema.name]
+        if page_token is not None:
+            where += "AND table_name > ? "
+            params.append(page_token)
+        if changed_since is not None:
+            where += "AND last_altered >= ? "
+            params.append(changed_since)
+        params.append(self.page_size + 1)
         rows = self._run(
             "SELECT table_name, table_type, comment, created, last_altered "
             f"FROM {_IS}.tables WHERE table_catalog = ? AND table_schema = ? "
-            "AND (CAST(? AS STRING) IS NULL OR table_name > ?) "
-            "AND (CAST(? AS TIMESTAMP) IS NULL OR last_altered >= ?) "
-            "ORDER BY table_name LIMIT ?",
-            (
-                schema.catalog,
-                schema.name,
-                page_token,
-                page_token,
-                changed_since,
-                changed_since,
-                self.page_size + 1,
-            ),
+            f"{where}ORDER BY table_name LIMIT ?",
+            params,
         )
         more = len(rows) > self.page_size
         rows = rows[: self.page_size]
@@ -146,7 +145,7 @@ class DatabricksReader:
             out.setdefault(ObjectRef(cat, sch, tab), []).append(
                 Column(
                     ObjectRef(cat, sch, tab, r["column_name"]),
-                    int(r["ordinal_position"]),
+                    int(r["ordinal_position"]) + 1,  # Unity Catalog counts from 0
                     r["full_data_type"],
                     _dbx_family(str(r["full_data_type"])),
                     yes_no(r["is_nullable"]),

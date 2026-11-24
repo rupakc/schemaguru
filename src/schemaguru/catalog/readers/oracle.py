@@ -148,9 +148,9 @@ class OracleReader:
             "m.comments AS comments "
             "FROM all_tab_columns c LEFT JOIN all_col_comments m ON m.owner = c.owner "
             "AND m.table_name = c.table_name AND m.column_name = c.column_name "
-            f"WHERE c.hidden_column = ? AND ({clause}) "
+            f"WHERE ({clause}) "
             "ORDER BY c.owner, c.table_name, c.column_id",
-            ("NO", *params),
+            params,
         )
         for r in rows:
             default = r["data_default"]

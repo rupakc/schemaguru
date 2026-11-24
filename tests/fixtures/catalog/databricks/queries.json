@@ -18,9 +18,8 @@
   },
   {
    "params": [
-    "lake",
-    "lake",
-    "information_schema"
+    "information_schema",
+    "lake"
    ],
    "rows": [
     {
@@ -29,13 +28,12 @@
      "schema_name": "raw"
     }
    ],
-   "sql": "select s.catalog_name as catalog_name, s.schema_name as schema_name, s.comment as comment from system.information_schema.schemata s where (cast(? as string) is null or s.catalog_name = ?) and s.schema_name <> ? order by s.catalog_name, s.schema_name"
+   "sql": "select s.catalog_name as catalog_name, s.schema_name as schema_name, s.comment as comment from system.information_schema.schemata s where s.schema_name <> ? and s.catalog_name = ? order by s.catalog_name, s.schema_name"
   },
   {
    "params": [
-    "main",
-    "main",
-    "information_schema"
+    "information_schema",
+    "main"
    ],
    "rows": [
     {
@@ -49,16 +47,12 @@
      "schema_name": "shop"
     }
    ],
-   "sql": "select s.catalog_name as catalog_name, s.schema_name as schema_name, s.comment as comment from system.information_schema.schemata s where (cast(? as string) is null or s.catalog_name = ?) and s.schema_name <> ? order by s.catalog_name, s.schema_name"
+   "sql": "select s.catalog_name as catalog_name, s.schema_name as schema_name, s.comment as comment from system.information_schema.schemata s where s.schema_name <> ? and s.catalog_name = ? order by s.catalog_name, s.schema_name"
   },
   {
    "params": [
     "lake",
     "raw",
-    null,
-    null,
-    null,
-    null,
     1001
    ],
    "rows": [
@@ -74,16 +68,12 @@
      "table_type": "EXTERNAL"
     }
    ],
-   "sql": "select table_name, table_type, comment, created, last_altered from system.information_schema.tables where table_catalog = ? and table_schema = ? and (cast(? as string) is null or table_name > ?) and (cast(? as timestamp) is null or last_altered >= ?) order by table_name limit ?"
+   "sql": "select table_name, table_type, comment, created, last_altered from system.information_schema.tables where table_catalog = ? and table_schema = ? order by table_name limit ?"
   },
   {
    "params": [
     "main",
     "ops",
-    null,
-    null,
-    null,
-    null,
     1001
    ],
    "rows": [
@@ -110,16 +100,12 @@
      "table_type": "MANAGED"
     }
    ],
-   "sql": "select table_name, table_type, comment, created, last_altered from system.information_schema.tables where table_catalog = ? and table_schema = ? and (cast(? as string) is null or table_name > ?) and (cast(? as timestamp) is null or last_altered >= ?) order by table_name limit ?"
+   "sql": "select table_name, table_type, comment, created, last_altered from system.information_schema.tables where table_catalog = ? and table_schema = ? order by table_name limit ?"
   },
   {
    "params": [
     "main",
     "shop",
-    null,
-    null,
-    null,
-    null,
     1001
    ],
    "rows": [
@@ -168,7 +154,7 @@
      "table_type": "VIEW"
     }
    ],
-   "sql": "select table_name, table_type, comment, created, last_altered from system.information_schema.tables where table_catalog = ? and table_schema = ? and (cast(? as string) is null or table_name > ?) and (cast(? as timestamp) is null or last_altered >= ?) order by table_name limit ?"
+   "sql": "select table_name, table_type, comment, created, last_altered from system.information_schema.tables where table_catalog = ? and table_schema = ? order by table_name limit ?"
   },
   {
    "params": [

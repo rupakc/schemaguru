@@ -161,6 +161,21 @@ class BigQueryReader:
     ) -> Page[Table]:
         t = self._dataset_view(schema.catalog, schema.name, "TABLES")
         o = self._dataset_view(schema.catalog, schema.name, "TABLE_OPTIONS")
+        where: list[str] = []
+        params: list[Any] = ["description"]
+        if page_token is not None:
+            where.append("t.table_name > ?")
+            params.append(page_token)
+        if changed_since is not None:
+            # Views and tables without a TABLE_STORAGE row have no modified time: keep them
+            # when they were created since, or when storage knows nothing about them.
+            where.append(
+                "(s.table_name IS NULL OR s.storage_last_modified_time >= ? "
+                "OR t.creation_time >= ?)"
+            )
+            params += [changed_since, changed_since]
+        params.append(self.page_size + 1)
+        clause = f"WHERE {' AND '.join(where)} " if where else ""
         rows = self._run(
             "SELECT t.table_name AS table_name, t.table_type AS table_type, "
             "t.creation_time AS creation_time, d.option_value AS description, "
@@ -170,18 +185,9 @@ class BigQueryReader:
             f"LEFT JOIN {o} d ON d.table_name = t.table_name AND d.option_name = ? "
             f"LEFT JOIN {self._region_view('TABLE_STORAGE')} s "
             "ON s.table_schema = t.table_schema AND s.table_name = t.table_name "
-            "AND s.project_id = t.table_catalog "
-            "WHERE (CAST(? AS STRING) IS NULL OR t.table_name > ?) "
-            "AND (CAST(? AS TIMESTAMP) IS NULL OR s.storage_last_modified_time >= ?) "
-            "ORDER BY t.table_name LIMIT ?",
-            (
-                "description",
-                page_token,
-                page_token,
-                changed_since,
-                changed_since,
-                self.page_size + 1,
-            ),
+            "AND s.project_id = t.table_catalog AND NOT s.deleted "
+            f"{clause}ORDER BY t.table_name LIMIT ?",
+            params,
         )
         more = len(rows) > self.page_size
         rows = rows[: self.page_size]

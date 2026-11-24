@@ -18,10 +18,6 @@
   {
    "params": [
     "description",
-    null,
-    null,
-    null,
-    null,
     1001
    ],
    "rows": [
@@ -52,15 +48,11 @@
      "total_rows": 90000
     }
    ],
-   "sql": "select t.table_name as table_name, t.table_type as table_type, t.creation_time as creation_time, d.option_value as description, s.total_rows as total_rows, s.total_logical_bytes as total_logical_bytes, s.storage_last_modified_time as last_modified from `demo-project`.`ops`.information_schema.tables t left join `demo-project`.`ops`.information_schema.table_options d on d.table_name = t.table_name and d.option_name = ? left join `region-us`.information_schema.table_storage s on s.table_schema = t.table_schema and s.table_name = t.table_name and s.project_id = t.table_catalog where (cast(? as string) is null or t.table_name > ?) and (cast(? as timestamp) is null or s.storage_last_modified_time >= ?) order by t.table_name limit ?"
+   "sql": "select t.table_name as table_name, t.table_type as table_type, t.creation_time as creation_time, d.option_value as description, s.total_rows as total_rows, s.total_logical_bytes as total_logical_bytes, s.storage_last_modified_time as last_modified from `demo-project`.`ops`.information_schema.tables t left join `demo-project`.`ops`.information_schema.table_options d on d.table_name = t.table_name and d.option_name = ? left join `region-us`.information_schema.table_storage s on s.table_schema = t.table_schema and s.table_name = t.table_name and s.project_id = t.table_catalog and not s.deleted order by t.table_name limit ?"
   },
   {
    "params": [
     "description",
-    null,
-    null,
-    null,
-    null,
     1001
    ],
    "rows": [
@@ -115,7 +107,7 @@
      "total_rows": null
     }
    ],
-   "sql": "select t.table_name as table_name, t.table_type as table_type, t.creation_time as creation_time, d.option_value as description, s.total_rows as total_rows, s.total_logical_bytes as total_logical_bytes, s.storage_last_modified_time as last_modified from `demo-project`.`shop`.information_schema.tables t left join `demo-project`.`shop`.information_schema.table_options d on d.table_name = t.table_name and d.option_name = ? left join `region-us`.information_schema.table_storage s on s.table_schema = t.table_schema and s.table_name = t.table_name and s.project_id = t.table_catalog where (cast(? as string) is null or t.table_name > ?) and (cast(? as timestamp) is null or s.storage_last_modified_time >= ?) order by t.table_name limit ?"
+   "sql": "select t.table_name as table_name, t.table_type as table_type, t.creation_time as creation_time, d.option_value as description, s.total_rows as total_rows, s.total_logical_bytes as total_logical_bytes, s.storage_last_modified_time as last_modified from `demo-project`.`shop`.information_schema.tables t left join `demo-project`.`shop`.information_schema.table_options d on d.table_name = t.table_name and d.option_name = ? left join `region-us`.information_schema.table_storage s on s.table_schema = t.table_schema and s.table_name = t.table_name and s.project_id = t.table_catalog and not s.deleted order by t.table_name limit ?"
   },
   {
    "params": [

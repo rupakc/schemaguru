@@ -47,6 +47,7 @@ class CrawlReport:
     errors: list[Diagnostic] = field(default_factory=list)
     queries: int = 0
     bytes_billed: int | None = None
+    bytes_billed_is_estimate: bool = False
     duration_s: float = 0.0
 
 
@@ -434,5 +435,6 @@ def crawl(
         errors=run.errors,
         queries=run.queries,
         bytes_billed=bytes_billed if isinstance(bytes_billed, int) else None,
+        bytes_billed_is_estimate=getattr(reader, "bytes_billed_is_lower_bound", False) is True,
         duration_s=time.monotonic() - t0,
     )

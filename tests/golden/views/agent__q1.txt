@@ -9,6 +9,7 @@ Legend:
   ≈ / ≥ estimated from a sample of a large table; never verified.
   (draft) written by a language model and not checked.
   measured <date> an observed number; verified <date> a claim that passed its check.
+  (human, unchecked) / (declared, unchecked) stated by a person or a declaration; not yet checked against the data.
   Absence of a warning is not verification.
 
 Glossary:
@@ -57,12 +58,12 @@ Glossary:
     product_id  INTEGER  → shop.products.product_id N:1, match 100% (measured 2026-11-20)
   Provenance: drafted text marked (draft) is unchecked · measured 2026-11-20
 
-Join paths (measured joins; join keys are advisory):
-  shop.orders → shop.payments · coverage 5%
+Join paths (join keys, advisory; support = the weakest hop's match or coverage):
+  shop.orders → shop.payments · support 5%
     payments.order_id = orders.order_id (1:1)
-  shop.orders → shop.customers · coverage 98.04%
+  shop.orders → shop.customers · support 98.04%
     orders.customer_id = customers.customer_id (N:1)
-  shop.orders → shop.order_items · coverage 100%
+  shop.orders → shop.order_items · support 100%
     order_items.order_id = orders.order_id (N:1)
 
 Not shown: no other candidate tables.

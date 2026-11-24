@@ -87,7 +87,17 @@ def collect(
     require_aware(now)
     ref = ref.table_ref()
     columns = tuple(sorted(store.columns(ref), key=lambda c: (c.ordinal, c.ref.column or "")))
-    constraints = tuple(store.constraints(ref))
+    constraints = tuple(
+        sorted(
+            store.constraints(ref),
+            key=lambda c: (
+                c.kind,
+                c.columns,
+                "" if c.ref_table is None else c.ref_table.canonical(),
+                c.ref_columns or (),
+            ),
+        )
+    )
     subjects: list[ObjectRef | JoinRef] = [ref, *(c.ref for c in columns)]
     own = store.facts_for(subjects, None)
     joins = store.facts_for(None, ["JOIN"]) if join_facts is None else join_facts

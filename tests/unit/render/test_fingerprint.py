@@ -118,7 +118,7 @@ def test_paths_block_lists_minimal_paths(store: SQLiteStore) -> None:
     )
     paths = next(b for b in v.blocks if b.kind == "join_paths").text
     # rank order: customers first, so the route is told from customers
-    assert "  shop.customers → shop.orders · coverage 100%" in paths
+    assert "  shop.customers → shop.orders · support 100%" in paths
     assert "orders.customer_id = customers.customer_id (N:1)" in paths
     # customers..order_items goes through orders, which is shown: composed, not repeated
     assert "shop.customers → shop.orders → shop.order_items" not in paths
@@ -160,3 +160,46 @@ def test_fingerprint_views(store: SQLiteStore) -> None:
     assert list(fps) == ["a", "b"]
     assert fps["a"] == fps["b"]  # same tables: the question itself is not in the view text
     assert fps == fingerprint_views(Guru(), ["a", "b"])
+
+
+def test_hazard_warnings_survive_the_budget_before_the_glossary(store: SQLiteStore) -> None:
+    counter = CharTokenCounter()
+    tables = [(t(n), DetailLevel.NAME_ONLY) for n in ("events", "orders", "payments")]
+    r = ViewRenderer(store, now=NOW, cfg=CONFIG, graph=shop_graph(store))
+    full = r.view("q", tables, counter=counter)
+    assert "no safe route" in full.text and "Glossary" in full.text
+    paths = next(b for b in full.blocks if b.kind == "join_paths").text
+    routes = [ln for ln in paths.splitlines() if "·" in ln]
+    # a budget with room for the hazards but not for the glossary or the routes
+    tight = full.tokens - counter.count("\n".join(routes)) - 40
+    v = r.view("q", tables, budget_tokens=tight, counter=counter)
+    assert "no safe route" in v.text
+    assert "Glossary" not in v.text
+    # table_budget reserves the hazards among the candidates
+    assert r.table_budget(2000, counter, tables=[x for x, _ in tables]) < r.table_budget(
+        2000, counter
+    )
+
+
+def test_legend_is_not_a_stable_block(store: SQLiteStore) -> None:
+    legend = next(b for b in render(store).blocks if b.kind == "legend")
+    assert legend.stable is False
+
+
+def test_router_puts_warnings_first(store: SQLiteStore) -> None:
+    r = ViewRenderer(store, now=NOW, cfg=CONFIG, profile="router")
+    v = r.view("q", [(t("orders"), DetailLevel.FULL), (t("broken_child"), DetailLevel.FULL)])
+    lines = next(b for b in v.blocks if b.kind == "tables").text.splitlines()
+    assert lines[0].startswith("shop.broken_child — ⚠ NEVER QUERY")
+
+
+def test_sg504_names_what_overflowed(store: SQLiteStore) -> None:
+    r = ViewRenderer(store, now=NOW, cfg=CONFIG)
+    v = r.view("q", [(t("orders"), DetailLevel.FULL)], budget_tokens=50)
+    (d,) = v.diagnostics
+    assert d.code == "SG504"
+    assert (
+        "always-on blocks" in d.message
+        and "tables" in d.message
+        and "over its budget of 50" in d.message
+    )

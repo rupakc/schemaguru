@@ -9,6 +9,7 @@ Legend:
   ≈ / ≥ estimated from a sample of a large table; never verified.
   (draft) written by a language model and not checked.
   measured <date> an observed number; verified <date> a claim that passed its check.
+  (human, unchecked) / (declared, unchecked) stated by a person or a declaration; not yet checked against the data.
   Absence of a warning is not verification.
 
 Glossary:
@@ -58,15 +59,15 @@ DISTINCT email 1000 measured 2026-11-20
 NULLS phone rate=0.1 measured 2026-11-20
 VALUES segment observed='retail':334,'wholesale':333,'vip':333 measured 2026-11-20
 
-Join paths (measured joins; join keys are advisory):
+Join paths (join keys, advisory; support = the weakest hop's match or coverage):
   ⚠ no safe route (shop.events -> shop.orders; shop.events -> shop.customers; shop.sessions -> shop.orders; shop.sessions -> shop.customers): every route pivots through hub shop.accounts on two attribution edges (fan-in > 10): a cartesian hazard
-  shop.events → shop.sessions · coverage 100%
+  shop.events → shop.sessions · support 100%
     events.session_id = sessions.session_id (N:1)
-  shop.events → shop.accounts · coverage 100%
+  shop.events → shop.accounts · support 100%
     events.account_id = accounts.account_id (N:1)
-  shop.accounts → shop.orders · coverage 40%
+  shop.accounts → shop.orders · support 40%
     orders.account_id = accounts.account_id (N:1)
-  shop.orders → shop.customers · coverage 98.04%
+  shop.orders → shop.customers · support 98.04%
     orders.customer_id = customers.customer_id (N:1)
 
 Not shown: no other candidate tables.

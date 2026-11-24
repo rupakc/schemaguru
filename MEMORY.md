@@ -133,3 +133,14 @@ refusals (hub pivot, waypoint rules) as `⚠` lines so listed routes are never c
 silently. A DRAFTED fact is tagged `(draft)` unless VERIFIED, whatever its status. Goldens:
 `SCHEMAGURU_UPDATE_GOLDEN=1 pytest tests/golden`, then read the diff. `overlays.check_filter_syntax`
 cannot call `render.fragments.validate_filter` (layer 3 below 6); its TODO stays for the facade.
+
+## 2026-11-24 - Rendering applies the value policy itself (Task 14 fix round 1)
+Why: a PII-tagged column's stored values reached the agent verbatim; masking at storage alone is
+one line of defence.
+How to apply: every rendered value goes through `ValuePolicy.for_table` (`Config.sampling`):
+`masked` masks all values of a PII-tagged column (any provenance) and any detector hit elsewhere;
+`none` shows counts only (marker values and freshness maxima included); `raw` only by opt-in. Only
+a VERIFIED, or HUMAN/DECLARED uncontradicted, live-rows filter goes into a join snippet; anything
+else is listed as `-- ... omitted`. Path headers say "support" (weakest directional hop); column
+lines keep "match" and "coverage". Hub hazard lines are never budgeted away and
+`table_budget(..., tables=candidates)` reserves them. Rates never print 100%/0% unless exact.

@@ -544,8 +544,8 @@ def shop_store(
     schemas, tables, columns, cons = shop_catalog(SimpleNamespace(row_counts=ROWS))
     rows = list(facts if facts is not None else shop_facts())
     order = list(tables)
+    rng = random.Random(shuffle)
     if shuffle is not None:
-        rng = random.Random(shuffle)
         rng.shuffle(order)
         rng.shuffle(rows)
     with SQLiteStore(path) as store:
@@ -553,7 +553,10 @@ def shop_store(
         store.upsert_tables(order)
         for tbl in order:
             store.upsert_columns(tbl.ref, columns[tbl.ref])
-            store.upsert_constraints(tbl.ref, cons[tbl.ref])
+            table_cons = list(cons[tbl.ref])
+            if shuffle is not None:
+                rng.shuffle(table_cons)
+            store.upsert_constraints(tbl.ref, table_cons)
         if shuffle is None:
             store.put_facts(rows)
         else:

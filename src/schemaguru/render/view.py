@@ -32,13 +32,20 @@ from schemaguru.render.fragments import render_join_snippet
 from schemaguru.render.knowledge import TableKnowledge, collect
 from schemaguru.render.legend import LEGEND, WARN, needs_legend
 from schemaguru.render.profiles import Profile, get_profile
-from schemaguru.render.table_block import analyse, pitfall_text, render_path, severity, tag
+from schemaguru.render.table_block import (
+    analyse,
+    pitfall_text,
+    qname,
+    render_path,
+    severity,
+    tag,
+)
 from schemaguru.store.protocol import Store
 
 SEPARATOR = "\n\n"
 # The "Not shown" line is reserved at this count, so the real line always fits.
 NOT_SHOWN_RESERVE = 999_999
-_PATHS_HEADER = "Join paths (measured joins; join keys are advisory):"
+_PATHS_HEADER = "Join paths (join keys, advisory; support = the weakest hop's match or coverage):"
 _HAZARD_REFUSALS = frozenset(
     {Refusal.HUB_PIVOT, Refusal.RULE_REJECTS_ALL, Refusal.WAYPOINT_UNSATISFIABLE}
 )
@@ -162,6 +169,7 @@ class ViewRenderer:
         self._joins: list[Fact] | None = None
         self._globals: list[ViewBlock] | None = None
         self._glossary: list[Fact] | None = None
+        self._scans: dict[tuple[ObjectRef, ...], tuple[dict[str, list[str]], list[Path]]] = {}
 
     # ----- per table ---------------------------------------------------------------------
 
@@ -213,21 +221,30 @@ class ViewRenderer:
                 if p is None or not isinstance(p.subject, ObjectRef):
                     continue
                 reason = p.value.get("reason") or "no reason given"
-                lines.append(f"  {WARN} {p.subject.table_ref().canonical()} — {reason}{tag(p)}")
+                lines.append(f"  {WARN} {qname(p.subject.table_ref())} — {reason}{tag(p)}")
             if len(lines) > 1:
                 out.append(ViewBlock(True, "\n".join(lines), "never_query", "Never query"))
         self._globals = out
         return out
 
-    def table_budget(self, budget_tokens: int, counter: TokenCounter) -> int:
-        """What remains for table blocks (separators included) after the always-on blocks."""
+    def table_budget(
+        self, budget_tokens: int, counter: TokenCounter, *, tables: Sequence[ObjectRef] = ()
+    ) -> int:
+        """What remains for table blocks (separators included) after the always-on blocks.
+
+        ``tables`` (the candidates the fitter may choose from) also reserves the join-path
+        hazard warnings among them, which a view never drops.
+        """
         if budget_tokens < 0:
             raise ValueError("budget_tokens must be >= 0")
         fixed = [
             *self.global_blocks(),
-            ViewBlock(True, LEGEND, "legend", "Legend"),
+            ViewBlock(False, LEGEND, "legend", "Legend"),
             _not_shown(NOT_SHOWN_RESERVE),
         ]
+        hazards = self.hazard_lines([t.table_ref() for t in dict.fromkeys(tables)])
+        if hazards:
+            fixed.append(ViewBlock(False, "\n".join([_PATHS_HEADER, *hazards]), "join_paths"))
         reserved = counter.count(SEPARATOR.join(b.text for b in fixed) + SEPARATOR)
         return max(0, budget_tokens - reserved)
 
@@ -253,61 +270,89 @@ class ViewRenderer:
                 continue
             term = f.value.get("term") or f.value.get("name")
             kind = "metric " if f.kind.name == "METRIC" else ""
-            targets = ", ".join(r.canonical() for r in maps)
+            targets = ", ".join(qname(r) for r in maps)
             out.append(f"  {kind}{term}: {f.value.get('definition')} [tables: {targets}]{tag(f)}")
         return out
 
-    def path_items(
-        self, shown: Sequence[ObjectRef], bag: DiagnosticBag
-    ) -> tuple[list[str], list[list[str]]]:
-        """Refusal warnings, then the best route between each pair of shown tables.
-
-        A route another shown table splits is left out (it is composed of listed routes). A pair
-        the graph refuses for a hazard (hub pivot, waypoint rules) gets a ``⚠`` line, so two
-        listed routes are never chained through a hub silently.
-        """
-        if self.graph is None or not getattr(self.profile, "show_paths", True):
-            return [], []
-        gcfg = replace(self.cfg.graph, k_paths=1)
-        shown_set = set(shown)
+    def _scan(self, shown: Sequence[ObjectRef]) -> tuple[dict[str, list[str]], list[Path]]:
+        """Hazard refusals (reason -> pairs) and the minimal best routes among ``shown``."""
+        key_t = tuple(shown)
+        cached = self._scans.get(key_t)
+        if cached is not None:
+            return cached
         hazards: dict[str, list[str]] = {}  # one line per reason, naming every pair it blocks
         routes: list[Path] = []
-        seen: set[tuple[tuple[str, bool], ...]] = set()
-        for i, a in enumerate(shown):
-            for b in shown[i + 1 :]:
-                res = find_paths(self.graph, a, b, cfg=gcfg)
-                if res.refusal in _HAZARD_REFUSALS:
-                    pair = f"{a.canonical()} -> {b.canonical()}"
-                    why = res.explanation.replace(f"{pair} ", "", 1)
-                    hazards.setdefault(why, []).append(pair)
-                if res.refusal is not None or not res.paths:
-                    continue
-                p = res.paths[0]
-                if any(t in shown_set for t in p.tables[1:-1]):
-                    continue  # composed of shorter routes already listed
-                key = tuple(h.key for h in p.hops)
-                rkey = tuple((k, not r) for k, r in reversed(key))
-                if key in seen or rkey in seen:
-                    continue
-                seen.add(key)
-                routes.append(p)
+        if self.graph is not None and getattr(self.profile, "show_paths", True):
+            gcfg = replace(self.cfg.graph, k_paths=1)
+            shown_set = set(shown)
+            seen: set[tuple[tuple[str, bool], ...]] = set()
+            for i, a in enumerate(shown):
+                for b in shown[i + 1 :]:
+                    res = find_paths(self.graph, a, b, cfg=gcfg)
+                    if res.refusal in _HAZARD_REFUSALS:
+                        why = res.explanation.replace(f"{a.canonical()} -> {b.canonical()} ", "", 1)
+                        hazards.setdefault(why, []).append(f"{qname(a)} -> {qname(b)}")
+                    if res.refusal is not None or not res.paths:
+                        continue
+                    p = res.paths[0]
+                    if any(t in shown_set for t in p.tables[1:-1]):
+                        continue  # composed of shorter routes already listed
+                    key = tuple(h.key for h in p.hops)
+                    rkey = tuple((k, not r) for k, r in reversed(key))
+                    if key in seen or rkey in seen:
+                        continue
+                    seen.add(key)
+                    routes.append(p)
+        self._scans[key_t] = (hazards, routes)
+        return hazards, routes
+
+    def hazard_lines(self, shown: Sequence[ObjectRef]) -> list[str]:
+        """``⚠ no safe route (...)`` lines: never dropped for budget (spec 25.6, 25.13)."""
+        hazards, _ = self._scan(shown)
+        return [
+            f"  {WARN} no safe route ({'; '.join(pairs)}): {why}" for why, pairs in hazards.items()
+        ]
+
+    def path_items(self, shown: Sequence[ObjectRef], bag: DiagnosticBag) -> list[list[str]]:
+        """The best route between each pair of shown tables that no other shown table splits."""
+        _, routes = self._scan(shown)
         out: list[list[str]] = []
         for p in routes:
             snippet = None
             if self.dialect is not None:
-                soft = {t: s for t in set(p.tables) if (s := self._soft_delete(t)) is not None}
+                soft: dict[ObjectRef, str] = {}
+                omitted: list[str] = []
+                for t in sorted(set(p.tables), key=lambda r: r.canonical()):
+                    pred, why = self._live_filter(t)
+                    if pred is not None:
+                        soft[t] = pred
+                    elif why is not None:
+                        omitted.append(f"-- live-rows filter for {qname(t)} {why}, omitted")
                 snippet = render_join_snippet(p, self.dialect, soft, bag=bag)
+                if snippet is not None and omitted:
+                    snippet = "\n".join([snippet, *omitted])
             out.append(render_path(p, snippet=snippet))
-        warnings = [
-            f"  {WARN} no safe route ({'; '.join(pairs)}): {why}" for why, pairs in hazards.items()
-        ]
-        return warnings, out
+        return out
 
-    def _soft_delete(self, ref: ObjectRef) -> str | None:
+    def _live_filter(self, ref: ObjectRef) -> tuple[str | None, str | None]:
+        """``(predicate, None)`` when the live-rows filter may go into SQL, else
+        ``(None, reason)``; ``(None, None)`` when the table has none.
+
+        Only a VERIFIED predicate, or a HUMAN / DECLARED one that no check contradicted, is
+        put into a snippet: an unchecked draft could silently drop live rows.
+        """
         eff = self.knowledge(ref).get("SOFT_DELETE")
         p = None if eff is None else eff.primary
         pred = None if p is None else p.value.get("predicate")
-        return pred if isinstance(pred, str) and pred.strip() else None
+        if p is None or not isinstance(pred, str) or not pred.strip():
+            return None, None
+        if p.status is Status.VERIFIED:
+            return pred, None
+        if p.status in (Status.CONTRADICTED, Status.WAIVED):
+            return None, "contradicted"
+        if p.provenance in (Provenance.HUMAN, Provenance.DECLARED) and p.status is not Status.ERROR:
+            return pred, None
+        return None, "unverified"
 
     # ----- the view ----------------------------------------------------------------------
 
@@ -322,8 +367,9 @@ class ViewRenderer:
     ) -> ContextView:
         """Assemble the view for ``tables`` (already fitted, in rank order).
 
-        With ``budget_tokens``, the glossary and join-path blocks take only what is left; if
-        even the always-on blocks exceed the budget, ``SG504`` says so.
+        Budget order: always-on blocks, tables and hazard warnings are always shown; then
+        glossary lines; then join routes, while they fit. ``SG504`` names what overflowed when
+        the mandatory part alone exceeds ``budget_tokens``.
         """
         counter = counter or CharTokenCounter()
         bag = DiagnosticBag()
@@ -331,58 +377,63 @@ class ViewRenderer:
         refs = [r for r, _ in order]
         texts = [self.block_text(r, lv) for r, lv in order]
         if self.compact:
-            table_blocks = [ViewBlock(False, "\n".join(texts), "tables", "Tables")] if texts else []
+            lines = [ln for t in texts for ln in t.splitlines()]
+            lines.sort(key=lambda ln: WARN not in ln)  # warnings first, rank order otherwise
+            table_blocks = [ViewBlock(False, "\n".join(lines), "tables", "Tables")] if lines else []
         else:
             table_blocks = [
-                ViewBlock(False, text, "table", r.canonical())
+                ViewBlock(False, text, "table", qname(r))
                 for (r, _), text in zip(order, texts, strict=True)
             ]
         stable = list(self.global_blocks())
         tail = _not_shown(not_shown)
+        hazards = self.hazard_lines(refs)
         gloss_all = self.glossary_items(refs)
-        path_warnings, paths_all = self.path_items(refs, bag)
+        routes_all = self.path_items(refs, bag)
 
-        def assemble(gloss: list[str], paths: list[list[str]] | None) -> list[ViewBlock]:
+        def assemble(gloss: list[str], routes: list[list[str]]) -> list[ViewBlock]:
             body: list[ViewBlock] = []
             if gloss:
                 body.append(
                     ViewBlock(False, "\n".join(["Glossary:", *gloss]), "glossary", "Glossary")
                 )
             body += table_blocks
-            if paths is not None and (paths or path_warnings):
-                lines = [_PATHS_HEADER, *path_warnings, *(ln for p in paths for ln in p)]
+            if hazards or routes:
+                lines = [_PATHS_HEADER, *hazards, *(ln for r in routes for ln in r)]
                 body.append(ViewBlock(False, "\n".join(lines), "join_paths", "Join paths"))
             body.append(tail)
+            # the legend's presence depends on the question, so it is not a stable block
             legend = needs_legend([b.text for b in (*stable, *body)])
-            head = [*stable, ViewBlock(True, LEGEND, "legend", "Legend")] if legend else stable
+            head = [*stable, ViewBlock(False, LEGEND, "legend", "Legend")] if legend else stable
             return [*head, *body]
 
+        def size(blocks: list[ViewBlock]) -> int:
+            return counter.count(SEPARATOR.join(b.text for b in blocks))
+
         def fits(blocks: list[ViewBlock]) -> bool:
-            if budget_tokens is None:
-                return True
-            return counter.count(SEPARATOR.join(b.text for b in blocks)) <= budget_tokens
+            return budget_tokens is None or size(blocks) <= budget_tokens
 
         gloss: list[str] = []
         for item in gloss_all:
-            if not fits(assemble([*gloss, item], None)):
+            if not fits(assemble([*gloss, item], [])):
                 break
             gloss.append(item)
-        # the refusal warnings come with the first route or not at all
-        paths: list[list[str]] | None = None
-        if fits(assemble(gloss, [])):
-            paths = []
-            for route in paths_all:
-                if not fits(assemble(gloss, [*paths, route])):
-                    break
-                paths.append(route)
-        blocks = assemble(gloss, paths)
+        routes: list[list[str]] = []
+        for route in routes_all:
+            if not fits(assemble(gloss, [*routes, route])):
+                break
+            routes.append(route)
+        blocks = assemble(gloss, routes)
         if not fits(blocks):
+            fixed = [b for b in blocks if b.kind not in ("table", "tables", "join_paths")]
+            hz = counter.count("\n".join([_PATHS_HEADER, *hazards])) if hazards else 0
+            tb = sum(counter.count(b.text) for b in table_blocks)
             bag.add(
                 Diagnostic(
                     "SG504",
                     Severity.WARNING,
-                    f"view exceeds its budget of {budget_tokens} tokens: the always-on blocks "
-                    "and the fitted tables do not fit",
+                    f"view is {size(blocks)} tokens, over its budget of {budget_tokens}: "
+                    f"always-on blocks {size(fixed)}, tables {tb}, join-path hazards {hz}",
                     hint="raise budget_tokens, or fit tables with ViewRenderer.table_budget",
                 )
             )

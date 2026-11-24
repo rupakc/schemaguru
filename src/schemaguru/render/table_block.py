@@ -15,10 +15,11 @@ Rules, all enforced here once and shared by every built-in profile:
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from typing import Any
 
 from schemaguru.graph.search import Path
@@ -29,6 +30,8 @@ from schemaguru.model.facts import Fact, Provenance, Status, method_class
 from schemaguru.model.joins import JoinRef, join_verdict
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column
+from schemaguru.pii.mask import mask_value
+from schemaguru.pii.policy import ValuePolicy
 from schemaguru.render.knowledge import TableKnowledge
 from schemaguru.render.legend import WARN
 
@@ -39,17 +42,27 @@ INBOUND_SHOWN = 3
 _P, _S = Provenance, Status
 _UNUSABLE = (_S.ERROR, _S.UNMEASURABLE)
 _CASE_DRIFT = " differ only in case — compare case-insensitively"
+_HIDDEN = "(values hidden by policy)"
 
 # ----- numbers and words ---------------------------------------------------------------
 
 
-def sig4(x: float | int) -> str:
-    """``x`` to 4 significant digits, no exponent, thousands separated (``1,235,000``)."""
+def sig4(x: float | int, *, floor: bool = False) -> str:
+    """``x`` to 4 significant digits, no exponent, thousands separated (``1,235,000``).
+
+    ``floor`` rounds toward minus infinity (a lower bound must never be rounded up); an integer
+    lower bound is printed in full.
+    """
     if isinstance(x, bool) or not math.isfinite(float(x)):
         return "unknown"
-    if isinstance(x, int) and abs(x) < 10_000:
+    if isinstance(x, int) and (abs(x) < 10_000 or floor):
         return f"{x:,}"
-    text = format(Decimal(f"{float(x):.4g}"), "f")
+    if floor and float(x) != 0:
+        d = Decimal(repr(float(x)))
+        exp = d.adjusted() - 3  # keep 4 significant digits
+        text = format(d.quantize(Decimal(1).scaleb(exp), rounding=ROUND_FLOOR), "f")
+    else:
+        text = format(Decimal(f"{float(x):.4g}"), "f")
     if "." in text:
         text = text.rstrip("0").rstrip(".")
     sign = "-" if text.startswith("-") else ""
@@ -64,9 +77,19 @@ def plain4(x: float | int) -> str:
     return sig4(x).replace(",", "")
 
 
-def pct(rate: float | Decimal) -> str:
-    """A rate in [0, 1] as a percentage to 4 significant digits (``0.998`` -> ``99.8%``)."""
-    return sig4(float(rate) * 100) + "%"
+def pct(rate: float | Decimal, *, floor: bool = False) -> str:
+    """A rate in [0, 1] as a percentage to 4 significant digits (``0.998`` -> ``99.8%``).
+
+    Rounding never claims certainty: a rate that is not exactly 1 never prints ``100%``
+    (``>99.99%``), and one that is not exactly 0 never prints ``0%`` (``<0.01%``).
+    """
+    r = float(rate)
+    text = sig4(r * 100, floor=floor)
+    if text == "100" and r < 1:
+        return ">99.99%"
+    if text == "0" and r > 0:
+        return "<0.01%"
+    return text + "%"
 
 
 def count(n: int) -> str:
@@ -77,9 +100,119 @@ def day(dt: datetime | None) -> str | None:
     return None if dt is None else dt.date().isoformat()
 
 
+# Words reserved in most SQL dialects: a bare one would not parse as a name.
+RESERVED = frozenset(
+    [
+        "all",
+        "alter",
+        "and",
+        "any",
+        "as",
+        "asc",
+        "between",
+        "both",
+        "by",
+        "case",
+        "cast",
+        "check",
+        "column",
+        "constraint",
+        "create",
+        "cross",
+        "current_date",
+        "current_time",
+        "current_timestamp",
+        "current_user",
+        "date",
+        "default",
+        "delete",
+        "desc",
+        "distinct",
+        "drop",
+        "else",
+        "end",
+        "except",
+        "exists",
+        "false",
+        "fetch",
+        "for",
+        "foreign",
+        "from",
+        "full",
+        "grant",
+        "group",
+        "having",
+        "in",
+        "index",
+        "inner",
+        "insert",
+        "intersect",
+        "interval",
+        "into",
+        "is",
+        "join",
+        "key",
+        "lateral",
+        "leading",
+        "left",
+        "like",
+        "limit",
+        "natural",
+        "not",
+        "null",
+        "offset",
+        "on",
+        "or",
+        "order",
+        "outer",
+        "over",
+        "partition",
+        "primary",
+        "qualify",
+        "range",
+        "references",
+        "right",
+        "rows",
+        "select",
+        "session_user",
+        "some",
+        "table",
+        "then",
+        "time",
+        "timestamp",
+        "to",
+        "trailing",
+        "true",
+        "union",
+        "unique",
+        "update",
+        "user",
+        "using",
+        "values",
+        "when",
+        "where",
+        "window",
+        "with",
+    ]
+)
+_BARE = re.compile(r"[a-z_][a-z0-9_]*\Z")
+
+
 def ident(name: str) -> str:
-    """A bare name quoted the way canonical refs quote it (``"Line No"``)."""
-    return ObjectRef(None, None, name).canonical()
+    """A name as SQL text: bare only when lower-case, plain and not a reserved word.
+
+    Mixed-case names (``Orders``) are quoted because case-folding dialects would otherwise read
+    them as ``orders``; reserved words (``select``) and odd names (``Line No``) need quotes too.
+    """
+    if _BARE.match(name) and name not in RESERVED:
+        return name
+    return '"' + name.replace('"', '""') + '"'
+
+
+def qname(ref: ObjectRef) -> str:
+    """A (possibly qualified) reference, each part quoted by :func:`ident`."""
+    parts = (ref.catalog, ref.schema, ref.table, ref.column)
+    return ".".join(ident(p) for p in parts if p is not None)
 
 
 def quote(v: object) -> str:
@@ -122,17 +255,41 @@ def estimate_text(est: Mapping[str, Any], fraction: str | None, *, rate: bool = 
     v = est.get("value")
     if v is None or isinstance(v, bool):
         return "unknown"
-    num = pct if rate else sig4
+
+    def num(x: float | int, floor: bool = False) -> str:
+        return pct(x, floor=floor) if rate else sig4(x, floor=floor)
+
     frac = _fraction(fraction)
     parts = [f"sampled {pct(frac)}" if frac is not None else "sampled"]
     if est.get("lower_bound"):
-        return f"≥ {num(v)} ({parts[0]}, lower bound)"
+        return f"≥ {num(v, True)} ({parts[0]}, lower bound)"
     low, high = est.get("low"), est.get("high")
     if isinstance(low, (int, float)) and isinstance(high, (int, float)):
-        parts.append("±" + num((float(high) - float(low)) / 2))
+        lo, hi, mid = float(low), float(high), float(v)
+        if (rate and (lo <= 0 or hi >= 1)) or abs((hi - mid) - (mid - lo)) > 0.1 * (hi - lo):
+            parts.append(f"{num(lo, True)} to {num(hi)}")  # asymmetric (near 0 or 1): the range
+        else:
+            parts.append("±" + num((hi - lo) / 2))
     if est.get("approximate"):
         parts.append("approximate")
     return f"≈ {num(v)} ({', '.join(parts)})"
+
+
+def join_number(m: Fact, key: str) -> str:
+    """A join rate of measurement ``m``; a sampled one is always ``≈`` (spec 8.6)."""
+    val = m.value.get(key)
+    sampled = m.status is _S.ESTIMATED or method_class(m.method) == "sampled"
+    ests = m.value.get("estimates")
+    est = ests.get(key) if isinstance(ests, Mapping) else None
+    frac = fraction_of(m)
+    if sampled and isinstance(est, Mapping):
+        return estimate_text(est, frac)
+    if not isinstance(val, (int, float)) or isinstance(val, bool):
+        return "unknown"
+    if sampled:  # an estimate even when no interval was stored
+        f = _fraction(frac)
+        return f"≈ {pct(val)} (sampled{' ' + pct(f) if f is not None else ''})"
+    return pct(val)
 
 
 # ----- fact phrases ------------------------------------------------------------------------
@@ -163,9 +320,11 @@ def phrase(f: Fact) -> str:
         base = "catalog stats" if p is _P.CATALOG else ("verified" if passed else "measured")
         return f"{base}{at}, stale"
     if s is _S.UNVERIFIED:
-        return {_P.HUMAN: "human", _P.DECLARED: "declared", _P.CATALOG: "catalog"}.get(
-            p, "unchecked"
-        )
+        return {
+            _P.HUMAN: "human, unchecked",
+            _P.DECLARED: "declared, unchecked",
+            _P.CATALOG: "catalog, unchecked",
+        }.get(p, "unchecked")
     return {
         _S.ESTIMATED: "estimated",
         _S.UNMEASURABLE: "unmeasurable",
@@ -293,17 +452,28 @@ class _Analyser:
         self.k = k
         self.cfg = k.config
         self.maxv = self.cfg.scope.max_values_shown
-        self.a = Analysis(title=k.ref.canonical())
+        self.a = Analysis(title=qname(k.ref))
         self.cols = {c.ref.column: ColumnView(c, ident(c.ref.column or "")) for c in k.columns}
         self.used: list[Fact] = []
         self.markers: set[str] = set()
+        self.mode = ValuePolicy.for_table(k.ref, self.cfg.sampling)
+        # any PII classification (measured shape, drafted or human) masks the whole column
+        self.pii_cols = {
+            name
+            for name in self.cols
+            if name is not None
+            and (e := k.get("PII", name)) is not None
+            and any(f.status is not _S.ERROR for f in e.all)
+        }
 
     # -- helpers
     def label(self, eff: Effective) -> str:
         word = _KIND_WORDS.get(eff.kind.name, eff.kind.name.lower().replace("_", " "))
         subj = eff.subject
         if isinstance(subj, JoinRef):
-            return f"join {subj.canonical()}"
+            return "join " + " -> ".join(
+                ", ".join(qname(c) for c in side) for side in (subj.left, subj.right)
+            )
         if subj.column is not None:
             return f"{ident(subj.column)} {word}"
         return word
@@ -411,8 +581,8 @@ class _Analyser:
     def marker_values(self, name: str) -> str:
         """``; holds TRUE (300 rows) or NULL (9,700 rows), never FALSE (measured ...)``."""
         col = self.cols[name].column
-        if col.family != "boolean":
-            return ""
+        if col.family != "boolean" or self.mode == "none":
+            return ""  # a hidden-values policy shows no values, not even TRUE/FALSE
         vals = pick_measured(self.k.get("VALUES", name), allow_sampled=False)
         nulls = pick_measured(self.k.get("NULL_RATE", name), allow_sampled=False)
         if vals is None or nulls is None or not isinstance(vals.value.get("observed"), list):
@@ -424,7 +594,8 @@ class _Analyser:
                 n = item.get("count")
                 present.add(item["value"])
                 seen.append(
-                    quote(item["value"]) + (f" ({count(n)} rows)" if isinstance(n, int) else "")
+                    self.shown(name, item["value"])
+                    + (f" ({count(n)} rows)" if isinstance(n, int) else "")
                 )
         rows, non_null = nulls.value.get("rows"), nulls.value.get("non_null")
         rate = nulls.value.get("rate")
@@ -432,7 +603,7 @@ class _Analyser:
             seen.append(f"NULL ({count(rows - non_null)} rows)")
         elif isinstance(rate, (int, float)) and rate > 0:
             seen.append("NULL")
-        never = [quote(b) for b in (True, False) if b not in present]
+        never = [self.shown(name, b) for b in (True, False) if b not in present]
         if not seen:
             return ""
         self.used += [vals, nulls]
@@ -482,7 +653,7 @@ class _Analyser:
                 self.warn(f"PK ({', '.join(map(ident, cols))}) has rows with a NULL key part")
         elif declared:
             cols = declared[0].columns
-            how = "declared, enforced" if declared[0].enforced else "declared"
+            how = "declared, enforced" if declared[0].enforced else "declared, unchecked"
         elif eff is not None and eff.expectation is not None:
             raw = eff.expectation.value.get("columns")
             if isinstance(raw, list):
@@ -529,18 +700,23 @@ class _Analyser:
         for col in sorted(newest):
             f = newest[col]
             age = f.value.get("age_seconds")
+            mv = f.value.get("max_value")
+            if self.mode == "none":
+                newest_text, newest_key = "", "hidden"
+            else:
+                shown = self.shown(col, mv)
+                plain = str(mv) if shown == quote(mv) else shown  # a timestamp needs no quotes
+                newest_text, newest_key = f": {plain}", plain
             age_text = (
                 f", age {sig4(float(age) / 86400)} days" if isinstance(age, (int, float)) else ""
             )
             self.a.table_lines.append(
                 (
                     FULL_ONLY,
-                    f"newest {ident(col)}: {f.value.get('max_value')}{age_text} ({phrase(f)})",
+                    f"newest {ident(col)}{newest_text}{age_text} ({phrase(f)})",
                 )
             )
-            self.keyed(
-                None, FULL_ONLY, f"FRESH {ident(col)} max={f.value.get('max_value')} {phrase(f)}"
-            )
+            self.keyed(None, FULL_ONLY, f"FRESH {ident(col)} max={newest_key} {phrase(f)}")
             self.used.append(f)
 
     def joins(self) -> None:
@@ -567,9 +743,11 @@ class _Analyser:
                 ):
                     continue
                 cov = None if m is None else m.value.get("coverage")
-                src = ", ".join(c.canonical() for c in join.left)
+                src = ", ".join(qname(c) for c in join.left)
                 text = f"← {src}" + (
-                    f" (coverage {pct(cov)})" if isinstance(cov, (int, float)) else ""
+                    f" (coverage {join_number(m, 'coverage')})"
+                    if m is not None and isinstance(cov, (int, float))
+                    else ""
                 )
                 col = join.right[0].column
                 assert col is not None
@@ -586,7 +764,9 @@ class _Analyser:
             )
             if (left, right) in seen:
                 continue
-            target = ", ".join(right)
+            target = ", ".join(
+                qname(ObjectRef(rt.catalog, rt.schema, rt.table, c)) for c in con.ref_columns
+            )
             text = f"→ {target} (declared FK, not measured)"
             lcols = ", ".join(map(ident, con.columns))
             self.a.keys.append(f"{lcols} → {target} (declared FK)")
@@ -602,7 +782,7 @@ class _Analyser:
 
     def outgoing(self, eff: Effective, join: JoinRef) -> None:
         g = self.cfg.graph
-        target = ", ".join(c.canonical() for c in join.right)
+        target = ", ".join(qname(c) for c in join.right)
         names = [c.column or "" for c in join.left]
         lcols = ", ".join(map(ident, names))
         col = names[0] if len(names) == 1 else None
@@ -631,20 +811,11 @@ class _Analyser:
             rate, cov, card = v.get("match_rate"), v.get("coverage"), v.get("cardinality")
             verdict = None if rate is None else join_verdict(rate, g.ok_threshold, g.weak_threshold)
             sampled = m.status is _S.ESTIMATED or method_class(m.method) == "sampled"
-            ests = v.get("estimates") if isinstance(v.get("estimates"), Mapping) else {}
-            assert isinstance(ests, Mapping)
-            frac = fraction_of(m)
-
-            def number(key: str, val: object) -> str:
-                est = ests.get(key)
-                if sampled and isinstance(est, Mapping):
-                    return estimate_text(est, frac)
-                return pct(val) if isinstance(val, (int, float)) else "unknown"
 
             when = "" if sampled else f" ({phrase(m)})"
             if verdict == "BROKEN":
                 self.warn(
-                    f"{lead} → {target} BROKEN: match {number('match_rate', rate)}{when}"
+                    f"{lead} → {target} BROKEN: match {join_number(m, 'match_rate')}{when}"
                     " — do not join on it"
                 )
                 text = f"→ {target} BROKEN (see warning)"
@@ -652,19 +823,23 @@ class _Analyser:
                 self.keyed(col, LITE_UP, f"JOIN {lcols} -> {target} BROKEN match={shown}")
             else:
                 parts = [f"→ {target}{cast}" + (f" {card}" if card else "")]
-                parts.append(f"match {number('match_rate', rate)}")
+                parts.append(f"match {join_number(m, 'match_rate')}")
                 if isinstance(cov, (int, float)) and cov < g.ok_threshold:
-                    parts.append(f"coverage {number('coverage', cov)}")
+                    parts.append(f"coverage {join_number(m, 'coverage')}")
                 text = ", ".join(parts) + when
                 if verdict == "WEAK":
                     self.warn(
-                        f"{lead} → {target} WEAK: match {number('match_rate', rate)}{when}"
+                        f"{lead} → {target} WEAK: match {join_number(m, 'match_rate')}{when}"
                         " — expect unmatched rows"
                     )
-                short = f" ({card}, match {number('match_rate', rate)})" if rate is not None else ""
+                bits = [str(card)] if card else []
+                if rate is not None:
+                    bits.append(f"match {join_number(m, 'match_rate')}")
+                short = f" ({', '.join(bits)})" if bits else ""
                 self.a.keys.append(f"{lead} → {target}{short}")
-                nums = f" match={plain4(rate)}" if isinstance(rate, (int, float)) else ""
-                nums += f" coverage={plain4(cov)}" if isinstance(cov, (int, float)) else ""
+                approx = "≈" if sampled else ""
+                nums = f" match={approx}{plain4(rate)}" if isinstance(rate, (int, float)) else ""
+                nums += f" coverage={approx}{plain4(cov)}" if isinstance(cov, (int, float)) else ""
                 how = "sampled" if sampled else phrase(m)
                 self.keyed(
                     col,
@@ -681,16 +856,17 @@ class _Analyser:
 
     def column(self, col: Column, name: str) -> None:
         k = self.k
+        pii = k.get("PII", name)
+        if pii is not None and pii.primary is not None and pii.primary.status is not _S.ERROR:
+            cat = pii.primary.value.get("category")
+            # first on the line: the agent learns the column is personal before any value
+            self.cols[name].notes.insert(0, (LITE_UP, f"PII {cat}{tag(pii.primary)}"))
+            self.keyed(name, LITE_UP, f"PII {ident(name)} category={cat}")
+            self.used.append(pii.primary)
         if name not in self.markers:
             self.values(name)
             self.nulls(name)
         self.type_note(col, name)
-        pii = k.get("PII", name)
-        if pii is not None and pii.primary is not None and pii.primary.status is not _S.ERROR:
-            cat = pii.primary.value.get("category")
-            self.note(name, LITE_UP, f"PII {cat}{tag(pii.primary)}")
-            self.keyed(name, LITE_UP, f"PII {ident(name)} category={cat}")
-            self.used.append(pii.primary)
         dist = pick_measured(k.get("DISTINCT", name))
         if dist is not None:
             est = dist.value.get("estimate")
@@ -717,47 +893,64 @@ class _Analyser:
             self.note(name, FULL_ONLY, col.comment.strip())
 
     def values(self, name: str) -> None:
+        """Declared and observed values, through the value policy (spec 11).
+
+        ``none`` shows counts only; ``masked`` masks every value of a PII-tagged column and every
+        detector hit elsewhere; ``raw`` (an explicit opt-in) shows values as stored.
+        """
         eff = self.k.get("VALUES", name)
         if eff is None:
             return
         exp = eff.expectation
         q = ident(name)
+        hidden = self.mode == "none"
         if exp is not None and isinstance(exp.value.get("values"), list):
             self.used.append(exp)
-            declared = [str(v) for v in exp.value["values"]]
-            shown = capped([quote(v) for v in declared], self.maxv)
-            extras = self.extras(eff, declared, bool(exp.value.get("case_sensitive", True)))
-            text = f"values: {shown}"
-            if extras:
+            raw_declared = [str(v) for v in exp.value["values"]]
+            declared = [self.shown(name, v) for v in raw_declared]
+            shown = capped(declared, self.maxv)
+            extras = self.extras(eff, raw_declared, bool(exp.value.get("case_sensitive", True)))
+            text = (
+                f"values: {len(raw_declared)} declared {_HIDDEN}" if hidden else f"values: {shown}"
+            )
+            if extras and hidden:
+                rows = sum(n for _, n, _ in extras if n is not None)
+                text += f" (+ {len(extras)} more observed)"
+                self.warn(
+                    f"{_waived(eff)}{q}: {len(raw_declared)} declared values — observed also "
+                    f"{len(extras)} undeclared value(s) ({count(rows)} rows) {_HIDDEN}"
+                )
+            elif extras:
                 text += (
                     " (+ observed "
-                    + capped([quote(v) for v, _, _ in extras], self.maxv, ", ")
+                    + capped([self.shown(name, v) for v, _, _ in extras], self.maxv, ", ")
                     + ")"
                 )
                 rendered = [
-                    quote(v)
+                    self.shown(name, v)
                     + (f" ({count(n)} rows)" if n is not None else "")
                     + ("" if ex else " (seen in sample)")
                     for v, n, ex in extras
                 ]
                 also = capped(rendered, self.maxv, ", ")
                 self.warn(f"{_waived(eff)}{q}: declared values {shown} — observed also {also}")
-                folded = {d.casefold(): d for d in declared}
-                for v, _, _ in extras:
-                    d = folded.get(v.casefold())
-                    if d is not None and d != v:
-                        self.warn(f"{q}: case drift: {quote(d)}/{quote(v)}{_CASE_DRIFT}")
+            folded = {d.casefold(): d for d in raw_declared}
+            for v, _, _ in extras:
+                d = folded.get(v.casefold())
+                if d is not None and d != v:
+                    self.warn(f"{q}: case drift: {self.pair(name, [d, v])}{_CASE_DRIFT}")
             self.note(name, STANDARD_UP, text)
-            extra_k = (
-                (" observed_extra=" + ",".join(f"{quote(v)}:{n}" for v, n, _ in extras))
-                if extras
-                else ""
-            )
-            self.keyed(
-                name,
-                STANDARD_UP,
-                f"VALUES {q} declared={','.join(quote(v) for v in declared)}{extra_k}",
-            )
+            if hidden:
+                keyed = f"VALUES {q} declared_count={len(raw_declared)}"
+                keyed += f" observed_extra_count={len(extras)}" if extras else ""
+                keyed += " hidden"
+            else:
+                keyed = f"VALUES {q} declared={','.join(declared)}"
+                if extras:
+                    keyed += " observed_extra=" + ",".join(
+                        f"{self.shown(name, v)}:{n}" for v, n, _ in extras
+                    )
+            self.keyed(name, STANDARD_UP, keyed)
             return
         m = pick_measured(eff)
         if m is None or not isinstance(m.value.get("observed"), list):
@@ -767,39 +960,46 @@ class _Analyser:
         sampled = m.status is _S.ESTIMATED or method_class(m.method) == "sampled"
         if sampled:
             frac = _fraction(fraction_of(m))
-            vals = capped([quote(i.get("value")) for i in items], self.maxv, ", ")
             how = f"sampled {pct(frac)}" if frac is not None else "sampled"
-            self.note(
-                name,
-                STANDARD_UP,
-                f"values seen in sample: {vals} ({how}; rarer values may be missing)",
-            )
-            self.keyed(
-                name,
-                STANDARD_UP,
-                f"VALUES {q} seen_in_sample={','.join(quote(i.get('value')) for i in items)}",
-            )
+            if hidden:
+                self.note(
+                    name, STANDARD_UP, f"values: {len(items)} seen in sample {_HIDDEN} ({how})"
+                )
+                self.keyed(
+                    name, STANDARD_UP, f"VALUES {q} seen_in_sample_count={len(items)} hidden"
+                )
+            else:
+                vals = [self.shown(name, i.get("value")) for i in items]
+                self.note(
+                    name,
+                    STANDARD_UP,
+                    f"values seen in sample: {capped(vals, self.maxv, ', ')} "
+                    f"({how}; rarer values may be missing)",
+                )
+                self.keyed(name, STANDARD_UP, f"VALUES {q} seen_in_sample={','.join(vals)}")
         else:
-            rendered = [
-                quote(i.get("value"))
-                + (f" ({count(i['count'])})" if isinstance(i.get("count"), int) else "")
-                for i in items
-            ]
             distinct = m.value.get("distinct")
             more = (
                 distinct - len(items) if isinstance(distinct, int) and distinct > len(items) else 0
             )
-            text = "values: " + capped(rendered, self.maxv, ", ")
-            if more and len(items) <= self.maxv:
-                text += f" +{more} more"
-            self.note(name, STANDARD_UP, f"{text} ({phrase(m)})")
-            self.keyed(
-                name,
-                STANDARD_UP,
-                f"VALUES {q} observed="
-                + ",".join(f"{quote(i.get('value'))}:{i.get('count')}" for i in items)
-                + f" {phrase(m)}",
-            )
+            if hidden:
+                n = distinct if isinstance(distinct, int) else len(items)
+                self.note(name, STANDARD_UP, f"values: {count(n)} distinct {_HIDDEN} ({phrase(m)})")
+                self.keyed(name, STANDARD_UP, f"VALUES {q} distinct={n} hidden {phrase(m)}")
+            else:
+                rendered = [
+                    self.shown(name, i.get("value"))
+                    + (f" ({count(i['count'])})" if isinstance(i.get("count"), int) else "")
+                    for i in items
+                ]
+                text = "values: " + capped(rendered, self.maxv, ", ")
+                if more and len(items) <= self.maxv:
+                    text += f" +{more} more"
+                self.note(name, STANDARD_UP, f"{text} ({phrase(m)})")
+                pairs = ",".join(
+                    f"{self.shown(name, i.get('value'))}:{i.get('count')}" for i in items
+                )
+                self.keyed(name, STANDARD_UP, f"VALUES {q} observed={pairs} {phrase(m)}")
         groups: dict[str, list[str]] = {}
         for i in items:
             val = i.get("value")
@@ -807,7 +1007,35 @@ class _Analyser:
                 groups.setdefault(val.casefold(), []).append(val)
         for vs in groups.values():
             if len(set(vs)) > 1:
-                self.warn(f"{q}: case drift: {'/'.join(quote(v) for v in vs)}{_CASE_DRIFT}")
+                self.warn(f"{q}: case drift: {self.pair(name, vs)}{_CASE_DRIFT}")
+
+    def shown(self, column: str, value: object) -> str:
+        """One stored value as the agent may see it (spec 11), quoted like SQL text.
+
+        ``masked``: every value of a PII-tagged column becomes a shape token (``<email>``, or
+        ``<masked>`` when no shape matched); elsewhere a detector hit is masked in place.
+        ``none``: ``<hidden>`` (callers show counts instead). ``raw``: as stored.
+        """
+        if value is None:
+            return "NULL"
+        if self.mode == "none":
+            return "<hidden>"
+        if self.mode == "raw":
+            return quote(value)
+        masked, category = mask_value(value)
+        if column in self.pii_cols and category is None:
+            return "<masked>"
+        if category is None:
+            return quote(value)
+        whole = masked.startswith("<") and masked.endswith(">") and " " not in masked
+        return masked if whole else quote(masked)
+
+    def pair(self, column: str, values: Sequence[str]) -> str:
+        """Values that differ only in case; masked or hidden ones are counted, not shown."""
+        shown = [self.shown(column, v) for v in values]
+        if self.mode == "none" or len(set(shown)) < len(set(values)):
+            return f"{len(set(values))} values (values hidden by policy)"
+        return "/".join(shown)
 
     def extras(
         self, eff: Effective, declared: Sequence[str], case_sensitive: bool
@@ -876,23 +1104,24 @@ class _Analyser:
             means, rate = m.value.get("means"), m.value.get("rate")
             est = m.value.get("estimate")
             self.used.append(m)
-            if m.value.get("holds") is True and isinstance(rate, (int, float)):
+            if m.status is _S.ESTIMATED and isinstance(est, Mapping):
+                self.note(
+                    name,
+                    STANDARD_UP,
+                    f"looks like {means}: {estimate_text(est, fraction_of(m))} of values",
+                )
+            elif m.value.get("holds") is True and isinstance(rate, (int, float)):
                 self.warn(
                     f"{q}: stored as {col.native_type}, holds {means} ({pct(rate)} of values, "
                     f"{phrase(m)}) — CAST before comparing"
                 )
-                self.note(name, LITE_UP, f"text holding {means} (see warning)")
+                held = "text holding" if col.family == "string" else "holds"
+                self.note(name, LITE_UP, f"{held} {means} (see warning)")
                 self.keyed(
                     name,
                     LITE_UP,
                     f"TYPE {q} stored_as={col.native_type} means={means} rate={plain4(rate)} "
                     f"{phrase(m)}",
-                )
-            elif m.status is _S.ESTIMATED and isinstance(est, Mapping):
-                self.note(
-                    name,
-                    STANDARD_UP,
-                    f"looks like {means}: {estimate_text(est, fraction_of(m))} of values",
                 )
             elif isinstance(rate, (int, float)):
                 self.note(name, FULL_ONLY, f"{pct(rate)} of values look like {means} ({phrase(m)})")
@@ -1064,7 +1293,7 @@ def render_agent(k: TableKnowledge, level: DetailLevel) -> str:
 # ----- join paths ----------------------------------------------------------------------------
 
 
-def _aliases(tables: Sequence[ObjectRef]) -> list[str]:
+def path_aliases(tables: Sequence[ObjectRef]) -> list[str]:
     """One alias per table occurrence: the bare name, ``name_<n>`` for a revisit or a clash."""
     out: list[str] = []
     taken: set[str] = set()
@@ -1088,20 +1317,24 @@ def _side(alias: str, cols: Iterable[ObjectRef]) -> str:
 
 
 def render_path(path: Path, *, snippet: str | None = None) -> list[str]:
-    """``shop.a → shop.b · coverage 98%`` and one ``a.x = b.y (N:1)`` line per hop.
+    """``shop.a → shop.b · support 98%`` and one ``a.x = b.y (N:1)`` line per hop.
 
     A revisited table gets an alias (``shop.orders AS orders_2``); a provisional route names its
     narrowest support as a number; a sampled hop is marked ``≈``.
     """
     tables = list(path.tables)
-    aliases = _aliases(tables)
+    aliases = path_aliases(tables)
     names = [
-        t.canonical() + (f" AS {ident(al)}" if al != t.table else "")
+        qname(t) + (f" AS {ident(al)}" if al != t.table else "")
         for t, al in zip(tables, aliases, strict=True)
     ]
-    cov = "unknown" if path.coverage is None else pct(path.coverage)
-    status = f"provisional: narrowest support {cov}" if path.provisional else f"coverage {cov}"
-    head = "  " + " → ".join(names) + f" · {status}" + (" · ≈ sampled" if path.estimated else "")
+    # Path.coverage is the narrowest *directional* support over the hops (match rate one way,
+    # reverse coverage the other), so it is called support here, never coverage.
+    sup = "unknown" if path.coverage is None else pct(path.coverage)
+    if path.estimated and path.coverage is not None:
+        sup = f"≈ {sup}"
+    status = f"provisional: narrowest support {sup}" if path.provisional else f"support {sup}"
+    head = "  " + " → ".join(names) + f" · {status}" + (" · sampled" if path.estimated else "")
     lines = [head]
     for i, hop in enumerate(path.hops):
         join = hop.edge.join
@@ -1116,5 +1349,7 @@ def render_path(path: Path, *, snippet: str | None = None) -> list[str]:
         tail = f" ({', '.join(extra)})" if extra else ""
         lines.append(f"    {_side(child, join.left)} = {_side(parent, join.right)}{tail}")
     if snippet:
-        lines.append(f"    SQL: {snippet}")
+        first, *rest = snippet.splitlines()
+        lines.append(f"    SQL: {first}")
+        lines += [f"         {ln}" for ln in rest]
     return lines

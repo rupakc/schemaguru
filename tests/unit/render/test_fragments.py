@@ -87,3 +87,100 @@ def test_render_codes_are_registered() -> None:
     )
     for code in ("SG501", "SG502", "SG503", "SG504"):
         assert code in CODES and f"| {code} |" in doc
+
+
+class _Inline:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def inline(self) -> str:
+        return self.text
+
+
+@pytest.fixture
+def fake_factlang(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """A FactLang with ``parse_filter`` and ``sql.render_join`` (real ones: Task 25)."""
+    import sys
+    import types
+
+    import factlang
+
+    seen: dict[str, object] = {}
+
+    def parse_filter(text: str) -> tuple[object, list[object]]:
+        if "(((" in text:
+            return None, [types.SimpleNamespace(severity="ERROR", message="bad")]
+        return text, []
+
+    def render_join(edges: object, *, dialect: str, filters: object, aliases: object) -> _Inline:
+        seen.update(edges=edges, dialect=dialect, filters=filters, aliases=aliases)
+        return _Inline("FROM <join>")
+
+    refs = types.ModuleType("factlang.semantics.refs")
+    refs.Ident = lambda text, quoted: text  # type: ignore[attr-defined]
+    refs.TableRef = lambda *parts: tuple(parts)  # type: ignore[attr-defined]
+    refs.ColumnRef = lambda table, column: (table, column)  # type: ignore[attr-defined]
+    refs.EdgeRef = lambda left, right: (left, right)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "factlang.semantics", types.ModuleType("factlang.semantics"))
+    monkeypatch.setitem(sys.modules, "factlang.semantics.refs", refs)
+    sql = types.ModuleType("factlang.sql")
+    sql.render_join = render_join  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "factlang.sql", sql)
+    monkeypatch.setattr(factlang, "parse_filter", parse_filter, raising=False)
+    monkeypatch.setattr(fragments, "_capable", lambda name: True)
+    return seen
+
+
+def test_snippet_aliases_match_the_path_text(store: SQLiteStore, fake_factlang: dict) -> None:  # type: ignore[type-arg]
+    from schemaguru.render.table_block import render_path
+
+    graph = shop_graph(store)
+    edge = next(e for e in graph.edges if e.key.startswith("shop.orders.account_id"))
+    p = GPath((Hop(edge, False), Hop(edge, True)), 1.0, 1.0, False, revisits=True)
+    text = fragments.render_join_snippet(p, "duckdb", {t("orders"): "(((broken"})
+    assert fake_factlang["aliases"] == {0: "orders", 1: "accounts", 2: "orders_2"}
+    assert "orders_2" in render_path(p)[0]
+    # an unparseable filter is never dropped silently
+    assert text == "FROM <join>\n-- live-rows filter for shop.orders unparseable, omitted"
+
+
+def test_only_checked_live_rows_filters_reach_sql(tmp_path: Path, fake_factlang: dict) -> None:  # type: ignore[type-arg]
+    from schemaguru.config import Config
+    from schemaguru.model.detail import DetailLevel
+    from schemaguru.model.facts import Fact, Provenance, Status
+    from schemaguru.model.kinds import FactKind
+    from schemaguru.render import ViewRenderer
+    from tests.golden.shop_knowledge import NOW, human, shop_facts
+
+    extra = [
+        human(
+            FactKind.SOFT_DELETE,
+            t("customers"),
+            {"predicate": "email IS NOT NULL", "marker_columns": None},
+        ),
+        Fact.make(
+            FactKind.SOFT_DELETE,
+            t("payments"),
+            {"predicate": "amount > 0", "marker_columns": ["amount"]},
+            Provenance.DRAFTED,
+            Status.UNVERIFIED,
+        ),
+        Fact.make(
+            FactKind.SOFT_DELETE,
+            t("order_items"),
+            {"predicate": "line_no > 0", "marker_columns": ["line_no"]},
+            Provenance.DRAFTED,
+            Status.CONTRADICTED,
+        ),
+    ]
+    with shop_store(tmp_path / "s.db", [*shop_facts(), *extra]) as s:
+        r = ViewRenderer(s, now=NOW, cfg=Config(), graph=shop_graph(s), dialect="duckdb")
+        tables = [
+            (t(n), DetailLevel.LITE) for n in ("orders", "customers", "payments", "order_items")
+        ]
+        paths = next(b for b in r.view("q", tables).blocks if b.kind == "join_paths").text
+    assert "-- live-rows filter for shop.payments unverified, omitted" in paths
+    assert "-- live-rows filter for shop.order_items contradicted, omitted" in paths
+    assert "customers" not in "".join(ln for ln in paths.splitlines() if "omitted" in ln)
+    passed = {str(v) for v in fake_factlang["filters"].values()}  # type: ignore[union-attr]
+    assert "amount > 0" not in passed and "line_no > 0" not in passed

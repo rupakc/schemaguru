@@ -34,14 +34,17 @@ def test_golden_view(store: SQLiteStore, profile: str, qi: int) -> None:
     counter = CharTokenCounter()
     graph = shop_graph(store)
     renderer = ViewRenderer(store, now=NOW, cfg=CONFIG, profile=profile, graph=graph)
+    retriever = LexicalRetriever(store)
+    # the candidates the fitter may pick from: their hazard warnings are reserved up front
+    candidates = [r for r, _ in retriever.search(question, CONFIG.scope.seed_k)]
     scope = build_scope(
         question,
-        retriever=LexicalRetriever(store),
+        retriever=retriever,
         store=store,
         graph=graph,
         renderer=renderer,
         counter=counter,
-        budget_tokens=renderer.table_budget(BUDGET, counter),
+        budget_tokens=renderer.table_budget(BUDGET, counter, tables=candidates),
         cfg=CONFIG.scope,
         graph_cfg=CONFIG.graph,
     )
@@ -49,6 +52,7 @@ def test_golden_view(store: SQLiteStore, profile: str, qi: int) -> None:
         question, scope.tables, not_shown=scope.not_shown, budget_tokens=BUDGET, counter=counter
     )
     assert view.tokens <= BUDGET
+    assert not view.diagnostics
     assert_golden(f"{profile}__q{qi + 1}.txt", view.text)
 
 

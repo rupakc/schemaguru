@@ -81,7 +81,7 @@ def test_warning_lines_first(store: SQLiteStore) -> None:
 
 def test_render_estimated_marker(store: SQLiteStore) -> None:
     text = block(store, "events")
-    assert re.search(r"null ≈ 0% \(sampled 1%, ±1\.85\d%, approximate\)", text), text
+    assert re.search(r"null ≈ 0% \(sampled 1%, 0% to 3\.713%, approximate\)", text), text
     assert "distinct ≥ 190 (sampled 1%, lower bound)" in text
     assert "seen in sample" in text
     # a sampled number is never called verified or plainly measured
@@ -396,7 +396,7 @@ def test_hazard_paths_render_truthfully(tmp_path: Path) -> None:
     assert "⚠ started_at: stored as DATE, holds a day (draft)" in sessions
     assert "newest started_at: 2026-11-19, age 1.5 days (measured 2026-11-20)" in sessions
     assert "40% of values look like UUID" in sessions
-    assert "  live rows: (name <> '') (human)" in accounts
+    assert "  live rows: (name <> '') (human, unchecked)" in accounts
     assert "→ shop.customers.email (draft candidate, not measured)" in accounts
     assert "FRESH started_at max=2026-11-19 measured 2026-11-20" in verifier
     assert "PK session_id NOT unique see warning" in verifier
@@ -431,3 +431,99 @@ def test_waived_contradiction_keeps_its_warning_and_says_waived(store: SQLiteSto
         "⚠ WAIVED until 2026-12-31 (case fixed upstream next sprint): status: declared values"
         in text
     )
+
+
+def test_rounding_never_overstates_certainty() -> None:
+    assert pct(0.99996) == ">99.99%"
+    assert pct(1.0) == "100%"
+    assert pct(0.0) == "0%"
+    assert pct(1e-7) == "<0.01%" or pct(1e-7).startswith("0.00001")
+    assert sig4(1239.9, floor=True) == "1,239"  # a lower bound is never rounded up
+    assert sig4(12_345_678, floor=True) == "12,345,678"
+    lb = {"value": 1239.9, "low": 1239.9, "high": None, "lower_bound": True}
+    assert estimate_text(lb, "0.01", rate=False) == "≥ 1,239 (sampled 1%, lower bound)"
+    # an interval squeezed against 0 is shown as its range, not as a symmetric ±
+    near0 = {"value": 0.0, "low": 0.0, "high": 0.02, "lower_bound": False}
+    assert estimate_text(near0, "0.01") == "≈ 0% (sampled 1%, 0% to 2%)"
+
+
+def test_sampled_join_without_interval_is_still_an_estimate(tmp_path: Path) -> None:
+    from schemaguru.model.joins import JOIN_VALUE_KEYS
+
+    v = {k: None for k in JOIN_VALUE_KEYS}
+    v.update(match_rate=0.97, coverage=0.5, cardinality=None, fraction="0.1")
+    f = _m(
+        FactKind.JOIN,
+        j("products.name", "accounts.name"),
+        v,
+        status=Status.ESTIMATED,
+        method="sampled:keyhash:0.1:7",
+    )
+    with shop_store(tmp_path / "s.db", [*shop_facts(), f]) as s:
+        k = collect(s, t("products"), NOW, CONFIG)
+        agent = AGENT.render_table(k, DetailLevel.FULL)
+        planner = get_profile("planner").render_table(k, DetailLevel.FULL)
+        verifier = get_profile("verifier").render_table(k, DetailLevel.FULL)
+        accounts = AGENT.render_table(collect(s, t("accounts"), NOW, CONFIG), DetailLevel.FULL)
+    assert "→ shop.accounts.name, match ≈ 97% (sampled 10%), coverage ≈ 50% (sampled 10%)" in agent
+    assert "name → shop.accounts.name (match ≈ 97% (sampled 10%))" in planner
+    assert "(None" not in planner
+    assert "match=≈0.97 coverage=≈0.5 sampled" in verifier
+    assert "← shop.products.name (coverage ≈ 50% (sampled 10%))" in accounts
+
+
+def test_estimated_type_note_is_not_an_exact_rate(tmp_path: Path) -> None:
+    f = _m(
+        FactKind.TYPE_NOTE,
+        c("events", "kind"),
+        {
+            "stored_as": "string",
+            "means": "a code",
+            "rate": 0.995,
+            "holds": True,
+            "fraction": "0.01",
+            "estimate": {"value": 0.995, "low": 0.99, "high": 1.0, "lower_bound": False},
+        },
+        status=Status.ESTIMATED,
+        method="sampled:system:0.01:1",
+    )
+    with shop_store(tmp_path / "s.db", [*shop_facts(), f]) as s:
+        text = AGENT.render_table(collect(s, t("events"), NOW, CONFIG), DetailLevel.FULL)
+    assert "looks like a code: ≈ 99.5% (sampled 1%, 99% to 100%) of values" in text
+    assert "(99.5% of values" not in text
+
+
+def test_type_note_wording_follows_the_column_type(tmp_path: Path) -> None:
+    f = _m(
+        FactKind.TYPE_NOTE,
+        c("orders", "order_id"),
+        {"stored_as": "integer", "means": "epoch seconds", "rate": 1.0, "holds": True},
+    )
+    with shop_store(tmp_path / "s.db", [*shop_facts(), f]) as s:
+        text = AGENT.render_table(collect(s, t("orders"), NOW, CONFIG), DetailLevel.FULL)
+    line = next(ln for ln in text.splitlines() if ln.startswith("    order_id"))
+    assert "holds epoch seconds (see warning)" in line and "text holding" not in line
+    assert "text holding ISO-8601 timestamp" in text  # created_at is VARCHAR
+
+
+def test_identifiers_quoted_for_reserved_and_mixed_case(tmp_path: Path) -> None:
+    from schemaguru.render.table_block import ident, qname
+
+    assert ident("select") == '"select"'
+    assert ident("Orders") == '"Orders"'
+    assert ident("order_id") == "order_id"
+    assert qname(ObjectRef(None, "Shop", "user", "id")) == '"Shop"."user".id'
+    ref = ObjectRef(None, "shop", "Orders")
+    with SQLiteStore(tmp_path / "q.db") as s:
+        s.upsert_tables([Table(ref, "table")])
+        s.upsert_columns(
+            ref, [Column(ObjectRef(None, "shop", "Orders", "select"), 1, "INT", "integer")]
+        )
+        text = AGENT.render_table(collect(s, ref, NOW, CONFIG), DetailLevel.FULL)
+    assert text.startswith('[shop."Orders"]') and '"select"' in text
+
+
+def test_human_and_declared_expectations_say_unchecked(store: SQLiteStore) -> None:
+    sessions = block(store, "sessions")
+    assert "note: UTC start (human, unchecked)" in sessions
+    assert "(human)" not in sessions

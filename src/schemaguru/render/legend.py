@@ -12,6 +12,8 @@ LEGEND = "\n".join(
         "  ≈ / ≥ estimated from a sample of a large table; never verified.",
         "  (draft) written by a language model and not checked.",
         "  measured <date> an observed number; verified <date> a claim that passed its check.",
+        "  (human, unchecked) / (declared, unchecked) stated by a person or a declaration;"
+        " not yet checked against the data.",
         f"  {LEGEND_SENTENCE}",
     ]
 )

@@ -18,6 +18,7 @@ from schemaguru.graph.search import Path
 from schemaguru.measure import flbridge
 from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays.schema import check_filter_syntax
+from schemaguru.render.table_block import path_aliases, qname
 
 
 def _capable(name: str) -> bool:
@@ -70,8 +71,9 @@ def render_join_snippet(
         sql = importlib.import_module("factlang.sql")
         refs = importlib.import_module("factlang.semantics.refs")
         edges = []
-        aliases: dict[int, str] = {}
-        for i, hop in enumerate(path.hops):
+        # the same alias per table occurrence as the rendered path text (orders, orders_2)
+        aliases = dict(enumerate(path_aliases(list(path.tables))))
+        for hop in path.hops:
             join = hop.edge.join
             left = [_column(refs, c) for c in join.left]
             right = [_column(refs, c) for c in join.right]
@@ -83,19 +85,17 @@ def render_join_snippet(
                 if len(pairs) == 1
                 else refs.EdgeRef(tuple(p[0] for p in pairs), tuple(p[1] for p in pairs))
             )
-            if path.revisits:
-                aliases[i + 1] = f"t{i + 1}"
         filters: dict[Any, Any] = {}
+        omitted: list[str] = []
         for ref, text in sorted(soft_delete.items(), key=lambda kv: kv[0].canonical()):
             if ref in path.tables:
                 expr, diags = fl.parse_filter(text)
                 if expr is not None and not [d for d in diags if _is_error(d)]:
                     filters[_table(refs, ref)] = expr
-        kwargs: dict[str, Any] = {"dialect": dialect, "filters": filters or None}
-        if aliases:
-            kwargs["aliases"] = aliases
-        fragment = sql.render_join(edges, **kwargs)
-        return str(fragment.inline())
+                else:  # never silently: the agent must know live rows are not filtered
+                    omitted.append(f"-- live-rows filter for {qname(ref)} unparseable, omitted")
+        fragment = sql.render_join(edges, dialect=dialect, filters=filters or None, aliases=aliases)
+        return "\n".join([str(fragment.inline()), *omitted])
     except Exception as exc:  # a FactLang refusal costs this one snippet, never the view
         if bag is not None:
             bag.add(

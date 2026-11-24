@@ -11,14 +11,20 @@
   through ``pii.mask_free_text``; and the whole result, text and structured fields alike, ends
   with :func:`~schemaguru.render.table_block.outbound` under the most restrictive mode of the
   tables it touches (``raw`` only when every one of them is opted in).
-* **check_fact spends** on the warehouse, so it is admitted through the Guru's agent
-  :class:`~schemaguru.measure.budget.BudgetGuard` and ledgered under ``agent_check``; its
-  evidence is scrubbed like stored evidence before it is returned.
+* **check_fact spends** on the warehouse: it is offered only with
+  ``Config.agent_checks="allow"`` (default "deny", spec 8.2), admitted through the Guru's one
+  per-period :class:`~schemaguru.measure.budget.BudgetGuard` (shared with the background
+  drainer: one byte total; ``max_probes``/``max_seconds`` count across calls) and ledgered
+  under ``agent_check``. Its evidence leaves as an allow-list (verdict, claim text with quoted
+  literals as ``?``, SQL template, bytes, tier, duration): raw, sample and params never do.
+* **Error messages** echo at most 200 characters of a caller's value, are masked, and in
+  ``none`` mode show every quoted literal as ``?``.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, cast
 
@@ -27,6 +33,7 @@ from schemaguru.agent.tools import ToolHost, check_spec, tool_definitions
 from schemaguru.errors import AmbiguousNameError, SchemaGuruError
 from schemaguru.measure import flbridge
 from schemaguru.model.detail import DetailLevel
+from schemaguru.model.evidence import Evidence
 from schemaguru.model.facts import Fact, Status
 from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays.schema import GLOBAL_SUBJECT
@@ -53,6 +60,9 @@ _JSON_TYPES: dict[str, Callable[[Any], bool]] = {
     "array": lambda v: isinstance(v, list),
 }
 _ARTICLE = {"integer": "an integer", "object": "an object", "array": "an array"}
+MAX_ECHO = 200  # characters of a caller's value an error message may quote
+# the outbound evidence fields (an allow-list: raw, sample and params never reach an agent)
+_EVIDENCE_FIELDS = ("verdict", "claim_text", "sql", "bytes_processed", "tier", "duration_ms")
 
 
 class ToolError(Exception):
@@ -73,8 +83,21 @@ def _error(code: str, message: str, **extra: Any) -> dict[str, Any]:
     return {"error": err, "text": f"{code} {message}"}
 
 
-def _masked_message(text: str) -> str:
-    return mask_free_text(text)[0]
+_LONG_QUOTE = re.compile(r"'([^'\n]{" + str(MAX_ECHO) + r"})[^'\n]+'")
+
+
+def _message(guru: ToolHost, text: str) -> str:
+    """An error message as it leaves: long echoes cut to ``MAX_ECHO`` characters, free text
+    masked, and in ``none`` mode every quoted literal replaced by ``?``."""
+    text = _LONG_QUOTE.sub(lambda m: f"'{m.group(1)}…'", text)
+    text = mask_free_text(text)[0]
+    try:
+        mode = outbound_mode(guru)
+    except Exception:
+        mode = "none"  # cannot tell: the most restrictive
+    if mode == "none":
+        text = predicate_text(text, "none")[0]
+    return outbound(text, mode)[0]
 
 
 def _strictest(modes: Iterable[str]) -> str:
@@ -146,6 +169,9 @@ def _validate(spec: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any
                 raise ToolError("SG803", f"{spec['name']}: {name!r} must be <= {hi}")
         if isinstance(value, str) and len(value.strip()) < int(prop.get("minLength", 0)):
             raise ToolError("SG803", f"{spec['name']}: {name!r} must not be empty")
+        cap = prop.get("maxLength")
+        if isinstance(value, str) and isinstance(cap, int) and len(value) > cap:
+            raise ToolError("SG803", f"{spec['name']}: {name!r} is longer than {cap} characters")
         out[name] = value
     return out
 
@@ -348,8 +374,9 @@ def _check_fact(guru: ToolHost, args: dict[str, Any], spec: Mapping[str, Any]) -
     if not names:
         raise ToolError("SG803", "check_fact: no claim text given")
     claims = str(args[names[0]])
+    # the measurement period guard: one byte total, and max_probes / max_seconds count across
+    # calls (no run is started here; a drainer run restarts the probe count and the clock)
     guard = guru._agent_guard()
-    guard.new_run()
     key = object()  # one admission per call
     estimator = getattr(guru.backend, "estimate_claims", None)
     estimate = estimator(claims) if callable(estimator) else None
@@ -369,16 +396,22 @@ def _check_fact(guru: ToolHost, args: dict[str, Any], spec: Mapping[str, Any]) -
     reported = sum(s for s in sizes if s is not None) if sizes and None not in sizes else None
     guard.record_key(key, reported, note, kind=CHECK_LEDGER_KIND)
     mode = outbound_mode(guru)  # a claim may name any table: every configured mode counts
-    scrubbed = [
-        _json_safe(flbridge.scrub_evidence(e, cast(Mode, mode)).to_dict()) for e in evidence
-    ]
-    if mode == "none":  # the echoed claim may quote values (no shape for the sweep to find)
-        for e in scrubbed:
-            if isinstance(e.get("claim_text"), str):
-                e["claim_text"] = predicate_text(e["claim_text"], "none")[0]
+    scrubbed = [_outbound_evidence(e, mode) for e in evidence]
     text = "\n".join(f"{e.get('verdict')}: {e.get('claim_text')}" for e in scrubbed)
     result = {"text": text or "no verdict (the backend cannot check claims)", "evidence": scrubbed}
     return _result(result, mode)
+
+
+def _outbound_evidence(ev: Evidence, mode: str) -> dict[str, Any]:
+    """Evidence an agent may see: the allow-listed fields only. The claim's quoted literals
+    become ``?`` unless values are raw (a quoted value may belong to a PII column, and no
+    column policy can be applied to claim text); the SQL is its template."""
+    full = _json_safe(flbridge.scrub_evidence(ev, cast(Mode, mode)).to_dict())
+    out = {k: full.get(k) for k in _EVIDENCE_FIELDS}
+    claim = out.get("claim_text")
+    if isinstance(claim, str) and mode != "raw":
+        out["claim_text"] = predicate_text(claim, "none")[0]
+    return out
 
 
 _HANDLERS: dict[str, Callable[[ToolHost, dict[str, Any]], dict[str, Any]]] = {
@@ -391,7 +424,9 @@ _HANDLERS: dict[str, Callable[[ToolHost, dict[str, Any]], dict[str, Any]]] = {
 }
 
 
-def _run(guru: ToolHost, name: str, args: Any) -> dict[str, Any]:
+def _run(guru: ToolHost, name: Any, args: Any) -> dict[str, Any]:
+    if not isinstance(name, str):
+        raise ToolError("SG803", f"the tool name must be a string, not {type(name).__name__}")
     if name == "check_fact":
         if guru.config.agent_checks != "allow":
             raise ToolError("SG803", "check_fact is disabled (Config.agent_checks='deny')")
@@ -404,7 +439,7 @@ def _run(guru: ToolHost, name: str, args: Any) -> dict[str, Any]:
         known = {s["name"]: s for s in tool_definitions(guru)}
         if name not in known:
             listed = ", ".join(known)
-            raise ToolError("SG803", f"unknown tool {str(name)[:80]!r}; known: {listed}")
+            raise ToolError("SG803", f"unknown tool {name!r}; known: {listed}")
         spec = known[name]
     if not isinstance(args, Mapping):
         raise ToolError("SG803", f"{name}: arguments must be an object")
@@ -420,11 +455,11 @@ def handle_tool_call(guru: ToolHost, name: str, args: Mapping[str, Any]) -> dict
         return _run(guru, name, args)
     except ToolError as e:
         extra: dict[str, Any] = {"candidates": e.candidates} if e.candidates else {}
-        return _error(e.code, _masked_message(e.message), **extra)
+        return _error(e.code, _message(guru, e.message), **extra)
     except SchemaGuruError as e:
-        return _error("SG803", _masked_message(f"{name}: {e}"))
+        return _error("SG803", _message(guru, f"{name}: {e}"))
     except Exception as e:  # a tool result is always JSON (spec 18.1)
-        return _error("SG804", _masked_message(str(e)), type=type(e).__name__)
+        return _error("SG804", _message(guru, str(e)), type=type(e).__name__)
 
 
 __all__ = ["CHECK_LEDGER_KIND", "ToolError", "handle_tool_call", "outbound_mode"]

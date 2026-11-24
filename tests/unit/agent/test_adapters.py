@@ -105,3 +105,56 @@ def test_openai_agents_function_tools(shop_guru: Guru, no_seam_check: Any) -> No
     assert "[shop.orders]" in json.loads(out)["text"]
     bad = asyncio.run(t.on_invoke_tool(None, "{not json"))  # type: ignore[arg-type]
     assert json.loads(bad)["error"]["code"] == "SG803"
+
+
+# --- a model-supplied argument can never reroute a call to another tool -----------------------
+
+REROUTE = {"table": "orders", "_name": "explain_term"}
+
+
+def _refused_or_same(raw: str | dict[str, Any]) -> None:
+    out = json.loads(raw) if isinstance(raw, str) else raw
+    if "error" in out:
+        assert out["error"]["code"] == "SG803" and "'_name'" in out["error"]["message"]
+    else:
+        assert out["table"] == "shop.orders"  # still describe_table, never explain_term
+    assert "entries" not in out
+
+
+def test_anthropic_name_argument_cannot_reroute(shop_guru: Guru, no_seam_check: Any) -> None:
+    from schemaguru.agent.adapters import anthropic as adapter
+
+    block = {"type": "tool_use", "id": "t", "name": "describe_table", "input": REROUTE}
+    out = adapter.run_tool_use(shop_guru, block)
+    assert out["is_error"] and "'_name'" in out["content"]
+    pytest.importorskip("anthropic")
+    runner = {t.name: t for t in adapter.runner_tools(shop_guru)}
+    text = runner["describe_table"].call(REROUTE)
+    assert text.startswith("SG803 ") and "'_name'" in text
+
+
+def test_langchain_name_argument_cannot_reroute(shop_guru: Guru, no_seam_check: Any) -> None:
+    pytest.importorskip("langchain_core")
+    from schemaguru.agent.adapters import langchain as adapter
+
+    tool = {t.name: t for t in adapter.tools(shop_guru)}["describe_table"]
+    _refused_or_same(tool.invoke(REROUTE))
+    for bad in (0, 101, "3", True):
+        with pytest.raises(ValueError):
+            adapter.retriever(shop_guru, k=bad)  # type: ignore[arg-type]
+
+
+def test_llamaindex_name_argument_cannot_reroute(shop_guru: Guru, no_seam_check: Any) -> None:
+    pytest.importorskip("llama_index.core")
+    from schemaguru.agent.adapters import llamaindex as adapter
+
+    tool = {t.metadata.name: t for t in adapter.tool_spec(shop_guru)}["describe_table"]
+    _refused_or_same(tool.call(**REROUTE).content)
+
+
+def test_openai_agents_name_argument_cannot_reroute(shop_guru: Guru, no_seam_check: Any) -> None:
+    pytest.importorskip("agents")
+    from schemaguru.agent.adapters import openai_agents as adapter
+
+    tool = {t.name: t for t in adapter.function_tools(shop_guru)}["describe_table"]
+    _refused_or_same(asyncio.run(tool.on_invoke_tool(None, json.dumps(REROUTE))))  # type: ignore[arg-type]

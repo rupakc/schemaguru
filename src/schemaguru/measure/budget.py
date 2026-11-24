@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable, Hashable
 from typing import Literal
@@ -42,6 +43,8 @@ class BudgetGuard:
     ) -> None:
         self._budget = budget
         self._store = store
+        # admit/record may be called from several threads (the drainer, concurrent MCP calls)
+        self._mu = threading.RLock()
         self._clock = clock
         now = clock()
         self._start = now
@@ -56,8 +59,15 @@ class BudgetGuard:
 
     def new_run(self) -> None:
         """Start another run on the same byte budget (probe count and clock restart)."""
-        self._start = self._clock()
-        self.probes = 0
+        with self._mu:
+            self._start = self._clock()
+            self.probes = 0
+
+    def rebudget(self, budget: Budget) -> None:
+        """Apply a new ``Budget`` keeping what this period already spent (a config switch
+        must not refill the allowance)."""
+        with self._mu:
+            self._budget = budget
 
     def _refill(self, now: float) -> None:
         period = self._budget.period_s
@@ -83,8 +93,12 @@ class BudgetGuard:
         """Admit one priced unit of spend under ``key`` (``known=None``: unknown cost).
 
         :meth:`admit` is this for a probe; hosts of other spend (an agent's claim check) use
-        it directly, with a key of their own, and pair it with :meth:`record_key`.
+        it directly, with a key of their own, and pair it with :meth:`record_key`. Thread-safe.
         """
+        with self._mu:
+            return self._admit(key, known)
+
+    def _admit(self, key: Hashable, known: int | None) -> Admission:
         b = self._budget
         now = self._clock()
         self._refill(now)
@@ -126,7 +140,12 @@ class BudgetGuard:
         self, key: Hashable, reported: int | None, note: str, *, kind: str = LEDGER_KIND
     ) -> None:
         """Ledger the spend of an admitted ``key`` under ``kind`` (unknown spend under
-        ``<kind>.unknown_bytes``): reported bytes, else the estimate, else the charge."""
+        ``<kind>.unknown_bytes``): reported bytes, else the estimate, else the charge.
+        Thread-safe."""
+        with self._mu:
+            self._record(key, reported, note, kind)
+
+    def _record(self, key: Hashable, reported: int | None, note: str, kind: str) -> None:
         unknown_kind = f"{kind}.unknown_bytes"
         charge, known = self._reserved.pop(key, (None, None))
         spent = reported if reported is not None else known
@@ -146,6 +165,7 @@ class BudgetGuard:
         self.lifetime_spent_bytes += amount
 
     def remaining_bytes(self) -> int | None:
-        self._refill(self._clock())
-        total = self._budget.max_bytes_total
-        return None if total is None else max(0, total - self._committed())
+        with self._mu:
+            self._refill(self._clock())
+            total = self._budget.max_bytes_total
+            return None if total is None else max(0, total - self._committed())

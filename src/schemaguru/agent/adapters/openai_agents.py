@@ -4,10 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from schemaguru.agent.adapters import call_json, need
 from schemaguru.agent.tools import ToolHost, tool_definitions
+
+
+def _invoker(guru: ToolHost, name: str) -> Callable[[Any, str], Awaitable[str]]:
+    """``on_invoke_tool`` for tool ``name`` only (closed over, never taken from the input)."""
+
+    async def invoke(ctx: Any, raw: str) -> str:
+        try:
+            args: Any = json.loads(raw) if raw.strip() else {}
+        except ValueError:
+            args = "invalid JSON arguments"  # the dispatcher refuses a non-object (SG803)
+        return await asyncio.to_thread(call_json, guru, name, args)
+
+    return invoke
 
 
 def function_tools(guru: ToolHost) -> list[Any]:
@@ -16,13 +30,7 @@ def function_tools(guru: ToolHost) -> list[Any]:
     agents = need("agents", "openai-agents")
     out: list[Any] = []
     for spec in tool_definitions(guru):
-
-        async def invoke(ctx: Any, raw: str, _name: str = spec["name"]) -> str:
-            try:
-                args = json.loads(raw) if raw.strip() else {}
-            except ValueError:
-                args = "invalid JSON arguments"  # the dispatcher refuses a non-object (SG803)
-            return await asyncio.to_thread(call_json, guru, _name, args)
+        invoke = _invoker(guru, spec["name"])
 
         out.append(
             agents.FunctionTool(

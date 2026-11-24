@@ -238,7 +238,9 @@ class Guru:
         self._runs = threading.Condition()
         self._active_runs = 0
         self._closing = False
-        self._check_guard: BudgetGuard | None = None
+        # the one per-period budget guard for spend nobody asked for explicitly: the background
+        # drainer and agent claim checks share it (one total, refilled per Budget.period_s)
+        self._period: BudgetGuard | None = None
 
     # ----- construction ---------------------------------------------------------------------
 
@@ -332,7 +334,8 @@ class Guru:
                     self._cache = _LRU(value.scope.cache_entries)
                     if not self._explicit_counter:
                         self.counter = _counter_for(value)
-                    self._check_guard = None
+                    if self._period is not None:
+                        self._period.rebudget(value.budget)  # keeps this period's spend
                     self._invalidate()
             finally:
                 with self._lock:
@@ -880,6 +883,7 @@ class Guru:
             if self._no_measure() is not None:
                 return
             self.drainer = BackgroundDrainer(self._scheduler, self._drain_interval_s)
+            self.drainer.guard = self._period_guard()
             self.drainer.start()
 
     def fingerprint_views(self, questions: Iterable[str]) -> dict[str, str]:
@@ -927,12 +931,17 @@ class Guru:
         with self._lock:
             return fn(self._renderer(profile))
 
-    def _agent_guard(self) -> BudgetGuard:
-        """The budget guard every agent-requested warehouse check is admitted through."""
+    def _period_guard(self) -> BudgetGuard:
+        """The per-period guard shared by the background drainer and agent checks."""
         with self._lock:
-            if self._check_guard is None:
-                self._check_guard = BudgetGuard(self._config.budget, self.store)
-            return self._check_guard
+            if self._period is None:
+                self._period = BudgetGuard(self._config.budget, self.store)
+            return self._period
+
+    def _agent_guard(self) -> BudgetGuard:
+        """The guard an agent's claim check is admitted through: the measurement period guard
+        (spec 8.2, 8.3), never a separate allowance."""
+        return self._period_guard()
 
     # ----- async twins (spec 19) --------------------------------------------------------------
 

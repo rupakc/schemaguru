@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from schemaguru.agent.adapters import call_json, need
+from schemaguru.agent.adapters import bind, need
 from schemaguru.agent.tools import ToolHost, tool_definitions
 
 
@@ -32,13 +32,9 @@ def tool_spec(guru: ToolHost) -> list[Any]:
     lt = need("llama_index.core.tools", "llamaindex")
     out: list[Any] = []
     for spec in tool_definitions(guru):
-
-        def run(_name: str = spec["name"], **kwargs: Any) -> str:
-            return call_json(guru, _name, kwargs)
-
         out.append(
             lt.FunctionTool.from_defaults(
-                fn=run,
+                fn=bind(guru, spec["name"]),
                 name=spec["name"],
                 description=spec["description"],
                 fn_schema=_schema_model(spec["name"], spec["input_schema"]),

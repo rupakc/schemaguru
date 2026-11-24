@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from schemaguru.agent.adapters import call_json, need
+from schemaguru.agent.adapters import bind, need
 from schemaguru.agent.dispatch import handle_tool_call
 from schemaguru.agent.tools import ToolHost, tool_definitions
 
@@ -15,13 +15,9 @@ def tools(guru: ToolHost) -> list[Any]:
     lc = need("langchain_core.tools", "langchain")
     out: list[Any] = []
     for spec in tool_definitions(guru):
-
-        def run(_name: str = spec["name"], **kwargs: Any) -> str:
-            return call_json(guru, _name, kwargs)
-
         out.append(
             lc.StructuredTool.from_function(
-                func=run,
+                func=bind(guru, spec["name"]),
                 name=spec["name"],
                 description=spec["description"],
                 args_schema=spec["input_schema"],
@@ -33,7 +29,9 @@ def tools(guru: ToolHost) -> list[Any]:
 
 def retriever(guru: ToolHost, *, k: int = 4) -> Any:
     """A ``BaseRetriever``: ``search_tables`` for the query, one ``describe_table`` document
-    (metadata ``table``) per hit."""
+    (metadata ``table``) per hit. ``k`` must be 1..100 (``ValueError`` otherwise)."""
+    if isinstance(k, bool) or not isinstance(k, int) or not 1 <= k <= 100:
+        raise ValueError(f"k must be an integer between 1 and 100, not {k!r}")
     retrievers = need("langchain_core.retrievers", "langchain")
     documents = need("langchain_core.documents", "langchain")
 

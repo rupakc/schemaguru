@@ -67,3 +67,34 @@ def test_tool_definitions_are_fresh_copies(shop_guru: Guru, seam_check: Any) -> 
     a = tool_definitions(shop_guru)
     a[0]["input_schema"]["properties"].clear()
     assert tool_definitions(shop_guru)[0]["input_schema"]["properties"]
+
+
+def test_check_fact_is_off_by_default(tmp_path: Any, shop_duckdb: Any, seam_check: Any) -> None:
+    """Spec 8.2: an agent question never spends by itself; checks are an explicit opt-in."""
+    from schemaguru.agent import handle_tool_call
+    from schemaguru.config import Config
+    from tests.unit.agent.conftest import make_shop_guru
+
+    assert Config().agent_checks == "deny"
+    g = make_shop_guru(tmp_path, shop_duckdb[0], config=Config())
+    try:
+        assert "check_fact" not in [s["name"] for s in tool_definitions(g)]
+        out = handle_tool_call(g, "check_fact", {"claims": "ROWS shop.orders VALUE >=1"})
+        assert out["error"]["code"] == "SG803" and "agent_checks" in out["error"]["message"]
+    finally:
+        g.close()
+
+
+def test_string_arguments_are_capped(shop_guru: Guru, seam_check: Any) -> None:
+    from schemaguru.agent.tools import MAX_NAME, MAX_TEXT
+
+    caps = {
+        s["name"]: {k: p.get("maxLength") for k, p in s["input_schema"]["properties"].items()}
+        for s in tool_definitions(shop_guru)
+    }
+    assert caps["describe_table"]["table"] == MAX_NAME == 512
+    assert caps["find_join_path"] == {"from": 512, "to": 512}
+    assert caps["column_values"]["column"] == 512
+    assert caps["schema_context"]["question"] == MAX_TEXT == 20_000
+    assert caps["explain_term"]["term"] == 20_000
+    assert caps["check_fact"]["claims"] == 20_000

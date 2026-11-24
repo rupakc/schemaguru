@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from collections.abc import Callable
 from typing import Any
 
 from schemaguru.agent.dispatch import handle_tool_call
@@ -26,9 +27,20 @@ def need(module: str, extra: str) -> Any:
         ) from e
 
 
+def bind(guru: ToolHost, name: str) -> Callable[..., str]:
+    """A function running tool ``name`` only: the name is closed over, so no argument can
+    reroute the call to another tool (an unexpected keyword is refused by the dispatcher)."""
+
+    def run(**kwargs: Any) -> str:
+        return call_json(guru, name, kwargs)
+
+    run.__name__ = name
+    return run
+
+
 def call_json(guru: ToolHost, name: str, args: Any) -> str:
     """Run a tool and return its whole result as JSON text (``text`` plus structured fields)."""
     return json.dumps(handle_tool_call(guru, name, args), ensure_ascii=False)
 
 
-__all__ = ["call_json", "need"]
+__all__ = ["bind", "call_json", "need"]

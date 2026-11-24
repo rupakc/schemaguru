@@ -38,15 +38,15 @@ oracle = ["oracledb>=2"]
 trino = ["trino>=0.330"]
 mysql = ["pymysql[rsa]>=1.1"]
 postgres-store = ["psycopg[binary]>=3.1"]
-anthropic = ["anthropic>=0.40"]
+anthropic = ["anthropic>=2.13"]
 openai = ["openai>=1.50"]
 embeddings = ["numpy>=1.26"]
 tiktoken = ["tiktoken>=0.7"]
-mcp = ["mcp>=2"]
+mcp = ["mcp>=2.3"]
 server = ["starlette>=0.37", "uvicorn>=0.30"]
-langchain = ["langchain-core>=0.3"]
-llamaindex = ["llama-index-core>=0.11"]
-openai-agents = ["openai-agents>=0.1"]
+langchain = ["langchain-core>=1.8"]
+llamaindex = ["llama-index-core>=0.14"]
+openai-agents = ["openai-agents>=0.26"]
 all = [
   "google-cloud-bigquery>=3",
   "snowflake-connector-python>=3",
@@ -59,16 +59,16 @@ all = [
   "oracledb>=2",
   "trino>=0.330",
   "pymysql[rsa]>=1.1",
-  "anthropic>=0.40",
+  "anthropic>=2.13",
   "openai>=1.50",
   "numpy>=1.26",
   "tiktoken>=0.7",
-  "mcp>=2",
+  "mcp>=2.3",
   "starlette>=0.37",
   "uvicorn>=0.30",
-  "langchain-core>=0.3",
-  "llama-index-core>=0.11",
-  "openai-agents>=0.1",
+  "langchain-core>=1.8",
+  "llama-index-core>=0.14",
+  "openai-agents>=0.26",
 ]
 dev = [
   "pytest>=8",

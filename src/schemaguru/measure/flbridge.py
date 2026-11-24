@@ -312,6 +312,7 @@ def _scrubbed(ev: Evidence, mode: Mode) -> Evidence:
         sql=None if ev.sql is None else sql_template(ev.sql),
         params=_scrub_params(ev.params, mode),
         raw=scrub_tree(dict(ev.raw), mode),
+        sample=None if ev.sample is None else scrub_tree(dict(ev.sample), mode),
     )
 
 

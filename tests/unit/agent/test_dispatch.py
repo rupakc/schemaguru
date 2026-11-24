@@ -187,12 +187,18 @@ class _EvidenceBackend:
     def check(self, claims: str) -> list[Evidence]:
         return [
             Evidence(
-                claim_text="VALUES shop.customers.email IN ['q17@example.com']",
+                claim_text="VALUES shop.customers.email IN ['q17@example.com', "
+                "'Wilhelmina Fairweather']",
                 verdict="fail",
                 sql="SELECT 1 FROM shop.customers WHERE email = 'q17@example.com'",
                 params=("q17@example.com",),
                 bytes_processed=10,
-                raw={"offending": [{"value": "q17@example.com", "count": 1}]},
+                sample={"rows": [{"email": "r18@example.com"}], "fraction": "0.01"},
+                raw={
+                    "offending": [{"value": "q17@example.com", "count": 1}],
+                    "first_value": "s19-secret-scalar",
+                    "values": ["t20-secret-in-list"],
+                },
             )
         ]
 
@@ -306,3 +312,140 @@ def test_outbound_sweeps_every_string_but_the_fingerprint() -> None:
     out = _outbound_tree(tree, "masked")
     assert out == {"text": "x <email>", "fingerprint": fp, "rows": [{"d": "call <phone>"}]}
     assert _outbound_tree(tree, "raw") == tree
+
+
+# --- fix round 1: evidence allow-list, caps, messages, the shared period guard ----------------
+
+
+def test_check_fact_evidence_is_an_allow_list(
+    planted: Callable[..., Guru], seam_check: Any
+) -> None:
+    for mode in ("masked", "none"):
+        out = handle_tool_call(
+            planted(mode, backend=_EvidenceBackend()), "check_fact", {"claims": "x"}
+        )
+        (ev,) = out["evidence"]
+        assert set(ev) == {"verdict", "claim_text", "sql", "bytes_processed", "tier", "duration_ms"}
+        assert "?" in ev["claim_text"] and "Wilhelmina" not in ev["claim_text"]
+        assert ev["sql"] == "SELECT 1 FROM shop.customers WHERE email = ?"
+
+
+def test_stored_evidence_scrubs_the_sample() -> None:
+    from schemaguru.measure import flbridge
+
+    ev = Evidence(sample={"rows": [{"email": "r18@example.com"}]})
+    assert "r18" not in json.dumps(flbridge.scrub_evidence(ev, "masked").to_dict())
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "needle"),
+    [
+        ("describe_table", {"table": "x" * 513}, "'table' is longer than 512 characters"),
+        ("schema_context", {"question": "q" * 20_001}, "longer than 20000 characters"),
+        ("explain_term", {"term": "t" * 20_001}, "longer than 20000 characters"),
+    ],
+)
+def test_overlong_arguments_are_refused(
+    shop_guru: Guru, name: str, args: dict[str, Any], needle: str
+) -> None:
+    out = call(shop_guru, name, args)
+    assert out["error"]["code"] == "SG803" and needle in out["error"]["message"]
+
+
+def test_echoes_in_error_messages_are_cut_to_200_chars(shop_guru: Guru) -> None:
+    out = call(shop_guru, "describe_table", {"table": "y" * 500})
+    assert out["error"]["code"] == "SG803"
+    assert "y" * 200 + "…" in out["error"]["message"] and "y" * 201 not in out["text"]
+    out = call(shop_guru, "n" * 400, {})
+    assert "n" * 201 not in out["text"]
+
+
+@pytest.mark.parametrize("bad", [None, 3, ["describe_table"], {"x": 1}])
+def test_a_non_string_tool_name_is_sg803(shop_guru: Guru, bad: Any) -> None:
+    out = call(shop_guru, bad, {})
+    assert out["error"]["code"] == "SG803" and "must be a string" in out["error"]["message"]
+
+
+def test_none_mode_error_messages_hide_quoted_literals(planted: Callable[..., Guru]) -> None:
+    out = call(planted("none"), "describe_table", {"table": "Carla Secretname"})
+    assert out["error"]["code"] == "SG803"
+    assert "Secretname" not in json.dumps(out) and "?" in out["error"]["message"]
+
+
+def _allow(g: Guru, **budget: Any) -> None:
+    g.config = replace(g.config, agent_checks="allow", budget=Budget(**budget))
+
+
+def test_check_fact_shares_the_measurement_period_guard(
+    tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts], seam_check: Any
+) -> None:
+    backend = CheckingBackend(shop_duckdb[0], [_evidence(600)])
+    backend.estimate_claims = lambda claims: 400  # type: ignore[attr-defined]
+    g = make_shop_guru(tmp_path, shop_duckdb[0], backend=backend)
+    try:
+        _allow(g, max_bytes_total=1000, max_bytes_per_probe=None)
+        assert g._agent_guard() is g._period_guard()
+        assert "error" not in call(g, "check_fact", {"claims": "a"})
+        assert "error" not in call(g, "check_fact", {"claims": "b"})  # 600 spent + 400 fits
+        assert call(g, "check_fact", {"claims": "c"})["error"]["code"] == "SG302"  # one total
+        assert len(backend.checked) == 2
+        # a config switch keeps this period's spend (no refill by switching)
+        _allow(g, max_bytes_total=1000, max_bytes_per_probe=None)
+        assert call(g, "check_fact", {"claims": "d"})["error"]["code"] == "SG302"
+    finally:
+        g.close()
+
+
+def test_check_fact_probe_cap_counts_across_calls(
+    tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts], seam_check: Any
+) -> None:
+    backend = CheckingBackend(shop_duckdb[0], [_evidence(1)])
+    g = make_shop_guru(tmp_path, shop_duckdb[0], backend=backend)
+    try:
+        _allow(g, max_probes=2)
+        codes = [
+            call(g, "check_fact", {"claims": str(i)}).get("error", {}).get("code") for i in range(4)
+        ]
+        assert codes == [None, None, "SG302", "SG302"] and len(backend.checked) == 2
+    finally:
+        g.close()
+
+
+def test_background_drainer_uses_the_same_guard(
+    tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts]
+) -> None:
+    g = make_shop_guru(tmp_path, shop_duckdb[0])
+    try:
+        g.config = replace(g.config, measure_on_demand="background")
+        g._ensure_drainer()
+        assert g.drainer is not None and g.drainer.guard is g._agent_guard()
+    finally:
+        g.close()
+
+
+def test_budget_guard_admission_is_thread_safe(tmp_path: Path) -> None:
+    import threading
+
+    from schemaguru.measure.budget import BudgetGuard
+    from schemaguru.store.sqlite import SQLiteStore
+
+    with SQLiteStore(tmp_path / "b.db") as store:
+        guard = BudgetGuard(Budget(max_bytes_total=None, max_probes=50), store)
+        admitted: list[str] = []
+        start = threading.Barrier(16)
+
+        def worker() -> None:
+            start.wait()
+            for _ in range(20):
+                key = object()
+                if guard.admit_key(key, 1) == "run":
+                    admitted.append("x")
+                    guard.record_key(key, 1, "t", kind="agent_check")
+
+        threads = [threading.Thread(target=worker) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(admitted) == 50 and guard.probes == 50
+        assert store.ledger_total("agent_check", "queries", None) == 50

@@ -41,6 +41,10 @@ SECRETS: dict[str, str] = {
     "o15@example.com": "human description on a column",
     "p16@example.com": "table description (search_tables)",
     "q17@example.com": "check_fact evidence (claim text, params, raw)",
+    "r18@example.com": "check_fact evidence sample rows",
+    "s19-secret-scalar": "check_fact evidence raw scalar (no personal shape)",
+    "t20-secret-in-list": "check_fact evidence raw list of strings (no personal shape)",
+    "Wilhelmina Fairweather": "check_fact claim literal on a PII column (no shape)",
 }
 
 

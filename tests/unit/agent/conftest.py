@@ -34,6 +34,8 @@ glossary:
     maps_to: [shop.orders]
 """
 
+ALLOW = Config(agent_checks="allow")  # check_fact is opt-in (spec 8.2)
+
 CHECK_SPEC = {
     "name": "factlang_check",
     "description": "Check FactLang claims against the warehouse.",
@@ -79,7 +81,7 @@ def make_shop_guru(
         reader=reader_for("duckdb", DBAPIExecutor(conn)),
         backend=backend if backend is not None else CheckingBackend(conn),
         store=str(tmp_path / "guru.db"),
-        config=config,
+        config=config if config is not None else ALLOW,
         dialect="duckdb",
     )
     g.crawl()
@@ -98,7 +100,8 @@ def shop_guru(tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts]) -> Iterator[Gu
 
 
 def mode_config(mode: str, **per_glob: str) -> Config:
-    return replace(CONFIG, sampling=SamplingConfig(llm_values=mode, per_glob=per_glob))  # type: ignore[arg-type]
+    sampling = SamplingConfig(llm_values=mode, per_glob=per_glob)  # type: ignore[arg-type]
+    return replace(CONFIG, sampling=sampling, agent_checks="allow")
 
 
 @pytest.fixture

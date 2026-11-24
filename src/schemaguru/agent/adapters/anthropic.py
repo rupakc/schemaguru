@@ -32,18 +32,24 @@ def run_tool_use(guru: ToolHost, block: Any) -> dict[str, Any]:
     }
 
 
+def _text_runner(guru: ToolHost, name: str) -> Any:
+    """Tool ``name`` only (closed over: no argument can reroute it); returns the text."""
+
+    def run(**kwargs: Any) -> str:
+        return str(handle_tool_call(guru, name, kwargs)["text"])
+
+    run.__name__ = name
+    return run
+
+
 def runner_tools(guru: ToolHost) -> list[Any]:
     """``BetaFunctionTool`` objects for ``client.beta.messages.tool_runner(tools=...)``."""
     lib = need("anthropic.lib.tools", "anthropic")
     out: list[Any] = []
     for spec in tool_definitions(guru):
-
-        def run(_name: str = spec["name"], **kwargs: Any) -> str:
-            return str(handle_tool_call(guru, _name, kwargs)["text"])
-
         out.append(
             lib.BetaFunctionTool(
-                run,
+                _text_runner(guru, spec["name"]),
                 name=spec["name"],
                 description=spec["description"],
                 input_schema=spec["input_schema"],

@@ -2,8 +2,9 @@
 
 Exactly the spec's tools, in a fixed order. ``check_fact`` takes its description and input
 schema from FactLang's ``factlang_check`` (through the FactLang seam, ``measure.flbridge``) and
-is omitted when the installed FactLang publishes no agent tools, or when
-``Config.agent_checks == "deny"`` (it spends warehouse money on an agent's request).
+is omitted when the installed FactLang publishes no agent tools, or unless
+``Config.agent_checks == "allow"`` (default "deny": it spends warehouse money on an agent's
+request, spec 8.2).
 """
 
 from __future__ import annotations
@@ -69,8 +70,12 @@ class ToolHost(Protocol):
     def _agent_guard(self) -> BudgetGuard: ...
 
 
-def _string(description: str) -> dict[str, Any]:
-    return {"type": "string", "minLength": 1, "description": description}
+MAX_NAME = 512  # a table or column name
+MAX_TEXT = 20_000  # a question, query, term or claim text
+
+
+def _string(description: str, max_length: int = MAX_NAME) -> dict[str, Any]:
+    return {"type": "string", "minLength": 1, "maxLength": max_length, "description": description}
 
 
 def _spec(
@@ -91,7 +96,7 @@ _BASE: dict[str, dict[str, Any]] = {
         "The warehouse tables, columns, measured joins and hazards relevant to a question. "
         "Call this first, before writing SQL.",
         {
-            "question": _string("the user's question, in natural language"),
+            "question": _string("the user's question, in natural language", MAX_TEXT),
             "budget_tokens": {
                 "type": "integer",
                 "minimum": 200,
@@ -105,7 +110,9 @@ _BASE: dict[str, dict[str, Any]] = {
         "search_tables",
         "Ranked tables matching a text query, each with a one-line description.",
         {
-            "query": _string("words to search table names, comments and descriptions for"),
+            "query": _string(
+                "words to search table names, comments and descriptions for", MAX_TEXT
+            ),
             "k": {
                 "type": "integer",
                 "minimum": 1,
@@ -140,7 +147,7 @@ _BASE: dict[str, dict[str, Any]] = {
     "explain_term": _spec(
         "explain_term",
         "What a business term or metric means and which tables it maps to.",
-        {"term": _string("the business term or metric name")},
+        {"term": _string("the business term or metric name", MAX_TEXT)},
         ["term"],
     ),
 }
@@ -162,6 +169,8 @@ def check_spec(guru: ToolHost) -> dict[str, Any] | None:
     for prop in schema["properties"].values():
         if isinstance(prop, dict):
             prop.setdefault("description", "FactLang claim text")
+            if prop.get("type") == "string":
+                prop.setdefault("maxLength", MAX_TEXT)
     return {
         "name": "check_fact",
         "description": f"{fl['description']} {CHECK_PREAMBLE}".strip(),
@@ -179,4 +188,4 @@ def tool_definitions(guru: ToolHost) -> list[dict[str, Any]]:
     return out
 
 
-__all__ = ["TOOL_NAMES", "ToolHost", "check_spec", "tool_definitions"]
+__all__ = ["MAX_NAME", "MAX_TEXT", "TOOL_NAMES", "ToolHost", "check_spec", "tool_definitions"]

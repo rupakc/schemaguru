@@ -34,6 +34,26 @@ def _sdk() -> tuple[Any, Any]:
     return types, lowlevel
 
 
+def resource_ref(uri: str) -> str | None:
+    """The table ref of a ``schema://tables/{ref}`` URI (query and fragment dropped), or None."""
+    if not uri.startswith(RESOURCE_PREFIX):
+        return None
+    ref = uri[len(RESOURCE_PREFIX) :].split("#", 1)[0].split("?", 1)[0]
+    ref = unquote(ref).strip()
+    return ref or None
+
+
+def _not_found(uri: str, message: str, error: Any = None) -> Exception:
+    """The SDK's resource-not-found error (INVALID_PARAMS with the URI, as ``MCPServer`` does)."""
+    exceptions = importlib.import_module("mcp.shared.exceptions")
+    jsonrpc = importlib.import_module("mcp_types.jsonrpc")
+    data: dict[str, Any] = {"uri": uri}
+    if error is not None:
+        data["error"] = error
+    err: Exception = exceptions.MCPError(code=jsonrpc.INVALID_PARAMS, message=message, data=data)
+    return err
+
+
 def build_server(guru: ToolHost, *, name: str = "schemaguru") -> Any:
     """An ``mcp.server.lowlevel.Server`` exposing the tools and table resources of ``guru``."""
     types, lowlevel = _sdk()
@@ -80,14 +100,13 @@ def build_server(guru: ToolHost, *, name: str = "schemaguru") -> Any:
 
     async def read_resource(ctx: Any, params: Any) -> Any:
         uri = str(params.uri)
-        if uri.startswith(RESOURCE_PREFIX):
-            ref = unquote(uri[len(RESOURCE_PREFIX) :])
-            result = await asyncio.to_thread(
-                handle_tool_call, guru, "describe_table", {"table": ref}
-            )
-            text = result["text"]
-        else:
-            text = f"SG803 unknown resource (expected {RESOURCE_TEMPLATE})"
+        ref = resource_ref(uri)
+        if ref is None:
+            raise _not_found(uri, f"SG803 unknown resource (expected {RESOURCE_TEMPLATE})")
+        result = await asyncio.to_thread(handle_tool_call, guru, "describe_table", {"table": ref})
+        if "error" in result:
+            raise _not_found(uri, str(result["text"]), result["error"])
+        text = str(result["text"])
         contents = types.TextResourceContents(uri=uri, mime_type="text/plain", text=text)
         return types.ReadResourceResult(contents=[contents])
 
@@ -116,4 +135,4 @@ def serve(guru: ToolHost, *, name: str = "schemaguru") -> None:
     asyncio.run(serve_async(guru, name=name))
 
 
-__all__ = ["RESOURCE_TEMPLATE", "build_server", "serve", "serve_async"]
+__all__ = ["RESOURCE_TEMPLATE", "build_server", "resource_ref", "serve", "serve_async"]

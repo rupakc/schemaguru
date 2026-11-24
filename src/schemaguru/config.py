@@ -107,9 +107,11 @@ class Config:
     llm_model: str = "claude-sonnet-5-5"
     # token counter for view budgets: chars/4 heuristic, or tiktoken (extra ``tiktoken``)
     token_counter: Literal["chars", "tiktoken"] = "chars"
-    # the agent tool ``check_fact`` runs claims on the warehouse (spend, under the budget);
-    # "deny" removes the tool and refuses calls to it
-    agent_checks: Literal["allow", "deny"] = "allow"
+    # the agent tool ``check_fact`` runs claims on the warehouse. "deny" (default, spec 8.2: an
+    # agent question never spends by itself) removes the tool and refuses calls; "allow"
+    # admits each check through the Guru's one per-period budget guard, shared with the
+    # background drainer
+    agent_checks: Literal["allow", "deny"] = "deny"
 
     def __post_init__(self) -> None:
         _check("agent_checks", self.agent_checks, ("allow", "deny"))

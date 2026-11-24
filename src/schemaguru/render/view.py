@@ -27,6 +27,8 @@ from schemaguru.model.detail import DetailLevel
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
 from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays.schema import GLOBAL_SUBJECT
+from schemaguru.pii.mask import mask_free_text
+from schemaguru.pii.policy import ValuePolicy
 from schemaguru.render import formats
 from schemaguru.render.fragments import render_join_snippet
 from schemaguru.render.knowledge import TableKnowledge, collect
@@ -34,7 +36,9 @@ from schemaguru.render.legend import LEGEND, WARN, needs_legend
 from schemaguru.render.profiles import Profile, get_profile
 from schemaguru.render.table_block import (
     analyse,
+    outbound,
     pitfall_text,
+    predicate_text,
     qname,
     render_path,
     severity,
@@ -177,6 +181,9 @@ class ViewRenderer:
         self._joins: list[Fact] | None = None
         self._globals: list[ViewBlock] | None = None
         self._glossary: list[Fact] | None = None
+        self._global_masked = 0
+        self._gloss_masked = 0
+        self._last_hits = 0
         self._scans: dict[tuple[ObjectRef, ...], tuple[dict[str, list[str]], list[Path]]] = {}
 
     # ----- per table ---------------------------------------------------------------------
@@ -212,13 +219,14 @@ class ViewRenderer:
         if self._globals is not None:
             return self._globals
         out: list[ViewBlock] = []
+        self._global_masked = 0
         pitfalls = _preferred(self.store.facts_for([GLOBAL_SUBJECT], ["PITFALL"]))
         if pitfalls:
             items = sorted(pitfalls, key=lambda f: (severity(f) != "critical", pitfall_text(f)))
             lines = ["Global pitfalls:"]
             for f in items:
                 sev = " (critical)" if severity(f) == "critical" else ""
-                lines.append(f"  {WARN} Pitfall{sev}: {pitfall_text(f)}")
+                lines.append(f"  {WARN} Pitfall{sev}: {pitfall_text(f, self._free_global)}")
             out.append(ViewBlock(True, "\n".join(lines), "global_pitfalls", "Global pitfalls"))
         never = self.store.facts_for(None, ["NEVER_QUERY"])
         if never:
@@ -228,11 +236,32 @@ class ViewRenderer:
                 p = eff[key].primary
                 if p is None or not isinstance(p.subject, ObjectRef):
                     continue
-                reason = p.value.get("reason") or "no reason given"
+                table = p.subject.table_ref()
+                reason = self._free(str(p.value.get("reason") or "no reason given"), table)
+                self._global_masked += self._last_hits
                 lines.append(f"  {WARN} {qname(p.subject.table_ref())} — {reason}{tag(p)}")
             if len(lines) > 1:
                 out.append(ViewBlock(True, "\n".join(lines), "never_query", "Never query"))
         self._globals = out
+        return out
+
+    def _mode(self, table: ObjectRef | None = None) -> str:
+        """The value policy of ``table``, or the default for text not tied to one table."""
+        if table is None:
+            return str(self.cfg.sampling.llm_values)
+        return str(ValuePolicy.for_table(table, self.cfg.sampling))
+
+    def _free(self, text: str, table: ObjectRef | None = None) -> str:
+        """Free text masked under the policy (shapes and embedded names, never identifiers)."""
+        self._last_hits = 0
+        if self._mode(table) == "raw":
+            return text
+        masked, self._last_hits = mask_free_text(text)
+        return masked
+
+    def _free_global(self, text: str) -> str:
+        out = self._free(text)
+        self._global_masked += self._last_hits
         return out
 
     def table_budget(
@@ -268,6 +297,7 @@ class ViewRenderer:
             if isinstance(term, str) and term.strip():
                 by_term.setdefault(term.strip().casefold(), []).append(f)
         out: list[str] = []
+        self._gloss_masked = 0
         for key in sorted(by_term):
             chosen = sorted(_preferred(by_term[key]), key=lambda f: f.id)
             if not chosen:
@@ -279,7 +309,11 @@ class ViewRenderer:
             term = f.value.get("term") or f.value.get("name")
             kind = "metric " if f.kind.name == "METRIC" else ""
             targets = ", ".join(qname(r) for r in maps)
-            out.append(f"  {kind}{term}: {f.value.get('definition')} [tables: {targets}]{tag(f)}")
+            term_t = self._free(str(term))
+            hits = self._last_hits
+            definition = self._free(str(f.value.get("definition")))
+            self._gloss_masked += hits + self._last_hits
+            out.append(f"  {kind}{term_t}: {definition} [tables: {targets}]{tag(f)}")
         return out
 
     def _scan(self, shown: Sequence[ObjectRef]) -> tuple[dict[str, list[str]], list[Path]]:
@@ -334,7 +368,7 @@ class ViewRenderer:
                 for t in sorted(set(p.tables), key=lambda r: r.canonical()):
                     pred, why = self._live_filter(t)
                     if pred is not None:
-                        soft[t] = pred
+                        soft[t], _ = predicate_text(pred, self._mode(t))
                     elif why is not None:
                         omitted.append(f"-- live-rows filter for {qname(t)} {why}, omitted")
                 snippet = render_join_snippet(p, self.dialect, soft, bag=bag)
@@ -433,6 +467,24 @@ class ViewRenderer:
                 break
             routes.append(route)
         blocks = assemble(gloss, routes)
+        # the last step (spec 11): one shape sweep over every block that leaves
+        masked = self._global_masked + self._gloss_masked
+        masked += sum(analyse(self.knowledge(r)).masked for r in refs)
+        if self._mode() != "raw":
+            swept: list[ViewBlock] = []
+            for b in blocks:
+                text, hits = outbound(b.text, "masked")
+                masked += hits
+                swept.append(b if hits == 0 else replace(b, text=text))
+            blocks = swept
+        if masked:
+            bag.add(
+                Diagnostic(
+                    "SG505",
+                    Severity.INFO,
+                    f"value policy: {masked} value(s) or text span(s) masked in this view",
+                )
+            )
         if not fits(blocks):
             fixed = [b for b in blocks if b.kind not in ("table", "tables", "join_paths")]
             hz = counter.count("\n".join([_PATHS_HEADER, *hazards])) if hazards else 0

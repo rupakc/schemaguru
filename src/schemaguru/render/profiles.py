@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from schemaguru.model.detail import DetailLevel
+from schemaguru.pii.policy import ValuePolicy
 from schemaguru.render.knowledge import TableKnowledge
 from schemaguru.render.legend import WARN
 from schemaguru.render.table_block import (
@@ -21,6 +22,7 @@ from schemaguru.render.table_block import (
     analyse,
     ident,
     name_only,
+    outbound,
     render_agent,
     shown_columns,
     warning_lines,
@@ -31,13 +33,21 @@ class Profile(Protocol):
     def render_table(self, eff: TableKnowledge, level: DetailLevel) -> str: ...
 
 
+def finish(eff: TableKnowledge, text: str) -> str:
+    """The last step of every built-in profile: the outbound shape sweep (spec 11)."""
+    return outbound(text, ValuePolicy.for_table(eff.ref, eff.config.sampling))[0]
+
+
 class AgentProfile:
     def render_table(self, eff: TableKnowledge, level: DetailLevel) -> str:
-        return render_agent(eff, level)
+        return finish(eff, render_agent(eff, level))
 
 
 class PlannerProfile:
     def render_table(self, eff: TableKnowledge, level: DetailLevel) -> str:
+        return finish(eff, self._render(eff, level))
+
+    def _render(self, eff: TableKnowledge, level: DetailLevel) -> str:
         a = analyse(eff)
         if level is DetailLevel.NAME_ONLY:
             return name_only(a)
@@ -57,6 +67,9 @@ class PlannerProfile:
 
 class VerifierProfile:
     def render_table(self, eff: TableKnowledge, level: DetailLevel) -> str:
+        return finish(eff, self._render(eff, level))
+
+    def _render(self, eff: TableKnowledge, level: DetailLevel) -> str:
         a = analyse(eff)
         lines = [f"TABLE {a.title}"]
         if a.never_query is not None:
@@ -86,6 +99,9 @@ class RouterProfile:
     show_paths = False
 
     def render_table(self, eff: TableKnowledge, level: DetailLevel) -> str:
+        return finish(eff, self._render(eff, level))
+
+    def _render(self, eff: TableKnowledge, level: DetailLevel) -> str:
         a = analyse(eff)
         head = a.title
         if a.never_query is not None:

@@ -144,3 +144,12 @@ a VERIFIED, or HUMAN/DECLARED uncontradicted, live-rows filter goes into a join 
 else is listed as `-- ... omitted`. Path headers say "support" (weakest directional hop); column
 lines keep "match" and "coverage". Hub hazard lines are never budgeted away and
 `table_budget(..., tables=candidates)` reserves them. Rates never print 100%/0% unless exact.
+
+## 2026-11-24 - Rendering: outbound sweep and free-text masking (Task 14 fix round 2)
+Why: personal data reached views through free text (reasons, predicates, descriptions,
+pitfalls, glossary, never-query reasons) and through partly masked values of PII columns.
+How to apply: on a PII-tagged column a rendered value is one whole shape token or `<masked>`.
+Free-text fields go through `pii.mask_free_text` (never identifiers); SQL predicates through
+`pii.sweep` (`none`: every quoted literal becomes `?`, in snippets too, and in probe reasons).
+Every built-in profile and every view ends with a `pii.sweep` over its final text unless the
+policy is `raw`. The count of masked items is an `SG505` info diagnostic, never in the text.

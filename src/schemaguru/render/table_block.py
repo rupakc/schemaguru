@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
@@ -30,8 +30,9 @@ from schemaguru.model.facts import Fact, Provenance, Status, method_class
 from schemaguru.model.joins import JoinRef, join_verdict
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column
-from schemaguru.pii.mask import mask_value
+from schemaguru.pii.mask import mask_free_text, mask_value
 from schemaguru.pii.policy import ValuePolicy
+from schemaguru.pii.sweep import sweep
 from schemaguru.render.knowledge import TableKnowledge
 from schemaguru.render.legend import WARN
 
@@ -43,6 +44,9 @@ _P, _S = Provenance, Status
 _UNUSABLE = (_S.ERROR, _S.UNMEASURABLE)
 _CASE_DRIFT = " differ only in case — compare case-insensitively"
 _HIDDEN = "(values hidden by policy)"
+# A whole masking token (``<email>``, ``<hex32>``, ``<free_text len=40>``, ``<masked>``).
+TOKEN = re.compile(r"<[a-z_]+(?:\d+| len=\d+)?>\Z")
+_LITERAL = re.compile(r"'(?:[^']|'')*'")
 
 # ----- numbers and words ---------------------------------------------------------------
 
@@ -84,6 +88,10 @@ def pct(rate: float | Decimal, *, floor: bool = False) -> str:
     (``>99.99%``), and one that is not exactly 0 never prints ``0%`` (``<0.01%``).
     """
     r = float(rate)
+    if 0 < r < 0.0001:
+        return "<0.01%"
+    if 0.9999 < r < 1:
+        return ">99.99%"
     text = sig4(r * 100, floor=floor)
     if text == "100" and r < 1:
         return ">99.99%"
@@ -94,6 +102,10 @@ def pct(rate: float | Decimal, *, floor: bool = False) -> str:
 
 def count(n: int) -> str:
     return f"{n:,}"
+
+
+def rows(n: int) -> str:
+    return f"{count(n)} row" + ("" if n == 1 else "s")
 
 
 def day(dt: datetime | None) -> str | None:
@@ -383,9 +395,28 @@ def severity(f: Fact) -> str:
     return "critical" if f.value.get("severity") == "critical" else "warn"
 
 
-def pitfall_text(f: Fact) -> str:
+def pitfall_text(f: Fact, free: Callable[[str], str] | None = None) -> str:
+    """``rule — fix: fix``; ``free`` masks the prose (the value policy's free-text pass)."""
+    clean = free or (lambda x: x)
     fix = f.value.get("fix")
-    return f"{f.value.get('rule')}" + (f" — fix: {fix}" if fix else "") + tag(f)
+    text = clean(str(f.value.get("rule"))) + (f" — fix: {clean(str(fix))}" if fix else "")
+    return text + tag(f)
+
+
+def predicate_text(text: str, mode: str) -> tuple[str, int]:
+    """SQL text under the value policy: ``none`` replaces every string literal with ``?``;
+    ``masked`` sweeps shapes inside it (never name-masks identifiers); ``raw`` keeps it."""
+    if mode == "raw":
+        return text, 0
+    if mode == "none":
+        found = len(_LITERAL.findall(text))
+        return _LITERAL.sub("?", text), found
+    return sweep(text)
+
+
+def outbound(text: str, mode: str) -> tuple[str, int]:
+    """The last step before text leaves (spec 11): a shape sweep unless values are raw."""
+    return (text, 0) if mode == "raw" else sweep(text)
 
 
 # ----- analysis ------------------------------------------------------------------------------
@@ -417,6 +448,8 @@ class Analysis:
     columns: list[ColumnView] = field(default_factory=list)
     keyed: list[tuple[int, str]] = field(default_factory=list)
     provenance: str = ""
+    mode: str = "masked"
+    masked: int = 0  # values and free-text hits masked while rendering (counted, never shown)
 
     def pitfall_lines(self) -> list[str]:
         return [
@@ -457,6 +490,7 @@ class _Analyser:
         self.used: list[Fact] = []
         self.markers: set[str] = set()
         self.mode = ValuePolicy.for_table(k.ref, self.cfg.sampling)
+        self.a.mode = self.mode
         # any PII classification (measured shape, drafted or human) masks the whole column
         self.pii_cols = {
             name
@@ -467,6 +501,28 @@ class _Analyser:
         }
 
     # -- helpers
+    def free(self, text: str) -> str:
+        """Free text (descriptions, pitfalls, reasons, notes) masked unless values are raw."""
+        if self.mode == "raw":
+            return text
+        masked, hits = mask_free_text(text)
+        self.a.masked += hits
+        return masked
+
+    def reason(self, f: Fact) -> str:
+        """A probe's reason; it may quote a value, so ``none`` replaces quoted literals too."""
+        text = self.free(_reason(f))
+        if self.mode == "none":
+            self.a.masked += len(_LITERAL.findall(text))
+            text = _LITERAL.sub("?", text)
+        return text
+
+    def pred(self, text: str) -> str:
+        """A live-rows predicate: SQL, so identifiers stay; ``none`` hides its literals."""
+        out, hits = predicate_text(text, self.mode)
+        self.a.masked += hits
+        return out
+
     def label(self, eff: Effective) -> str:
         word = _KIND_WORDS.get(eff.kind.name, eff.kind.name.lower().replace("_", " "))
         subj = eff.subject
@@ -518,18 +574,18 @@ class _Analyser:
             text = p.value.get("text")
             if p.status is _S.ERROR:
                 self.warn(
-                    f"description {'draft ' if is_draft(p) else ''}failed: {_reason(p)}{tag(p)}"
+                    f"description {'draft ' if is_draft(p) else ''}failed: {self.reason(p)}{tag(p)}"
                 )
             elif isinstance(text, str) and text.strip():
-                a.description = text.strip() + tag(p)
+                a.description = self.free(text.strip()) + tag(p)
                 self.used.append(p)
         if a.description is None and k.table is not None and k.table.comment:
-            a.description = k.table.comment.strip()
+            a.description = self.free(k.table.comment.strip())
         nq = k.get("NEVER_QUERY")
         if nq is not None and nq.primary is not None and nq.primary.status is not _S.ERROR:
-            a.never_query = str(nq.primary.value.get("reason") or "no reason given") + tag(
-                nq.primary
-            )
+            a.never_query = self.free(
+                str(nq.primary.value.get("reason") or "no reason given")
+            ) + tag(nq.primary)
             self.used.append(nq.primary)
         pf = k.get("PITFALL")
         if pf is not None and pf.primary is not None:
@@ -539,14 +595,14 @@ class _Analyser:
                 key=lambda f: (f.value.get("severity") != "critical", str(f.value.get("rule")))
             )
             for f in items:
-                a.pitfalls.append((severity(f), pitfall_text(f)))
+                a.pitfalls.append((severity(f), pitfall_text(f, self.free)))
                 self.used.append(f)
         uc = k.get("USE_CASES")
         if uc is not None and uc.primary is not None and uc.primary.status is not _S.ERROR:
             qs = uc.primary.value.get("questions")
             if isinstance(qs, list) and qs:
                 label = "Answers (draft)" if is_draft(uc.primary) else "Answers"
-                a.answers = f"{label}: " + "; ".join(str(q) for q in qs)
+                a.answers = f"{label}: " + "; ".join(self.free(str(q)) for q in qs)
                 self.used.append(uc.primary)
 
     def soft_delete(self) -> None:
@@ -560,15 +616,15 @@ class _Analyser:
         self.used.append(f)
         if f.status in (_S.CONTRADICTED, _S.WAIVED):
             self.warn(
-                f"{_waived(eff)}live-rows filter {_wrap(pred)} failed its check "
+                f"{_waived(eff)}live-rows filter {_wrap(self.pred(pred))} failed its check "
                 f"({phrase(f)}, {day(f.observed_at)}){tag(f)}"
             )
-            self.keyed(None, LITE_UP, f"SOFT_DELETE {_wrap(pred)} contradicted")
+            self.keyed(None, LITE_UP, f"SOFT_DELETE {_wrap(self.pred(pred))} contradicted")
             return
         how = phrase(f)
-        text = f"live rows: {_wrap(pred)} ({how})"
+        text = f"live rows: {_wrap(self.pred(pred))} ({how})"
         self.a.live_rows = text
-        self.keyed(None, LITE_UP, f"SOFT_DELETE {_wrap(pred)} {how}")
+        self.keyed(None, LITE_UP, f"SOFT_DELETE {_wrap(self.pred(pred))} {how.replace(', ', ' ')}")
         markers = f.value.get("marker_columns")
         names = [str(m) for m in markers] if isinstance(markers, list) else []
         present = [n for n in names if n in self.cols]
@@ -595,12 +651,12 @@ class _Analyser:
                 present.add(item["value"])
                 seen.append(
                     self.shown(name, item["value"])
-                    + (f" ({count(n)} rows)" if isinstance(n, int) else "")
+                    + (f" ({rows(n)})" if isinstance(n, int) else "")
                 )
-        rows, non_null = nulls.value.get("rows"), nulls.value.get("non_null")
+        rows_n, non_null = nulls.value.get("rows"), nulls.value.get("non_null")
         rate = nulls.value.get("rate")
-        if isinstance(rows, int) and isinstance(non_null, int) and rows > non_null:
-            seen.append(f"NULL ({count(rows - non_null)} rows)")
+        if isinstance(rows_n, int) and isinstance(non_null, int) and rows_n > non_null:
+            seen.append(f"NULL ({rows(rows_n - non_null)})")
         elif isinstance(rate, (int, float)) and rate > 0:
             seen.append("NULL")
         never = [self.shown(name, b) for b in (True, False) if b not in present]
@@ -673,16 +729,16 @@ class _Analyser:
         k = self.k
         eff = k.get("ROW_COUNT")
         p = eff.primary if eff is not None else None
-        rows = None if p is None else p.value.get("rows")
-        if p is not None and isinstance(rows, int) and p.status is not _S.ERROR:
-            self.a.rows = f"{count(rows)} rows ({phrase(p)})"
-            self.keyed(None, STANDARD_UP, f"ROWS {rows} {phrase(p)}")
+        n = None if p is None else p.value.get("rows")
+        if p is not None and isinstance(n, int) and p.status is not _S.ERROR:
+            self.a.rows = f"{rows(n)} ({phrase(p)})"
+            self.keyed(None, STANDARD_UP, f"ROWS {n} {phrase(p)}")
             self.used.append(p)
         elif (u := _unmeasurable(eff)) is not None:
-            self.a.rows = f"rows: unmeasurable ({_reason(u)})"
+            self.a.rows = f"rows: unmeasurable ({self.reason(u)})"
             self.keyed(None, STANDARD_UP, "ROWS unmeasurable")
         elif k.table is not None and k.table.row_count is not None:
-            self.a.rows = f"{count(k.table.row_count)} rows (catalog stats)"
+            self.a.rows = f"{rows(k.table.row_count)} (catalog stats)"
             self.keyed(None, STANDARD_UP, f"ROWS {k.table.row_count} catalog stats")
         fr = k.get("FRESHNESS")
         if fr is None:
@@ -796,7 +852,7 @@ class _Analyser:
                 return
             u = _unmeasurable(eff)
             if u is not None:
-                how = f"unmeasurable: {_reason(u)}"
+                how = f"unmeasurable: {self.reason(u)}"
             elif p.provenance is _P.DRAFTED:
                 how = "draft candidate, not measured"
             else:
@@ -885,12 +941,12 @@ class _Analyser:
             p = d.primary
             if p.status is _S.ERROR:
                 draft = "draft " if is_draft(p) else ""
-                self.warn(f"{ident(name)} description {draft}failed: {_reason(p)}{tag(p)}")
+                self.warn(f"{ident(name)} description {draft}failed: {self.reason(p)}{tag(p)}")
             elif isinstance(p.value.get("text"), str):
-                self.note(name, FULL_ONLY, str(p.value["text"]).strip() + tag(p))
+                self.note(name, FULL_ONLY, self.free(str(p.value["text"]).strip()) + tag(p))
                 self.used.append(p)
         elif col.comment:
-            self.note(name, FULL_ONLY, col.comment.strip())
+            self.note(name, FULL_ONLY, self.free(col.comment.strip()))
 
     def values(self, name: str) -> None:
         """Declared and observed values, through the value policy (spec 11).
@@ -914,11 +970,11 @@ class _Analyser:
                 f"values: {len(raw_declared)} declared {_HIDDEN}" if hidden else f"values: {shown}"
             )
             if extras and hidden:
-                rows = sum(n for _, n, _ in extras if n is not None)
+                n_rows = sum(n for _, n, _ in extras if n is not None)
                 text += f" (+ {len(extras)} more observed)"
                 self.warn(
                     f"{_waived(eff)}{q}: {len(raw_declared)} declared values — observed also "
-                    f"{len(extras)} undeclared value(s) ({count(rows)} rows) {_HIDDEN}"
+                    f"{len(extras)} undeclared value(s) ({rows(n_rows)}) {_HIDDEN}"
                 )
             elif extras:
                 text += (
@@ -928,7 +984,7 @@ class _Analyser:
                 )
                 rendered = [
                     self.shown(name, v)
-                    + (f" ({count(n)} rows)" if n is not None else "")
+                    + (f" ({rows(n)})" if n is not None else "")
                     + ("" if ex else " (seen in sample)")
                     for v, n, ex in extras
                 ]
@@ -1019,15 +1075,22 @@ class _Analyser:
         if value is None:
             return "NULL"
         if self.mode == "none":
+            self.a.masked += 1
             return "<hidden>"
         if self.mode == "raw":
             return quote(value)
+        if isinstance(value, str) and TOKEN.match(value):
+            return value  # masked at storage already
         masked, category = mask_value(value)
-        if column in self.pii_cols and category is None:
-            return "<masked>"
+        whole = bool(TOKEN.match(masked))
+        if column in self.pii_cols:
+            # a personal column shows a whole shape token or nothing: a partial hit
+            # ("Zebulon Quartzfeld <email>") would still leak the rest of the value
+            self.a.masked += 1
+            return masked if category is not None and whole else "<masked>"
         if category is None:
             return quote(value)
-        whole = masked.startswith("<") and masked.endswith(">") and " " not in masked
+        self.a.masked += 1
         return masked if whole else quote(masked)
 
     def pair(self, column: str, values: Sequence[str]) -> str:
@@ -1101,7 +1164,7 @@ class _Analyser:
         q = ident(name)
         m = pick_measured(eff)
         if m is not None:
-            means, rate = m.value.get("means"), m.value.get("rate")
+            means, rate = self.free(str(m.value.get("means"))), m.value.get("rate")
             est = m.value.get("estimate")
             self.used.append(m)
             if m.status is _S.ESTIMATED and isinstance(est, Mapping):
@@ -1128,15 +1191,16 @@ class _Analyser:
         for f in eff.all:
             if f.provenance is _P.MEASURED or f.status is _S.ERROR:
                 continue
-            means, stored = f.value.get("means"), f.value.get("stored_as")
+            raw_means, stored = f.value.get("means"), f.value.get("stored_as")
+            note = None if raw_means is None else self.free(str(raw_means))
             if f.provenance is _P.DRAFTED and stored:
                 how = "" if is_draft(f) else f" ({phrase(f)})"
-                self.warn(f"{q}: stored as {stored}, holds {means}{how}{tag(f)}")
+                self.warn(f"{q}: stored as {stored}, holds {note}{how}{tag(f)}")
                 self.used.append(f)
-            elif means:
+            elif note:
                 stored_t = f", stored as {stored}" if stored else ""
-                self.note(name, STANDARD_UP, f"note: {means}{stored_t} ({phrase(f)})")
-                self.keyed(name, STANDARD_UP, f"NOTE {q} {means}")
+                self.note(name, STANDARD_UP, f"note: {note}{stored_t} ({phrase(f)})")
+                self.keyed(name, STANDARD_UP, f"NOTE {q} {note}")
                 self.used.append(f)
 
     def failures_and_contradictions(self) -> None:
@@ -1151,7 +1215,9 @@ class _Analyser:
             for f in eff.all:
                 failed = f.status is _S.ERROR and f.provenance is _P.MEASURED
                 if failed and (good is None or _when_key(f) > _when_key(good)):
-                    self.warn(f"{label}: measurement failed ({_reason(f)}, {day(f.observed_at)})")
+                    self.warn(
+                        f"{label}: measurement failed ({self.reason(f)}, {day(f.observed_at)})"
+                    )
             p = eff.primary
             if (
                 p is not None
@@ -1159,7 +1225,9 @@ class _Analyser:
                 and p.provenance is not _P.MEASURED
                 and eff.kind.name != "DESCRIPTION"
             ):
-                self.warn(f"{label} {'draft ' if is_draft(p) else ''}failed: {_reason(p)}{tag(p)}")
+                self.warn(
+                    f"{label} {'draft ' if is_draft(p) else ''}failed: {self.reason(p)}{tag(p)}"
+                )
             for f in eff.all:
                 if f.status not in (_S.CONTRADICTED, _S.WAIVED) or eff.kind.name == "SOFT_DELETE":
                     continue

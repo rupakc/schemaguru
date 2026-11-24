@@ -527,3 +527,13 @@ def test_human_and_declared_expectations_say_unchecked(store: SQLiteStore) -> No
     sessions = block(store, "sessions")
     assert "note: UTC start (human, unchecked)" in sessions
     assert "(human)" not in sessions
+
+
+def test_one_row_is_singular_and_tiny_rates_are_bounded() -> None:
+    from schemaguru.render.table_block import rows
+
+    assert rows(1) == "1 row" and rows(0) == "0 rows" and rows(9700) == "9,700 rows"
+    assert pct(1e-7) == "<0.01%"
+    assert pct(0.00005) == "<0.01%"
+    assert pct(0.0001) == "0.01%"
+    assert pct(0.99995) == ">99.99%"

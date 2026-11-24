@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import difflib
 from collections.abc import Iterable, Sequence
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -553,7 +553,12 @@ class _FileLoader:
                 severity=Severity.WARNING,
             )
             return
-        self.waivers.append(Waiver(pattern, reason, expires))
+        try:
+            self.waivers.append(Waiver(pattern, reason, expires))
+        except ValueError as e:
+            self.diag(
+                "SG208", f"waivers: {e}", m["fact"], hint='e.g. fact: "VALUES shop.orders.status"'
+            )
 
     def parse_date(self, node: yaml.Node) -> date | None:
         v = self.scalar(node) if isinstance(node, yaml.ScalarNode) else None
@@ -588,7 +593,7 @@ def load_overlays(
     Never raises on data. ``today`` (default: the current UTC date) decides waiver expiry.
     """
     bag = DiagnosticBag()
-    now = today or datetime.now().astimezone().date()
+    now = today or datetime.now(timezone.utc).date()
     facts: list[Fact] = []
     chains: list[Chain] = []
     waypoints: list[WaypointSpec] = []

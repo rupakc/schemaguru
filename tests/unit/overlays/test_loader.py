@@ -152,14 +152,20 @@ def test_chain_filter_and_note_steps(store: SQLiteStore, tmp_path: Path) -> None
 def test_waivers(store: SQLiteStore, tmp_path: Path) -> None:
     text = (
         "version: 1\nwaivers:\n"
-        "  - {fact: a, reason: r}\n"
-        "  - {fact: b, reason: r, expires: 2026-01-01}\n"
-        "  - {fact: c, reason: r, expires: 2026-11-24}\n"
-        "  - {fact: d, reason: r, expires: soon}\n"
+        "  - {fact: VALUES shop.a, reason: r}\n"
+        "  - {fact: VALUES shop.b, reason: r, expires: 2026-01-01}\n"
+        "  - {fact: VALUES shop.c, reason: r, expires: 2026-11-24}\n"
+        "  - {fact: VALUES shop.d, reason: r, expires: soon}\n"
     )
     *_, waivers, bag = load(store, tmp_path, text)
-    assert [w.fact_pattern for w in waivers] == ["c"]
+    assert [w.fact_pattern for w in waivers] == ["VALUES shop.c"]
     assert codes(bag) == ["SG206", "SG207", "SG206"]
+    *_, bag = load(
+        store,
+        tmp_path,
+        "version: 1\nwaivers:\n  - {fact: nospace, reason: r, expires: 2030-01-01}\n",
+    )
+    assert codes(bag) == ["SG208"]
 
 
 def test_waypoint_node_and_forbid(store: SQLiteStore, tmp_path: Path) -> None:

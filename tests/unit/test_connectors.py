@@ -285,3 +285,108 @@ def test_inline_final_sql_goes_through_the_read_only_guard(template: str) -> Non
     with pytest.raises(ExecutionError, match="SG104"):
         conn.execute(_probe(template, "duckdb", v="ok"), timeout_s=None)
     assert got == []
+
+
+# --- round 3: subclasses whose __str__ lies -------------------------------------------------
+
+
+class LyingStr(str):
+    def __str__(self) -> str:
+        return "x\\' OR 1=1 OR \\'"
+
+
+class LyingInt(int):
+    def __str__(self) -> str:
+        return "1 OR 1=1"
+
+    def __repr__(self) -> str:
+        return "1 OR 1=1"
+
+
+class LyingFloat(float):
+    def __repr__(self) -> str:
+        return "1 OR 1=1"
+
+
+class LyingDecimal(__import__("decimal").Decimal):
+    def __str__(self) -> str:
+        return "1 OR 1=1"
+
+
+class LyingDate(__import__("datetime").date):
+    def isoformat(self) -> str:
+        return "2026-01-01' OR 1=1 OR '"
+
+
+class PlainStr(str):  # like numpy.str_: a subclass that keeps its content
+    pass
+
+
+def _raw_probe(value: object, family: str) -> Any:
+    from factlang.connectors.base import Arity
+    from factlang.semantics.filters import Param
+    from factlang.sql import RenderedProbe
+
+    p = (Param("v", value, family),)
+    return RenderedProbe("SELECT 1 AS x WHERE a = {{v}}", p, Arity.ROW_SET, None, "duckdb", "x")
+
+
+LIARS = [
+    (LyingStr("ok"), "string", "'ok'"),
+    (LyingInt(1), "integer", "1"),
+    (LyingFloat(1.5), "float", "1.5"),
+    (LyingDecimal("2.5"), "decimal", "2.5"),
+    (LyingDate(2026, 1, 2), "date", "DATE '2026-01-02'"),
+]
+
+
+def test_lying_subclasses_inject_without_normalising() -> None:
+    """Negative control: rendering the raw subclasses (what round 2 sent) lets OR 1=1 escape."""
+    from factlang.sql.probe import inline_template
+
+    from schemaguru.catalog.executor import _ansi
+
+    for value, family, _ in (LIARS[0], LIARS[1], LIARS[3]):
+        probe = _raw_probe(value, family)
+        assert _escapes(inline_template(probe.sql_template, probe.params, _ansi)), value
+
+
+@pytest.mark.parametrize("dialect", sorted({*sg.catalog.dialects(), "sqlite"}))
+@pytest.mark.parametrize(("value", "family", "literal"), LIARS)
+def test_subclasses_are_normalised_to_their_base_content(
+    dialect: str, value: object, family: str, literal: str
+) -> None:
+    got: list[str] = []
+    conn = InlineConnector(lambda sql: got.append(sql) or [], dialect)
+    probe = _raw_probe(value, family)
+    conn.execute(type(probe)(probe.sql_template, probe.params, probe.arity, None, dialect, "x"),
+                 timeout_s=None)  # fmt: skip
+    assert got == [f"SELECT 1 AS x WHERE a = {literal}"]  # the base content, never the lie
+    assert not _escapes(got[0])
+
+
+def test_plain_str_subclass_keeps_its_content() -> None:
+    got: list[str] = []
+    InlineConnector(lambda sql: got.append(sql) or [], "snowflake").execute(
+        _raw_probe(PlainStr("O'Brien"), "string"), timeout_s=None
+    )
+    assert got == ["SELECT 1 AS x WHERE a = 'O''Brien'"]
+
+
+def test_literal_recheck_catches_what_normalising_would_miss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Belt and braces: with normalising switched off, the per-literal re-check still refuses
+    the lying subclasses (SG109) before the host runs."""
+    from factlang.connectors.base import ExecutionError
+
+    from schemaguru.catalog import executor
+
+    monkeypatch.setattr(executor, "plain_scalar", lambda v: v)
+    got: list[str] = []
+    conn = InlineConnector(lambda sql: got.append(sql) or [], "snowflake")
+    for value, family in ((LyingStr("ok"), "string"), (LyingInt(1), "integer")):
+        with pytest.raises(ExecutionError, match="SG109"):
+            conn.execute(_raw_probe(value, family), timeout_s=None)
+    assert got == []
+    assert executor._LITERAL.fullmatch("'a''b'") and not executor._LITERAL.fullmatch("'a\\'b'")

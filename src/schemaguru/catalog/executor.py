@@ -15,7 +15,7 @@ import os
 import re
 import threading
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -453,6 +453,36 @@ def inline_problem(value: object) -> str | None:
     return None
 
 
+def plain_scalar(value: object) -> object:
+    """``value`` as its exact base type, converted by the BASE class's own methods, so a
+    subclass's ``__str__``/``__repr__``/``__index__`` overrides are never consulted.
+    ``TypeError`` for anything outside the inline whitelist."""
+    if value is None or type(value) is bool:
+        return value
+    if isinstance(value, str):
+        return str.__str__(value)
+    if isinstance(value, bool):  # pragma: no cover - bool cannot be subclassed
+        return bool(int.__index__(value))
+    if isinstance(value, int):
+        return int.__index__(value)
+    if isinstance(value, float):
+        return float.__float__(value)
+    if isinstance(value, Decimal):
+        return Decimal(Decimal.__str__(value))
+    if isinstance(value, datetime.datetime):
+        return datetime.datetime.fromisoformat(datetime.datetime.isoformat(value))
+    if isinstance(value, datetime.date):
+        return datetime.date.fromisoformat(datetime.date.isoformat(value))
+    raise TypeError(f"a {type(value).__name__} value cannot be inlined (scalars only)")
+
+
+# one inlined literal, nothing else: NULL, a boolean, a plain number, or a quoted text (with an
+# optional DATE/TIMESTAMP prefix) whose quotes are all doubled and which holds no backslash/NUL
+_LITERAL = re.compile(
+    r"NULL|TRUE|FALSE|-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|(?:(?:DATE|TIMESTAMP) )?'(?:[^'\\\x00]|'')*'"
+)
+
+
 def _ansi(text: str) -> str:
     """An ANSI string literal: quotes doubled (no backslash reaches here)."""
     return "'" + text.replace("'", "''") + "'"
@@ -496,15 +526,30 @@ class InlineConnector:
 
     def execute(self, probe: Any, *, timeout_s: float | None) -> Any:
         base = importlib.import_module("factlang.connectors.base")
+        render = importlib.import_module("factlang.sql.probe")
+
+        def refuse(why: str) -> Any:
+            return base.ExecutionError(
+                f"SG109: {why}; this host takes SQL text only (pass a DB-API connection or "
+                "an engine for bound parameters)",
+                code="FL700",
+            )
+
+        params = []
         for p in probe.params:
-            why = inline_problem(p.value)
+            try:  # the exact base type, read through the base class (a subclass cannot lie)
+                value = plain_scalar(p.value)
+            except TypeError as e:
+                raise refuse(str(e)) from None
+            why = inline_problem(value)
             if why is not None:
-                raise base.ExecutionError(
-                    f"SG109: {why}; this host takes SQL text only (pass a DB-API connection or "
-                    "an engine for bound parameters)",
-                    code="FL700",
-                )
-        sql = probe.inline(_ansi)
+                raise refuse(why)
+            params.append(replace(p, value=value))
+        for p in params:  # belt and braces: every rendered literal is one well-formed literal
+            lit = render.inline_template("{{" + p.name + "}}", (p,), _ansi)
+            if not _LITERAL.fullmatch(lit):
+                raise refuse(f"parameter {p.name!r} did not render as a single safe literal")
+        sql = render.inline_template(probe.sql_template, tuple(params), _ansi)
         try:
             check_metadata_sql(sql)  # read-only, one statement, no comment, on the final text
         except CatalogError as e:

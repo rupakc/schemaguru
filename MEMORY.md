@@ -66,3 +66,11 @@ Why: they cannot execute before FactLang ships the capabilities they call, so co
 would force fake coverage or a lowered gate.
 How to apply: `pyproject.toml` omits them (marked TODO); the 90% gate otherwise applies.
 Task 25 removes the omission together with the remaining factlang skips.
+
+## 2026-11-24 - Fact identity excludes everything measured
+Why: re-measuring a join, rate or count must update the same fact (same id), not mint a new one.
+How to apply: `KindSpec.identity_fields` is `None` (whole value; meaning/human kinds) or a tuple of
+payload keys (possibly empty). Built-ins: JOIN, NULL_RATE, ROW_COUNT, DISTINCT, FRESHNESS `()`;
+VALUES `("case_sensitive","split")`; TYPE_NOTE `("stored_as","means")`; PII `("category",)`;
+PRIMARY_KEY `("columns",)`; SOFT_DELETE `("predicate",)`. The id is `stable_hash([kind, subject,
+provenance, identity])` and is always computed, never supplied.

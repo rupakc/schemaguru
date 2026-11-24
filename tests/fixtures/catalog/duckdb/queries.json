@@ -1,0 +1,806 @@
+{
+ "dialect": "duckdb",
+ "queries": [
+  {
+   "params": [
+    "information_schema",
+    "pg_catalog"
+   ],
+   "rows": [
+    {
+     "comment": null,
+     "schema_name": "main"
+    },
+    {
+     "comment": null,
+     "schema_name": "ops"
+    },
+    {
+     "comment": null,
+     "schema_name": "shop"
+    }
+   ],
+   "sql": "select schema_name, comment from duckdb_schemas() where database_name = current_database() and schema_name not in (?, ?) order by schema_name"
+  },
+  {
+   "params": [
+    "main",
+    null,
+    null,
+    1001
+   ],
+   "rows": [],
+   "sql": "select table_name, kind, comment, estimated_size from ( select table_name, 'table' as kind, comment, estimated_size, schema_name, database_name from duckdb_tables() where not temporary union all select view_name, 'view', comment, null, schema_name, database_name from duckdb_views() where not internal and not temporary) t where database_name = current_database() and schema_name = ? and (cast(? as varchar) is null or table_name > ?) order by table_name limit ?"
+  },
+  {
+   "params": [
+    "ops",
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "comment": null,
+     "estimated_size": 0,
+     "kind": "table",
+     "table_name": "Order Notes"
+    }
+   ],
+   "sql": "select table_name, kind, comment, estimated_size from ( select table_name, 'table' as kind, comment, estimated_size, schema_name, database_name from duckdb_tables() where not temporary union all select view_name, 'view', comment, null, schema_name, database_name from duckdb_views() where not internal and not temporary) t where database_name = current_database() and schema_name = ? and (cast(? as varchar) is null or table_name > ?) order by table_name limit ?"
+  },
+  {
+   "params": [
+    "shop",
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "comment": null,
+     "estimated_size": 0,
+     "kind": "table",
+     "table_name": "Customer Tags"
+    },
+    {
+     "comment": null,
+     "estimated_size": 100,
+     "kind": "table",
+     "table_name": "accounts"
+    },
+    {
+     "comment": null,
+     "estimated_size": 100,
+     "kind": "table",
+     "table_name": "all_null_t"
+    },
+    {
+     "comment": null,
+     "estimated_size": 10000,
+     "kind": "table",
+     "table_name": "anon_enum_t"
+    },
+    {
+     "comment": null,
+     "estimated_size": 1000,
+     "kind": "table",
+     "table_name": "broken_child"
+    },
+    {
+     "comment": "people who buy",
+     "estimated_size": 1000,
+     "kind": "table",
+     "table_name": "customers"
+    },
+    {
+     "comment": null,
+     "estimated_size": 0,
+     "kind": "table",
+     "table_name": "empty_t"
+    },
+    {
+     "comment": null,
+     "estimated_size": 20000,
+     "kind": "table",
+     "table_name": "events"
+    },
+    {
+     "comment": null,
+     "estimated_size": 20000,
+     "kind": "table",
+     "table_name": "order_items"
+    },
+    {
+     "comment": null,
+     "estimated_size": 10000,
+     "kind": "table",
+     "table_name": "orders"
+    },
+    {
+     "comment": null,
+     "estimated_size": 500,
+     "kind": "table",
+     "table_name": "payments"
+    },
+    {
+     "comment": null,
+     "estimated_size": 200,
+     "kind": "table",
+     "table_name": "products"
+    },
+    {
+     "comment": null,
+     "estimated_size": 3000,
+     "kind": "table",
+     "table_name": "ref_child"
+    },
+    {
+     "comment": null,
+     "estimated_size": 1000,
+     "kind": "table",
+     "table_name": "ref_parent"
+    },
+    {
+     "comment": null,
+     "estimated_size": 5000,
+     "kind": "table",
+     "table_name": "sessions"
+    },
+    {
+     "comment": null,
+     "estimated_size": null,
+     "kind": "view",
+     "table_name": "v_open_orders"
+    }
+   ],
+   "sql": "select table_name, kind, comment, estimated_size from ( select table_name, 'table' as kind, comment, estimated_size, schema_name, database_name from duckdb_tables() where not temporary union all select view_name, 'view', comment, null, schema_name, database_name from duckdb_views() where not internal and not temporary) t where database_name = current_database() and schema_name = ? and (cast(? as varchar) is null or table_name > ?) order by table_name limit ?"
+  },
+  {
+   "params": [
+    "ops",
+    "Order Notes",
+    "shop",
+    "Customer Tags",
+    "shop",
+    "accounts",
+    "shop",
+    "all_null_t",
+    "shop",
+    "anon_enum_t",
+    "shop",
+    "broken_child",
+    "shop",
+    "customers",
+    "shop",
+    "empty_t",
+    "shop",
+    "events",
+    "shop",
+    "order_items",
+    "shop",
+    "orders",
+    "shop",
+    "payments",
+    "shop",
+    "products",
+    "shop",
+    "ref_child",
+    "shop",
+    "ref_parent",
+    "shop",
+    "sessions",
+    "shop",
+    "v_open_orders"
+   ],
+   "rows": [
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "note_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "ops",
+     "table_name": "Order Notes"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "body",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "ops",
+     "table_name": "Order Notes"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "tag_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "Customer Tags"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "customer_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "Customer Tags"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "account_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "accounts"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "name",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "accounts"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "all_null_t"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "c",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "all_null_t"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "anon_enum_t"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "kind",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "anon_enum_t"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "child_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "broken_child"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "parent_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "broken_child"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "customer_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "customers"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "email",
+     "comment": "login address",
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "customers"
+    },
+    {
+     "column_default": null,
+     "column_index": 3,
+     "column_name": "phone",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "customers"
+    },
+    {
+     "column_default": null,
+     "column_index": 4,
+     "column_name": "segment",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "customers"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "empty_t"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "v",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "empty_t"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "event_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "events"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "session_id",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "events"
+    },
+    {
+     "column_default": null,
+     "column_index": 3,
+     "column_name": "account_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "events"
+    },
+    {
+     "column_default": null,
+     "column_index": 4,
+     "column_name": "kind",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "events"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "order_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "order_items"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "line_no",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "order_items"
+    },
+    {
+     "column_default": null,
+     "column_index": 3,
+     "column_name": "product_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "order_items"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "order_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "orders"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "customer_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "orders"
+    },
+    {
+     "column_default": null,
+     "column_index": 3,
+     "column_name": "account_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "orders"
+    },
+    {
+     "column_default": null,
+     "column_index": 4,
+     "column_name": "status",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "orders"
+    },
+    {
+     "column_default": null,
+     "column_index": 5,
+     "column_name": "created_at",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "orders"
+    },
+    {
+     "column_default": null,
+     "column_index": 6,
+     "column_name": "deleted",
+     "comment": null,
+     "data_type": "BOOLEAN",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "orders"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "payment_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "payments"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "order_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "payments"
+    },
+    {
+     "column_default": null,
+     "column_index": 3,
+     "column_name": "amount",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "payments"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "product_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "products"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "name",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "products"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "child_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "ref_child"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "parent_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "ref_child"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "ref_parent"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "session_id",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": false,
+     "schema_name": "shop",
+     "table_name": "sessions"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "started_at",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "sessions"
+    },
+    {
+     "column_default": null,
+     "column_index": 1,
+     "column_name": "order_id",
+     "comment": null,
+     "data_type": "INTEGER",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "v_open_orders"
+    },
+    {
+     "column_default": null,
+     "column_index": 2,
+     "column_name": "status",
+     "comment": null,
+     "data_type": "VARCHAR",
+     "is_nullable": true,
+     "schema_name": "shop",
+     "table_name": "v_open_orders"
+    }
+   ],
+   "sql": "select schema_name, table_name, column_name, column_index, comment, column_default, is_nullable, data_type from duckdb_columns() where database_name = current_database() and ((schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?)) order by schema_name, table_name, column_index"
+  },
+  {
+   "params": [
+    "ops",
+    "Order Notes",
+    "shop",
+    "Customer Tags",
+    "shop",
+    "accounts",
+    "shop",
+    "all_null_t",
+    "shop",
+    "anon_enum_t",
+    "shop",
+    "broken_child",
+    "shop",
+    "customers",
+    "shop",
+    "empty_t",
+    "shop",
+    "events",
+    "shop",
+    "order_items",
+    "shop",
+    "orders",
+    "shop",
+    "payments",
+    "shop",
+    "products",
+    "shop",
+    "ref_child",
+    "shop",
+    "ref_parent",
+    "shop",
+    "sessions",
+    "shop",
+    "v_open_orders"
+   ],
+   "rows": [
+    {
+     "constraint_column_names": [
+      "customer_id"
+     ],
+     "constraint_type": "FOREIGN KEY",
+     "referenced_column_names": [
+      "customer_id"
+     ],
+     "referenced_table": "customers",
+     "schema_name": "shop",
+     "table_name": "Customer Tags"
+    },
+    {
+     "constraint_column_names": [
+      "tag_id",
+      "customer_id"
+     ],
+     "constraint_type": "PRIMARY KEY",
+     "referenced_column_names": [],
+     "referenced_table": null,
+     "schema_name": "shop",
+     "table_name": "Customer Tags"
+    },
+    {
+     "constraint_column_names": [
+      "account_id"
+     ],
+     "constraint_type": "PRIMARY KEY",
+     "referenced_column_names": [],
+     "referenced_table": null,
+     "schema_name": "shop",
+     "table_name": "accounts"
+    },
+    {
+     "constraint_column_names": [
+      "child_id"
+     ],
+     "constraint_type": "PRIMARY KEY",
+     "referenced_column_names": [],
+     "referenced_table": null,
+     "schema_name": "shop",
+     "table_name": "broken_child"
+    },
+    {
+     "constraint_column_names": [
+      "customer_id"
+     ],
+     "constraint_type": "PRIMARY KEY",
+     "referenced_column_names": [],
+     "referenced_table": null,
+     "schema_name": "shop",
+     "table_name": "customers"
+    },
+    {
+     "constraint_column_names": [
+      "event_id"
+     ],
+     "constraint_type": "PRIMARY KEY",
+     "referenced_column_names": [],
+     "referenced_table": null,
+     "schema_name": "shop",
+     "table_name": "events"
+    },
+    {
+     "constraint_column_names": [
+      "order_id",
+      "line_no"
+     ],
+     "constraint_type": "PRIMARY KEY",
+     "referenced_column_names": [],
+     "referenced_table": null,
+     "schema_name": "shop",
+     "table_name": "order_items"
+    },
+    {
+     "constraint_column_names": [
+      "order_id"
+     ],
+     "constraint_type": "PRIMARY KEY",
+     "referenced_column_names": [],
+     "referenced_table": null,
+     "schema_name": "shop",
+     "table_name": "orders"
+    },
+    {
+     "constraint_column_names": [
+      "payment_id"
+     ],
+     "constraint_type": "PRIMARY KEY",
+     "referenced_column_names": [],
+     "referenced_table": null,
+     "schema_name": "shop",
+     "table_name": "payments"
+    },
+    {
+     "constraint_column_names": [
+      "product_id"
+     ],
+     "constraint_type": "PRIMARY KEY",
+     "referenced_column_names": [],
+     "referenced_table": null,
+     "schema_name": "shop",
+     "table_name": "products"
+    },
+    {
+     "constraint_column_names": [
+      "child_id"
+     ],
+     "constraint_type": "PRIMARY KEY",
+     "referenced_column_names": [],
+     "referenced_table": null,
+     "schema_name": "shop",
+     "table_name": "ref_child"
+    },
+    {
+     "constraint_column_names": [
+      "id"
+     ],
+     "constraint_type": "PRIMARY KEY",
+     "referenced_column_names": [],
+     "referenced_table": null,
+     "schema_name": "shop",
+     "table_name": "ref_parent"
+    },
+    {
+     "constraint_column_names": [
+      "session_id"
+     ],
+     "constraint_type": "PRIMARY KEY",
+     "referenced_column_names": [],
+     "referenced_table": null,
+     "schema_name": "shop",
+     "table_name": "sessions"
+    }
+   ],
+   "sql": "select schema_name, table_name, constraint_type, constraint_column_names, referenced_table, referenced_column_names from duckdb_constraints() where database_name = current_database() and ((schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?)) and constraint_type in ('primary key', 'unique', 'foreign key') order by schema_name, table_name, constraint_index"
+  }
+ ]
+}

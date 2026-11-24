@@ -1,0 +1,1123 @@
+{
+ "columns": [
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "body",
+    "schema": "ops",
+    "table": "Order Notes"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "note_id",
+    "schema": "ops",
+    "table": "Order Notes"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": false,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "customer_id",
+    "schema": "shop",
+    "table": "Customer Tags"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "tag_id",
+    "schema": "shop",
+    "table": "Customer Tags"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "account_id",
+    "schema": "shop",
+    "table": "accounts"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "name",
+    "schema": "shop",
+    "table": "accounts"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "c",
+    "schema": "shop",
+    "table": "all_null_t"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "id",
+    "schema": "shop",
+    "table": "all_null_t"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "id",
+    "schema": "shop",
+    "table": "anon_enum_t"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "kind",
+    "schema": "shop",
+    "table": "anon_enum_t"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "child_id",
+    "schema": "shop",
+    "table": "broken_child"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "parent_id",
+    "schema": "shop",
+    "table": "broken_child"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "customer_id",
+    "schema": "shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": "login address",
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "email",
+    "schema": "shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 3,
+   "ref": {
+    "catalog": null,
+    "column": "phone",
+    "schema": "shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 4,
+   "ref": {
+    "catalog": null,
+    "column": "segment",
+    "schema": "shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "id",
+    "schema": "shop",
+    "table": "empty_t"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "v",
+    "schema": "shop",
+    "table": "empty_t"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 3,
+   "ref": {
+    "catalog": null,
+    "column": "account_id",
+    "schema": "shop",
+    "table": "events"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "event_id",
+    "schema": "shop",
+    "table": "events"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 4,
+   "ref": {
+    "catalog": null,
+    "column": "kind",
+    "schema": "shop",
+    "table": "events"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "session_id",
+    "schema": "shop",
+    "table": "events"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": false,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "line_no",
+    "schema": "shop",
+    "table": "order_items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "order_id",
+    "schema": "shop",
+    "table": "order_items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 3,
+   "ref": {
+    "catalog": null,
+    "column": "product_id",
+    "schema": "shop",
+    "table": "order_items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 3,
+   "ref": {
+    "catalog": null,
+    "column": "account_id",
+    "schema": "shop",
+    "table": "orders"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 5,
+   "ref": {
+    "catalog": null,
+    "column": "created_at",
+    "schema": "shop",
+    "table": "orders"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "customer_id",
+    "schema": "shop",
+    "table": "orders"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "boolean",
+   "native_type": "BOOLEAN",
+   "nullable": true,
+   "ordinal": 6,
+   "ref": {
+    "catalog": null,
+    "column": "deleted",
+    "schema": "shop",
+    "table": "orders"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "order_id",
+    "schema": "shop",
+    "table": "orders"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 4,
+   "ref": {
+    "catalog": null,
+    "column": "status",
+    "schema": "shop",
+    "table": "orders"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 3,
+   "ref": {
+    "catalog": null,
+    "column": "amount",
+    "schema": "shop",
+    "table": "payments"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "order_id",
+    "schema": "shop",
+    "table": "payments"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "payment_id",
+    "schema": "shop",
+    "table": "payments"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "name",
+    "schema": "shop",
+    "table": "products"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "product_id",
+    "schema": "shop",
+    "table": "products"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "child_id",
+    "schema": "shop",
+    "table": "ref_child"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "parent_id",
+    "schema": "shop",
+    "table": "ref_child"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "id",
+    "schema": "shop",
+    "table": "ref_parent"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "session_id",
+    "schema": "shop",
+    "table": "sessions"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "started_at",
+    "schema": "shop",
+    "table": "sessions"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INTEGER",
+   "nullable": true,
+   "ordinal": 1,
+   "ref": {
+    "catalog": null,
+    "column": "order_id",
+    "schema": "shop",
+    "table": "v_open_orders"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "VARCHAR",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": null,
+    "column": "status",
+    "schema": "shop",
+    "table": "v_open_orders"
+   }
+  }
+ ],
+ "constraints": [
+  {
+   "columns": [
+    "customer_id"
+   ],
+   "enforced": true,
+   "kind": "foreign_key",
+   "ref_columns": [
+    "customer_id"
+   ],
+   "ref_table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "customers"
+   },
+   "table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "Customer Tags"
+   }
+  },
+  {
+   "columns": [
+    "tag_id",
+    "customer_id"
+   ],
+   "enforced": true,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "Customer Tags"
+   }
+  },
+  {
+   "columns": [
+    "account_id"
+   ],
+   "enforced": true,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "accounts"
+   }
+  },
+  {
+   "columns": [
+    "child_id"
+   ],
+   "enforced": true,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "broken_child"
+   }
+  },
+  {
+   "columns": [
+    "customer_id"
+   ],
+   "enforced": true,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "customers"
+   }
+  },
+  {
+   "columns": [
+    "event_id"
+   ],
+   "enforced": true,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "events"
+   }
+  },
+  {
+   "columns": [
+    "order_id",
+    "line_no"
+   ],
+   "enforced": true,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "order_items"
+   }
+  },
+  {
+   "columns": [
+    "order_id"
+   ],
+   "enforced": true,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "orders"
+   }
+  },
+  {
+   "columns": [
+    "payment_id"
+   ],
+   "enforced": true,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "payments"
+   }
+  },
+  {
+   "columns": [
+    "product_id"
+   ],
+   "enforced": true,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "products"
+   }
+  },
+  {
+   "columns": [
+    "child_id"
+   ],
+   "enforced": true,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "ref_child"
+   }
+  },
+  {
+   "columns": [
+    "id"
+   ],
+   "enforced": true,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "ref_parent"
+   }
+  },
+  {
+   "columns": [
+    "session_id"
+   ],
+   "enforced": true,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "sessions"
+   }
+  }
+ ],
+ "schemas": [
+  {
+   "catalog": null,
+   "comment": null,
+   "name": "main",
+   "table_count": null
+  },
+  {
+   "catalog": null,
+   "comment": null,
+   "name": "ops",
+   "table_count": null
+  },
+  {
+   "catalog": null,
+   "comment": null,
+   "name": "shop",
+   "table_count": null
+  }
+ ],
+ "tables": [
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "ops",
+    "table": "Order Notes"
+   },
+   "row_count": 0,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "Customer Tags"
+   },
+   "row_count": 0,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "accounts"
+   },
+   "row_count": 100,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "all_null_t"
+   },
+   "row_count": 100,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "anon_enum_t"
+   },
+   "row_count": 10000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "broken_child"
+   },
+   "row_count": 1000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": "people who buy",
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "customers"
+   },
+   "row_count": 1000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "empty_t"
+   },
+   "row_count": 0,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "events"
+   },
+   "row_count": 20000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "order_items"
+   },
+   "row_count": 20000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "orders"
+   },
+   "row_count": 10000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "payments"
+   },
+   "row_count": 500,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "products"
+   },
+   "row_count": 200,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "ref_child"
+   },
+   "row_count": 3000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "ref_parent"
+   },
+   "row_count": 1000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "table",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "sessions"
+   },
+   "row_count": 5000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": null,
+   "kind": "view",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": null,
+    "column": null,
+    "schema": "shop",
+    "table": "v_open_orders"
+   },
+   "row_count": null,
+   "withdrawn_at": null
+  }
+ ]
+}

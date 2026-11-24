@@ -3,6 +3,6 @@
 The counters live in ``schemaguru._util.tokens`` so rendering (same layer) can use them too.
 """
 
-from schemaguru._util.tokens import CharTokenCounter, TokenCounter
+from schemaguru._util.tokens import CharTokenCounter, TiktokenCounter, TokenCounter
 
-__all__ = ["CharTokenCounter", "TokenCounter"]
+__all__ = ["CharTokenCounter", "TiktokenCounter", "TokenCounter"]

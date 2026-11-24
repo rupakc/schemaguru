@@ -11,6 +11,7 @@ import importlib
 import re
 import threading
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from schemaguru._util.sqltext import Opts
@@ -158,3 +159,83 @@ class FactLangExecutor:
             pairs = row if isinstance(row, dict) else dict(zip(columns, row, strict=False))
             out.append(dict(pairs))
         return out
+
+
+# --- opening a warehouse from a URL (spec 19: ``Guru.connect(url)``) ------------------------------
+
+# URL scheme (before any ``+driver``) -> catalog reader dialect
+_SCHEME_DIALECTS = {
+    "postgresql": "postgres",
+    "postgres": "postgres",
+    "mssql": "tsql",
+    "sqlserver": "tsql",
+    "mariadb": "mysql",
+}
+
+
+def _redact(url: str) -> str:
+    """``url`` with any ``user:password@`` replaced: credentials never reach a message."""
+    return re.sub(r"(://)[^/@]*@", r"\1***@", url)
+
+
+@dataclass
+class Connection:
+    """What :func:`connect` opened: a reader dialect, a metadata executor, and the connector.
+
+    ``connector`` is the FactLang connector (``None`` when the built-in fallback opened the URL,
+    so measurement reports ``SG304`` until FactLang can connect); ``raw`` is the DB-API
+    connection the fallback opened, closed by :meth:`close`.
+    """
+
+    dialect: str
+    executor: MetadataExecutor
+    connector: Any | None = None
+    raw: Any | None = None
+
+    def close(self) -> None:
+        for obj in (self.raw, self.connector):
+            close = getattr(obj, "close", None)
+            if callable(close):
+                close()
+
+
+def connect(url: str) -> Connection:
+    """Open ``url`` (``duckdb:///shop.duckdb``, ``snowflake://...``) for catalog reads.
+
+    FactLang's ``connect`` (it needs SQLAlchemy for most warehouses) is used when installed; its
+    connector also serves measurement. Without it, ``duckdb://`` URLs open through the DuckDB
+    driver (``duckdb:///path``, ``duckdb:///:memory:``); anything else raises ``SG106``.
+    """
+    if "://" not in url:
+        raise CatalogError("SG106", f"not a connection URL: {_redact(url)!r}")
+    scheme = url.split("://", 1)[0].split("+", 1)[0].lower()
+    dialect = _SCHEME_DIALECTS.get(scheme, scheme)
+    fl_connect = None
+    try:
+        fl_connect = getattr(importlib.import_module("factlang"), "connect", None)
+    except ImportError:  # pragma: no cover - factlang is a core dependency
+        fl_connect = None
+    failure: str | None = None
+    if callable(fl_connect):
+        try:
+            connector = fl_connect(url)
+            return Connection(dialect, FactLangExecutor(connector), connector)
+        except Exception as e:
+            failure = f"FactLang could not open {_redact(url)}: {type(e).__name__}"
+    if scheme == "duckdb":
+        try:
+            duckdb = importlib.import_module("duckdb")
+        except ImportError:
+            raise CatalogError(
+                "SG106", "duckdb:// needs the DuckDB driver: pip install 'schemaguru[duckdb]'"
+            ) from None
+        path = url.split("://", 1)[1]
+        path = path[1:] if path.startswith("/") else path
+        raw = duckdb.connect(path or ":memory:")
+        return Connection("duckdb", DBAPIExecutor(raw, "qmark"), None, raw)
+    raise CatalogError(
+        "SG106",
+        failure
+        or f"cannot open {_redact(url)}: the installed FactLang has no connect() and there is no "
+        f"built-in driver for {scheme!r} (pass a connector or reader to Guru instead)",
+    )

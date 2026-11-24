@@ -16,7 +16,7 @@ from schemaguru.scope.retrievers import (
     LexicalRetriever,
     Retriever,
 )
-from schemaguru.scope.tokens import CharTokenCounter, TokenCounter
+from schemaguru.scope.tokens import CharTokenCounter, TiktokenCounter, TokenCounter
 
 __all__ = [
     "IDENTIFIER_BOOST",
@@ -30,6 +30,7 @@ __all__ = [
     "Retriever",
     "Scope",
     "TableRenderer",
+    "TiktokenCounter",
     "TokenCounter",
     "build_scope",
     "expand",

@@ -102,9 +102,12 @@ class Config:
     measure_on_demand: Literal["queue", "background", "block"] = "queue"
     store_path: str | None = None
     llm_model: str = "claude-sonnet-5-5"
+    # token counter for view budgets: chars/4 heuristic, or tiktoken (extra ``tiktoken``)
+    token_counter: Literal["chars", "tiktoken"] = "chars"
 
     def __post_init__(self) -> None:
         _check("measure_on_demand", self.measure_on_demand, ("queue", "background", "block"))
+        _check("token_counter", self.token_counter, ("chars", "tiktoken"))
 
     @classmethod
     def from_mapping(cls, d: Mapping[str, Any]) -> Config:

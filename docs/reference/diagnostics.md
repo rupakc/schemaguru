@@ -8,6 +8,7 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG102 | the crawl skipped a catalog, schema, page or batch that failed to read |
 | SG104 | metadata SQL was refused: only a single SELECT/WITH/SHOW/DESCRIBE is allowed |
 | SG105 | the installed FactLang does not provide the metadata-SQL capability |
+| SG106 | a connection URL could not be opened (no FactLang connect, no built-in driver) |
 | SG201 | overlay 'version' is missing or unsupported |
 | SG202 | overlay has an unknown key (a close match is suggested) |
 | SG203 | overlay reference does not resolve to anything in the store |
@@ -41,3 +42,4 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG702 | the store was written by a newer schema version than this library supports |
 | SG801 | guard refused the SQL: not a single read-only SELECT/WITH statement |
 | SG802 | guard refused the SQL: it reads a never-query table |
+| SG803 | an agent tool call was refused: unknown tool or invalid arguments |

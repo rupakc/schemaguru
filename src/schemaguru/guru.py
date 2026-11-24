@@ -1,0 +1,1086 @@
+"""The ``Guru`` façade (layer 7; spec 2 G1/G2/G9, 8.2, 12, 18, 19): one object over everything.
+
+``Guru.connect(url)`` opens a warehouse through the FactLang seam, crawls an empty store and
+answers ``guru.context(question)`` with a question-scoped view. Every subsystem stays usable on
+its own; the façade only wires them:
+
+* **No spend on the query path** (spec 8.2, 25.10). ``context()`` reads the store; tables it
+  shows that were never measured are pushed on the measurement queue, and nothing else is
+  written. The queue is drained by ``measure()`` / ``measure_queue()`` / ``refresh()``, by a
+  daemon thread when ``Config(measure_on_demand="background")``, or synchronously for the
+  scoped tables when ``measure_on_demand="block"`` (the user's explicit opt-in to spend).
+* **View cache** (spec 12.2): an LRU of ``Config.scope.cache_entries`` views keyed on the store's
+  latest snapshot id, the question hash, the config hash, profile and budget, plus a write
+  generation. Every write through the façade (crawl, measure, draft, accept, overlays,
+  refresh, verify; the background drainer's runs) bumps the generation, so a cached view never
+  outlives the knowledge it rendered. Writes made by *another* process to a shared store are
+  seen at the next snapshot or façade write.
+* **Graph**: built from the store's JOIN/ENTITY_TYPE facts once per (generation, snapshot, day)
+  and shared by scoping, rendering and ``find_path``. Its per-config memo is not thread-safe, so
+  every use of it (view rendering on a cache miss, path search) runs under one re-entrant lock:
+  concurrent ``context()`` calls are safe and serialise on a miss.
+* **Overlays**: filters are re-checked with the render seam's ``validate_filter`` (FactLang's
+  parser when installed); waypoint rules are validated and linted at load, and kept *raw* so
+  each search compiles them itself and a malformed rule still refuses the searches it governs
+  (fail closed). Chains compile to pair rules against the current graph. Every diagnostic lands
+  in :attr:`Guru.diagnostics`. Each ``load_overlays`` call replaces the previous rule set, so
+  pass every overlay path in one call; HUMAN facts are upserted into the store.
+* **Names**: a bare table name resolves through ``store.resolve`` and then by unqualified name;
+  an ambiguous name raises :class:`SchemaGuruError` listing the candidates (never a guess).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import fnmatch
+import json
+import math
+import os
+import threading
+from collections import OrderedDict
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import replace
+from datetime import datetime
+from pathlib import Path
+from typing import Any, overload
+
+from schemaguru._util.hashing import canonical_json, stable_hash
+from schemaguru._util.timeutil import require_aware, utcnow
+from schemaguru.catalog.crawl import CrawlReport
+from schemaguru.catalog.crawl import crawl as _crawl
+from schemaguru.catalog.executor import Connection, FactLangExecutor
+from schemaguru.catalog.executor import connect as _connect
+from schemaguru.catalog.protocol import CatalogError, CatalogReader
+from schemaguru.catalog.registry import reader_for
+from schemaguru.config import Budget, Config
+from schemaguru.diagnostics import Diagnostic, DiagnosticBag, Severity
+from schemaguru.draft.accept import accept as _accept
+from schemaguru.draft.accept import write_accepted
+from schemaguru.draft.pipeline import DraftReport, draft_tables
+from schemaguru.draft.provider import LLMProvider
+from schemaguru.draft.verify import verify_drafts
+from schemaguru.errors import SchemaGuruError
+from schemaguru.feedback.intake import report_error as _report_error
+from schemaguru.graph.chains import compile_chain
+from schemaguru.graph.edges import build_edges, entity_tables
+from schemaguru.graph.hubs import Hubs
+from schemaguru.graph.search import Automaton, Graph, PathResult, find_paths
+from schemaguru.graph.waypoints import compile_rules, lint_rules, validate_rules
+from schemaguru.knowledge.resolve import resolve
+from schemaguru.measure.backend import CostEstimate, MeasureBackend, MeasureResult
+from schemaguru.measure.budget import BudgetGuard
+from schemaguru.measure.catalog_bridge import StoreCatalog
+from schemaguru.measure.flbridge import FactLangBackend
+from schemaguru.measure.requests import Request
+from schemaguru.measure.scheduler import BackgroundDrainer, MeasureReport, Scheduler
+from schemaguru.model.chains import Chain, FilterStep
+from schemaguru.model.detail import DetailLevel
+from schemaguru.model.evidence import Evidence
+from schemaguru.model.facts import Fact, Provenance, Status, Waiver
+from schemaguru.model.refs import ObjectRef
+from schemaguru.overlays.loader import load_overlays as _load_overlays
+from schemaguru.overlays.schema import GLOBAL_SUBJECT, WaypointSpec
+from schemaguru.refresh.report import RefreshReport
+from schemaguru.refresh.run import refresh as _refresh
+from schemaguru.render.fingerprint import fingerprint_views as _fingerprint_views
+from schemaguru.render.formats import format_view
+from schemaguru.render.fragments import validate_filter
+from schemaguru.render.legend import LEGEND
+from schemaguru.render.table_block import render_path
+from schemaguru.render.view import ContextView, ViewRenderer
+from schemaguru.scope.expand import expand
+from schemaguru.scope.pipeline import build_scope
+from schemaguru.scope.retrievers import LexicalRetriever, Retriever
+from schemaguru.scope.tokens import CharTokenCounter, TiktokenCounter, TokenCounter
+from schemaguru.store.export import export_json
+from schemaguru.store.protocol import Store
+from schemaguru.store.sqlite import SQLiteStore
+
+Target = str | ObjectRef
+FIRST_TOUCH = "first_touch"  # queue reason for a table a question scoped before it was measured
+_GLOB = frozenset("*?[")
+_TOOL_NAMES = (
+    "schema_context",
+    "search_tables",
+    "describe_table",
+    "find_join_path",
+    "column_values",
+    "check_fact",
+    "explain_term",
+)
+
+
+class _NoBackend:
+    """The backend of a Guru without a connector: every probe reports ``SG304``."""
+
+    def capabilities(self) -> frozenset[str]:
+        return frozenset()
+
+    def measure(self, reqs: Sequence[Request]) -> list[MeasureResult]:
+        d = Diagnostic("SG304", Severity.ERROR, "no measurement backend (no connector)")
+        return [MeasureResult(r, None, None, d) for r in reqs]
+
+    def estimate(self, reqs: Sequence[Request]) -> list[CostEstimate]:
+        return [CostEstimate(r, None, "unknown") for r in reqs]
+
+    def check(self, claims: str) -> list[Evidence]:
+        return []
+
+
+class _Scheduler(Scheduler):
+    """A scheduler that tells the façade after every run (its writes invalidate cached views)."""
+
+    def __init__(
+        self,
+        store: Store,
+        backend: MeasureBackend,
+        config: Config,
+        *,
+        now: Callable[[], datetime],
+        on_write: Callable[[], None],
+    ) -> None:
+        super().__init__(store, backend, config, now=now)
+        self._on_write = on_write
+
+    def run(
+        self,
+        refs: Sequence[ObjectRef] | None = None,
+        *,
+        drain_queue: bool = False,
+        guard: BudgetGuard | None = None,
+    ) -> MeasureReport:
+        try:
+            return super().run(refs, drain_queue=drain_queue, guard=guard)
+        finally:
+            self._on_write()
+
+
+class _LRU:
+    def __init__(self, capacity: int) -> None:
+        self.capacity = max(0, capacity)
+        self._items: OrderedDict[tuple[Any, ...], ContextView] = OrderedDict()
+
+    def get(self, key: tuple[Any, ...]) -> ContextView | None:
+        hit = self._items.get(key)
+        if hit is not None:
+            self._items.move_to_end(key)
+        return hit
+
+    def put(self, key: tuple[Any, ...], value: ContextView) -> None:
+        if self.capacity == 0:
+            return
+        self._items[key] = value
+        self._items.move_to_end(key)
+        while len(self._items) > self.capacity:
+            self._items.popitem(last=False)
+
+    def clear(self) -> None:
+        self._items.clear()
+
+
+def _counter_for(cfg: Config) -> TokenCounter:
+    return TiktokenCounter() if cfg.token_counter == "tiktoken" else CharTokenCounter()
+
+
+def _tool_error(message: str) -> dict[str, Any]:
+    return {"error": message, "code": "SG803", "text": f"SG803 {message}"}
+
+
+def _json_safe(obj: Any) -> Any:
+    return json.loads(canonical_json(obj))
+
+
+class Guru:
+    """Schema intelligence for one warehouse: crawl, measure, draft, overlay, scope, render."""
+
+    def __init__(
+        self,
+        *,
+        connector: Any = None,
+        reader: CatalogReader | None = None,
+        store: Store | str | os.PathLike[str] | None = None,
+        backend: MeasureBackend | None = None,
+        config: Config | None = None,
+        name: str = "default",
+        dialect: str | None = None,
+        retriever: Retriever | None = None,
+        token_counter: TokenCounter | None = None,
+        now: Callable[[], datetime] = utcnow,
+        drain_interval_s: float = 5.0,
+    ) -> None:
+        self.name = name
+        self._config = config or Config()
+        self._now = now
+        self._lock = threading.RLock()
+        self._diags: dict[tuple[str, str, str | None], Diagnostic] = {}
+        self.dialect: str | None = (
+            dialect or getattr(connector, "dialect", None) or getattr(reader, "dialect", None)
+        )
+        self._owns_store = store is None or isinstance(store, str | os.PathLike)
+        if store is None or isinstance(store, str | os.PathLike):
+            path = store or self._config.store_path or os.path.join(".schemaguru", f"{name}.db")
+            self.store: Store = SQLiteStore(path)
+        else:
+            self.store = store
+        self.connector = connector
+        if reader is None and connector is not None and isinstance(self.dialect, str):
+            try:
+                reader = reader_for(self.dialect, FactLangExecutor(connector))
+            except CatalogError as e:  # crawl() raises later; the cause is kept here
+                self._note(Diagnostic(e.code, Severity.ERROR, str(e)))
+        self.reader = reader
+        self._auto_backend = backend is None
+        self.backend: MeasureBackend = backend or self._default_backend()
+        self.retriever: Retriever = retriever or LexicalRetriever(self.store)
+        self._explicit_counter = token_counter is not None
+        self.counter: TokenCounter = token_counter or _counter_for(self._config)
+        self.drainer: BackgroundDrainer | None = None
+        self._drain_interval_s = drain_interval_s
+        self._connection: Connection | None = None
+        self._generation = 0
+        self._cache = _LRU(self._config.scope.cache_entries)
+        self._graph_key: tuple[Any, ...] | None = None
+        self._graph: Graph | None = None
+        self._rule_specs: list[WaypointSpec] = []  # raw overlay rules + compiled chains
+        self._waypoints: list[WaypointSpec] = []
+        self._chains: list[Chain] = []
+        self._waivers: tuple[Waiver, ...] = ()
+        self._scheduler = self._make_scheduler(self._config)
+
+    # ----- construction ---------------------------------------------------------------------
+
+    @classmethod
+    def connect(
+        cls,
+        url: str,
+        *,
+        name: str = "default",
+        store: Store | str | os.PathLike[str] | None = None,
+        config: Config | None = None,
+        backend: MeasureBackend | None = None,
+        crawl: bool | None = None,
+    ) -> Guru:
+        """Open ``url`` through the FactLang seam (built-in DuckDB fallback) and build a Guru.
+
+        The store defaults to ``./.schemaguru/<name>.db``. ``crawl=None`` crawls the catalog
+        (metadata only) when the store holds no table yet, so the three-line quickstart works;
+        ``True`` always crawls, ``False`` never.
+        """
+        conn = _connect(url)
+        try:
+            reader = reader_for(conn.dialect, conn.executor)
+            guru = cls(
+                connector=conn.connector,
+                reader=reader,
+                store=store,
+                backend=backend,
+                config=config,
+                name=name,
+                dialect=conn.dialect,
+            )
+        except BaseException:
+            conn.close()
+            raise
+        guru._connection = conn
+        empty = next(iter(guru.store.iter_tables()), None) is None
+        if crawl or (crawl is None and empty):
+            guru.crawl()
+        return guru
+
+    def close(self) -> None:
+        """Stop the background drainer, close what this Guru opened (its store, its URL)."""
+        if self.drainer is not None:
+            self.drainer.stop()
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
+        if self._owns_store:
+            close = getattr(self.store, "close", None)
+            if callable(close):
+                close()
+
+    def __enter__(self) -> Guru:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    @property
+    def config(self) -> Config:
+        return self._config
+
+    @config.setter
+    def config(self, value: Config) -> None:
+        with self._lock:
+            self._config = value
+            self._cache = _LRU(value.scope.cache_entries)
+            if not self._explicit_counter:
+                self.counter = _counter_for(value)
+            if self._auto_backend:  # the FactLang backend scales its samples by the config
+                self.backend = self._default_backend()
+            self._scheduler = self._make_scheduler(value)
+            self._invalidate()
+
+    def _default_backend(self) -> MeasureBackend:
+        if self.connector is None:
+            return _NoBackend()
+        catalog = StoreCatalog(self.store)
+        return FactLangBackend(self.connector, catalog=catalog, sampling=self._config.sampling)
+
+    def _make_scheduler(self, cfg: Config) -> _Scheduler:
+        return _Scheduler(self.store, self.backend, cfg, now=self._now, on_write=self._invalidate)
+
+    # ----- diagnostics and invalidation -----------------------------------------------------
+
+    @property
+    def diagnostics(self) -> tuple[Diagnostic, ...]:
+        """Every distinct diagnostic the façade has seen (overlays, rules, chains, wiring)."""
+        with self._lock:
+            return tuple(self._diags.values())
+
+    def _note(self, d: Diagnostic) -> None:
+        with self._lock:
+            self._diags.setdefault((d.code, d.message, d.location), d)
+
+    def _invalidate(self) -> None:
+        with self._lock:
+            self._generation += 1
+            self._cache.clear()
+
+    # ----- names ------------------------------------------------------------------------------
+
+    def table_ref(self, name: Target) -> ObjectRef:
+        """The stored table ``name`` refers to (a bare name works when it is unambiguous)."""
+        if isinstance(name, ObjectRef):
+            if self.store.table(name.table_ref()) is not None:
+                return name.table_ref()
+            name = name.table_ref().canonical()
+        ref, cands = self.store.resolve(name)
+        if ref is not None:
+            return ref.table_ref()
+        if not cands:
+            try:
+                parsed = ObjectRef.parse(name)
+            except ValueError:
+                raise SchemaGuruError(f"unknown table {name!r}") from None
+            if parsed.schema is None and parsed.catalog is None:
+                cands = self.store.tables_named([parsed.table], limit=50)
+                if len(cands) == 1:
+                    return cands[0]
+        if cands:
+            listed = ", ".join(c.canonical() for c in cands)
+            raise SchemaGuruError(f"table name {name!r} is ambiguous: {listed}")
+        raise SchemaGuruError(f"unknown table {name!r} (crawl first, or qualify the name)")
+
+    def column_ref(self, name: Target) -> ObjectRef:
+        """The stored column ``name`` (``table.column``, the table part resolved as a table)."""
+        if isinstance(name, ObjectRef):
+            ref = name
+        else:
+            try:
+                ref = ObjectRef.parse(name, has_column=True)
+            except ValueError:
+                raise SchemaGuruError(f"not a column reference: {name!r}") from None
+        if ref.column is None:
+            raise SchemaGuruError(f"not a column reference: {name!r}")
+        table = self.table_ref(ref.table_ref())
+        for col in self.store.columns(table):
+            if (col.ref.column or "").casefold() == ref.column.casefold():
+                return col.ref
+        raise SchemaGuruError(f"unknown column {ref.column!r} in {table.canonical()}")
+
+    def _targets(self, targets: Target | Iterable[Target]) -> list[ObjectRef]:
+        items: list[Target] = [targets] if isinstance(targets, str | ObjectRef) else list(targets)
+        out: list[ObjectRef] = []
+        for item in items:
+            if isinstance(item, str) and _GLOB & set(item):
+                hits = [
+                    t.ref
+                    for t in self.store.iter_tables()
+                    if fnmatch.fnmatchcase(t.ref.canonical(), item)
+                    or fnmatch.fnmatchcase(t.ref.canonical().casefold(), item.casefold())
+                ]
+                if not hits:
+                    raise SchemaGuruError(f"pattern {item!r} matches no table")
+                out += hits
+            else:
+                out.append(self.table_ref(item))
+        return list(dict.fromkeys(out))
+
+    # ----- discovery and measurement ----------------------------------------------------------
+
+    def _need_reader(self) -> CatalogReader:
+        if self.reader is None:
+            raise SchemaGuruError(
+                "this Guru has no catalog reader: pass reader= (or a connector with a dialect)"
+            )
+        return self.reader
+
+    def crawl(
+        self, *, include: Sequence[str] | None = None, exclude: Sequence[str] | None = None
+    ) -> CrawlReport:
+        """Index the catalog (metadata only); ``include``/``exclude`` override the config."""
+        reader = self._need_reader()
+        cfg = self._config.crawl
+        if include is not None:
+            cfg = replace(cfg, include=tuple(include))
+        if exclude is not None:
+            cfg = replace(cfg, exclude=tuple(exclude))
+        try:
+            return _crawl(reader, self.store, config=cfg, now=self._now)
+        finally:
+            self._invalidate()
+
+    def _no_measure(self) -> MeasureReport | None:
+        if "measure" in self.backend.capabilities():
+            return None
+        report = MeasureReport()
+        report.errors.append(
+            Diagnostic(
+                "SG304",
+                Severity.ERROR,
+                "the measurement backend cannot measure (the installed FactLang lacks "
+                "Checker.measure, or no connector was given); nothing was measured",
+                hint="pass backend=..., or upgrade FactLang",
+            )
+        )
+        return report
+
+    def measure(
+        self,
+        targets: Target | Iterable[Target] | None = None,
+        *,
+        all: bool = False,
+        budget: Budget | None = None,
+    ) -> MeasureReport:
+        """Measure ``targets`` (names or globs); with none, drain the queue (spec 8.2).
+
+        ``all=True`` measures every live table, hottest first (feedback, declared foreign keys,
+        log row count). ``budget`` replaces the configured one for this run.
+        """
+        blocked = self._no_measure()
+        if blocked is not None:
+            return blocked
+        sched = self._scheduler
+        if budget is not None:
+            sched = self._make_scheduler(replace(self._config, budget=budget))
+        if all:
+            return sched.run(self._eager_order())
+        if targets is None:
+            return sched.run(drain_queue=True)
+        return sched.run(self._targets(targets))
+
+    def measure_queue(self) -> MeasureReport:
+        """Drain the measurement queue (first-touch and feedback tables) under the budget."""
+        return self.measure()
+
+    def _eager_order(self) -> list[ObjectRef]:
+        heat: dict[str, int] = {}
+        for row in self.store.feedback_summary():
+            key = str(row["table"])
+            count = row["count"]
+            heat[key] = heat.get(key, 0) + (count if isinstance(count, int) else 0)
+        scored: list[tuple[float, str, ObjectRef]] = []
+        for t in self.store.iter_tables():
+            fks = sum(1 for c in self.store.constraints(t.ref) if c.kind == "foreign_key")
+            rows = math.log1p(t.row_count) if t.row_count else 0.0
+            score = heat.get(t.ref.canonical(), 0) + fks + rows
+            scored.append((-score, t.ref.canonical(), t.ref))
+        return [ref for _, _, ref in sorted(scored)]
+
+    def refresh(self, *, label: str | None = None) -> RefreshReport:
+        """Incremental crawl, re-measure stale/changed tables, snapshot and classify (spec 15)."""
+        reader = self._need_reader()
+        try:
+            return _refresh(
+                self.store,
+                reader,
+                self._scheduler,
+                config=self._config,
+                now=self._now,
+                label=label,
+            )
+        finally:
+            self._invalidate()
+
+    # ----- drafting and verification ----------------------------------------------------------
+
+    def draft(
+        self,
+        targets: Target | Iterable[Target],
+        *,
+        provider: LLMProvider,
+        budget: Budget | int | None = None,
+        verify: bool = True,
+    ) -> DraftReport:
+        """Draft table meaning with an LLM (never on the query path); verify checkable parts."""
+        refs = self._targets(targets)
+        try:
+            report = draft_tables(
+                refs, store=self.store, provider=provider, config=self._config, budget=budget
+            )
+            if verify and report.drafted:
+                bag = DiagnosticBag()
+                checked = verify_drafts(
+                    report.drafted,
+                    self.backend,
+                    config=self._config,
+                    diagnostics=bag,
+                    now=self._now(),
+                    store=self.store,
+                )
+                self.store.put_facts(checked)
+                report.drafted = checked
+                report.diagnostics += list(bag)
+            return report
+        finally:
+            self._invalidate()
+
+    def accept(
+        self, ids: Iterable[str], *, write_overlay: str | os.PathLike[str] | None = None
+    ) -> list[Fact]:
+        """Turn drafted facts into HUMAN facts; optionally append them to an accepted overlay."""
+        try:
+            accepted = _accept(self.store, ids, now=self._now())
+            if write_overlay is not None:
+                write_accepted(accepted, Path(write_overlay))
+            return accepted
+        finally:
+            self._invalidate()
+
+    @overload
+    def verify(self, facts_or_claims: str, exact: bool = False) -> list[Evidence]: ...
+
+    @overload
+    def verify(self, facts_or_claims: Sequence[Fact], exact: bool = False) -> list[Fact]: ...
+
+    def verify(
+        self, facts_or_claims: str | Sequence[Fact], exact: bool = False
+    ) -> list[Evidence] | list[Fact]:
+        """Check FactLang claim text, or facts: drafts become claims (spec 10.3).
+
+        Claims are never sampled. With ``exact=True`` the tables behind sampled (ESTIMATED)
+        measurements are re-measured exactly within budget, and the exact facts are appended
+        (a sample can refute but never confirm, spec 8.6).
+        """
+        if isinstance(facts_or_claims, str):
+            return list(self.backend.check(facts_or_claims))
+        facts = list(facts_or_claims)
+        bag = DiagnosticBag()
+        try:
+            out = verify_drafts(
+                facts,
+                self.backend,
+                config=self._config,
+                diagnostics=bag,
+                now=self._now(),
+                store=self.store,
+            )
+            changed = [g for f, g in zip(facts, out, strict=True) if f != g]
+            if changed:
+                self.store.put_facts(changed)
+            for d in bag:
+                self._note(d)
+            if exact:
+                out += self._exact(facts)
+            return out
+        finally:
+            self._invalidate()
+
+    def _exact(self, facts: Sequence[Fact]) -> list[Fact]:
+        sampled = [
+            f for f in facts if f.provenance is Provenance.MEASURED and f.status is Status.ESTIMATED
+        ]
+        if not sampled or self._no_measure() is not None:
+            return []
+        tables: list[ObjectRef] = []
+        for f in sampled:
+            s = f.subject
+            if isinstance(s, ObjectRef):
+                tables.append(s.table_ref())
+            else:
+                tables += [x.table_ref() for x in (*s.left, *s.right)]
+        exact_cfg = replace(
+            self._config, sampling=replace(self._config.sampling, measurement="off")
+        )
+        self._make_scheduler(exact_cfg).run(list(dict.fromkeys(tables)))
+        wanted = {(f.kind.name, f.subject) for f in sampled}
+        fresh = self.store.facts_for(
+            list({f.subject for f in sampled}), sorted({f.kind.name for f in sampled})
+        )
+        return [
+            f
+            for f in fresh
+            if (f.kind.name, f.subject) in wanted
+            and f.provenance is Provenance.MEASURED
+            and f.method == "exact"
+        ]
+
+    # ----- overlays ---------------------------------------------------------------------------
+
+    def load_overlays(self, *paths: str | os.PathLike[str]) -> list[Diagnostic]:
+        """Load human overlay files/directories (spec 14); returns this load's diagnostics.
+
+        Never raises on data. Replaces the previously loaded rules, chains and waivers.
+        """
+        today = require_aware(self._now()).date()
+        facts, chains, waypoints, waivers, bag = _load_overlays(
+            [Path(p) for p in paths], self.store, today=today
+        )
+        dialect = self.dialect or "ansi"
+        out: list[Diagnostic] = list(bag)
+
+        def filter_ok(text: str, where: str | None) -> bool:
+            ok = True
+            for d in validate_filter(text, dialect):
+                if d.severity is Severity.ERROR:
+                    ok = False
+                    out.append(replace(d, location=d.location or where))
+                elif not any(o.code == d.code for o in out):
+                    out.append(d)
+            return ok
+
+        kept: list[Fact] = []
+        for f in facts:
+            pred = f.value.get("predicate") if f.kind.name == "SOFT_DELETE" else None
+            if isinstance(pred, str) and not filter_ok(pred, f.source):
+                continue
+            kept.append(f)
+        good_chains: list[Chain] = []
+        for chain in chains:
+            steps_ok = [
+                filter_ok(s.filter_text, f"chain:{chain.name}")
+                for s in chain.steps
+                if isinstance(s, FilterStep)
+            ]
+            if all(steps_ok):
+                good_chains.append(chain)
+        out += validate_rules(waypoints)
+        with self._lock:
+            if kept:
+                self.store.put_facts(kept)
+            self._waypoints = list(waypoints)
+            self._chains = good_chains
+            self._waivers = tuple(waivers)
+            self._invalidate()
+            graph = self._current_graph(out)
+            out += lint_rules(self._waypoints, graph.edges)
+            for d in out:
+                self._note(d)
+        return out
+
+    # ----- graph and paths --------------------------------------------------------------------
+
+    def _current_graph(self, sink: list[Diagnostic] | None = None) -> Graph:
+        """The join graph for the current knowledge (caller holds ``self._lock``)."""
+        now = require_aware(self._now())
+        key = (self._generation, self.store.latest_snapshot(), now.date(), self._config.graph)
+        if self._graph is not None and self._graph_key == key:
+            return self._graph
+        cfg = self._config
+        facts = self.store.facts_for(None, ["JOIN", "ENTITY_TYPE"])
+        eff = resolve(facts, now=now, ttl_days=cfg.fact_ttl_days, waivers=self._waivers)
+        bag = DiagnosticBag()
+        edges = build_edges(eff, cfg=cfg.graph, bag=bag)
+        graph = Graph(edges, Hubs.from_edges(edges, entity_tables(eff), cfg.graph))
+        specs = list(self._waypoints)
+        for chain in self._chains:
+            spec = compile_chain(chain, graph, bag=bag)
+            if spec is not None:
+                specs.append(spec)
+        self._rule_specs = specs
+        for d in bag:
+            self._note(d)
+            if sink is not None:
+                sink.append(d)
+        self._graph, self._graph_key = graph, key
+        return graph
+
+    def _rules(self, src: ObjectRef, dst: ObjectRef) -> Automaton | None:
+        if not self._rule_specs:
+            return None
+        return compile_rules(self._rule_specs, src, dst)
+
+    def find_path(self, a: Target, b: Target, *, k: int | None = None) -> PathResult:
+        """Measured join routes between two tables, or a typed refusal (spec 9)."""
+        src, dst = self.table_ref(a), self.table_ref(b)
+        with self._lock:
+            graph = self._current_graph()
+            cfg = self._config.graph if k is None else replace(self._config.graph, k_paths=k)
+            return find_paths(graph, src, dst, cfg=cfg, automaton=self._rules(src, dst))
+
+    # ----- context ----------------------------------------------------------------------------
+
+    def _renderer(self, profile: str) -> ViewRenderer:
+        return ViewRenderer(
+            self.store,
+            now=self._now(),
+            cfg=self._config,
+            profile=profile,
+            graph=self._current_graph(),
+            waivers=self._waivers,
+            dialect=self.dialect,
+            rules=self._rules,
+        )
+
+    def context(
+        self,
+        question: str,
+        *,
+        budget_tokens: int = 4000,
+        profile: str = "agent",
+        format: str = "text",
+    ) -> ContextView:
+        """The question-scoped view an agent reads (spec 12, 13); ``str(view)`` is ``format``.
+
+        Read-only apart from the measurement queue: shown tables that were never measured are
+        enqueued. It spends warehouse money only when ``Config.measure_on_demand`` says so.
+        """
+        try:
+            format_view(ContextView("", (), (), "", 0), format)
+        except KeyError as e:
+            raise ValueError(f"unknown format {format!r}: {e}") from None
+        cfg = self._config
+        with self._lock:
+            key = (
+                self._generation,
+                self.store.latest_snapshot(),
+                stable_hash(question),
+                stable_hash(repr(cfg)),
+                profile,
+                budget_tokens,
+                require_aware(self._now()).date(),
+            )
+            view = self._cache.get(key)
+            if view is None:
+                view, unmeasured = self._render(question, budget_tokens, profile)
+                if unmeasured and self._on_demand(unmeasured):
+                    view, _ = self._render(question, budget_tokens, profile)
+                else:
+                    self._cache.put(key, view)
+        return view if format == "text" else replace(view, format=format)
+
+    def _render(
+        self, question: str, budget_tokens: int, profile: str
+    ) -> tuple[ContextView, tuple[ObjectRef, ...]]:
+        r = self._renderer(profile)
+        c = self.counter
+        # the candidates the fitter may pick from (seeds plus bridges): their hub hazard lines
+        # are reserved up front, because a view never drops them
+        seeds = list(
+            dict.fromkeys(
+                ref.table_ref()
+                for ref, _ in self.retriever.search(question, self._config.scope.seed_k)
+            )
+        )
+        bridges = (
+            []
+            if r.graph is None
+            else expand(seeds, r.graph, self._config.scope, graph_cfg=self._config.graph)
+        )
+        scope = build_scope(
+            question,
+            retriever=self.retriever,
+            store=self.store,
+            graph=r.graph,
+            renderer=r,
+            counter=c,
+            budget_tokens=r.table_budget(budget_tokens, c, tables=[*seeds, *bridges]),
+            cfg=self._config.scope,
+            graph_cfg=self._config.graph,
+        )
+        view = r.view(
+            question,
+            scope.tables,
+            not_shown=scope.not_shown,
+            budget_tokens=budget_tokens,
+            counter=c,
+        )
+        return view, scope.unmeasured
+
+    def _on_demand(self, unmeasured: Sequence[ObjectRef]) -> bool:
+        """First touch (spec 12.5): queue, or measure now in block mode. True if it measured."""
+        mode = self._config.measure_on_demand
+        if mode == "block" and self._no_measure() is None:
+            self._scheduler.run(list(unmeasured))
+            return True
+        for ref in unmeasured:
+            self.store.queue_push(ref, FIRST_TOUCH, 1.0)
+        if mode == "background":
+            self._ensure_drainer()
+        return False
+
+    def _ensure_drainer(self) -> None:
+        if self.drainer is not None and self.drainer.is_alive():
+            return
+        if self._no_measure() is not None:
+            return
+        self.drainer = BackgroundDrainer(self._scheduler, self._drain_interval_s)
+        self.drainer.start()
+
+    def fingerprint_views(self, questions: Iterable[str]) -> dict[str, str]:
+        """``{question: fingerprint}`` for a host's CI to detect prompt drift (spec 13.4)."""
+        return _fingerprint_views(self, questions)
+
+    # ----- feedback, export -------------------------------------------------------------------
+
+    def report_error(self, sql: str, error: str, dialect: str | None = None) -> int:
+        """Record a failed agent query (identifiers and counts only); never raises (spec 16)."""
+        try:
+            return _report_error(self.store, sql, error, dialect or self.dialect)
+        except Exception:
+            return 0
+
+    def feedback_summary(self) -> list[dict[str, object]]:
+        return self.store.feedback_summary()
+
+    def export(self, path: str | os.PathLike[str]) -> None:
+        """Byte-deterministic JSON export of the store (spec 7.3)."""
+        export_json(self.store, path)
+
+    # ----- agent surface (spec 18) ------------------------------------------------------------
+
+    def tools(self) -> list[dict[str, Any]]:
+        """JSON-schema tool specs (``name``, ``description``, ``input_schema``)."""
+
+        def spec(
+            name: str, description: str, props: dict[str, Any], req: list[str]
+        ) -> dict[str, Any]:
+            schema = {"type": "object", "properties": props, "required": req}
+            return {"name": name, "description": description, "input_schema": schema}
+
+        s = {"type": "string"}
+        return [
+            spec(
+                "schema_context",
+                "The warehouse tables, columns, measured joins and hazards relevant to a "
+                "question. Call this first.",
+                {"question": s, "budget_tokens": {"type": "integer", "minimum": 0}},
+                ["question"],
+            ),
+            spec(
+                "search_tables",
+                "Ranked tables matching a text query, with one-line descriptions.",
+                {"query": s, "k": {"type": "integer", "minimum": 1, "maximum": 100}},
+                ["query"],
+            ),
+            spec(
+                "describe_table",
+                "Everything known about one table: columns, keys, joins, values, pitfalls.",
+                {"table": s},
+                ["table"],
+            ),
+            spec(
+                "find_join_path",
+                "Measured join routes between two tables with join keys, or why there is none.",
+                {"from": s, "to": s},
+                ["from", "to"],
+            ),
+            spec(
+                "column_values",
+                "Observed and declared values of a column (table.column).",
+                {"column": s},
+                ["column"],
+            ),
+            spec(
+                "check_fact",
+                "Check a FactLang claim against the warehouse (e.g. 'ROWS shop.orders VALUE >=1').",
+                {"claim": s},
+                ["claim"],
+            ),
+            spec(
+                "explain_term",
+                "What a business term or metric means and which tables it maps to.",
+                {"term": s},
+                ["term"],
+            ),
+        ]
+
+    def handle_tool_call(self, name: str, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Run one tool; always JSON with a ``text`` field. Bad calls return ``SG803``."""
+        handler = {
+            "schema_context": self._tool_context,
+            "search_tables": self._tool_search,
+            "describe_table": self._tool_describe,
+            "find_join_path": self._tool_path,
+            "column_values": self._tool_values,
+            "check_fact": self._tool_check,
+            "explain_term": self._tool_term,
+        }.get(name)
+        if handler is None:
+            return _tool_error(f"unknown tool {name!r}; known: {', '.join(_TOOL_NAMES)}")
+        try:
+            return handler(dict(args))
+        except (SchemaGuruError, KeyError, TypeError, ValueError) as e:
+            what = f"missing argument {e}" if isinstance(e, KeyError) else str(e)
+            return _tool_error(f"{name}: {what}")
+
+    def _tool_context(self, args: dict[str, Any]) -> dict[str, Any]:
+        budget = int(args.get("budget_tokens", 4000))
+        view = self.context(str(args["question"]), budget_tokens=budget)
+        return {
+            "text": view.text,
+            "tables": [t.canonical() for t in view.tables],
+            "fingerprint": view.fingerprint,
+        }
+
+    def _description(self, ref: ObjectRef) -> str:
+        facts = self.store.facts_for([ref], ["DESCRIPTION"])
+        eff = resolve(facts, now=self._now(), ttl_days=self._config.fact_ttl_days)
+        primary = next((e.primary for e in eff.values() if e.primary is not None), None)
+        text = None if primary is None else primary.value.get("text")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+        table = self.store.table(ref)
+        return (table.comment or "") if table is not None else ""
+
+    def _tool_search(self, args: dict[str, Any]) -> dict[str, Any]:
+        k = int(args.get("k", 10))
+        if not 1 <= k <= 100:
+            raise ValueError("k must be between 1 and 100")
+        hits = self.retriever.search(str(args["query"]), k)[:k]
+        rows = [
+            {"table": r.canonical(), "score": score, "description": self._description(r)}
+            for r, score in hits
+        ]
+        text = "\n".join(
+            f"{row['table']}" + (f" — {row['description']}" if row["description"] else "")
+            for row in rows
+        )
+        return {"text": text or "no matching tables", "tables": rows}
+
+    def _tool_describe(self, args: dict[str, Any]) -> dict[str, Any]:
+        ref = self.table_ref(str(args["table"]))
+        with self._lock:
+            text = self._renderer("agent").block_text(ref, DetailLevel.FULL)
+        return {"text": text, "table": ref.canonical()}
+
+    def _tool_path(self, args: dict[str, Any]) -> dict[str, Any]:
+        res = self.find_path(str(args["from"]), str(args["to"]))
+        lines: list[str] = []
+        for p in res.paths:
+            lines += render_path(p)
+        if res.refusal is not None or res.explanation:
+            lines.append(res.explanation)
+        paths = [
+            {
+                "tables": [t.canonical() for t in p.tables],
+                "coverage": p.coverage,
+                "provisional": p.provisional,
+                "cost": p.cost,
+            }
+            for p in res.paths
+        ]
+        return {
+            "text": "\n".join(lines),
+            "refusal": None if res.refusal is None else res.refusal.value,
+            "paths": paths,
+        }
+
+    def _tool_values(self, args: dict[str, Any]) -> dict[str, Any]:
+        col = self.column_ref(str(args["column"]))
+        with self._lock:
+            eff = self._renderer("agent").knowledge(col.table_ref()).get("VALUES", col.column)
+        entries: list[dict[str, Any]] = []
+        lines = [col.canonical()]
+        for f in [] if eff is None else eff.all:
+            value = _json_safe(dict(f.value))
+            entries.append(
+                {"provenance": f.provenance.value, "status": f.status.value, "value": value}
+            )
+            lines.append(f"  {f.provenance.value} {f.status.value}: {canonical_json(value)}")
+        for c in [] if eff is None else eff.contradictions:
+            lines.append(f"  ⚠ {c}")
+        if not entries:
+            lines.append("  no values known")
+        return {"text": "\n".join(lines), "column": col.canonical(), "entries": entries}
+
+    def _tool_check(self, args: dict[str, Any]) -> dict[str, Any]:
+        claim = str(args["claim"])
+        evidence = [_json_safe(e.to_dict()) for e in self.verify(claim)]
+        text = "\n".join(f"{e.get('verdict')}: {e.get('claim_text')}" for e in evidence)
+        text = text or "no verdict (the backend cannot check claims)"
+        return {"text": text, "evidence": evidence}
+
+    def _tool_term(self, args: dict[str, Any]) -> dict[str, Any]:
+        term = str(args["term"]).strip().casefold()
+        entries: list[dict[str, Any]] = []
+        for f in self.store.facts_for([GLOBAL_SUBJECT], ["GLOSSARY", "METRIC"]):
+            name = f.value.get("term") or f.value.get("name")
+            if not isinstance(name, str) or name.strip().casefold() != term:
+                continue
+            entries.append(
+                {
+                    "term": name,
+                    "kind": f.kind.name,
+                    "definition": f.value.get("definition"),
+                    "maps_to": _json_safe(f.value.get("maps_to") or []),
+                    "provenance": f.provenance.value,
+                }
+            )
+        text = "\n".join(f"{e['term']}: {e['definition']} ({e['provenance']})" for e in entries)
+        return {"text": text or f"no glossary entry for {args['term']!r}", "entries": entries}
+
+    def prompt_block(self, question: str | None = None) -> str:
+        """A system-prompt fragment: how to use the tools, the legend; with a question, its view."""
+        lines = [
+            "You can inspect the data warehouse with these tools:",
+            *(f"- {t['name']}: {t['description']}" for t in self.tools()),
+            "Call schema_context before writing SQL; use only tables and joins it shows, and "
+            "heed every ⚠ line.",
+        ]
+        with self._lock:
+            stable = [b.text for b in self._renderer("agent").global_blocks()]
+        block = "\n\n".join(["\n".join(lines), *stable, LEGEND])
+        if question is None:
+            return block
+        return block + "\n\n" + self.context(question).text
+
+    # ----- async twins (spec 19) --------------------------------------------------------------
+
+    async def acrawl(
+        self, *, include: Sequence[str] | None = None, exclude: Sequence[str] | None = None
+    ) -> CrawlReport:
+        return await asyncio.to_thread(self.crawl, include=include, exclude=exclude)
+
+    async def ameasure(
+        self,
+        targets: Target | Iterable[Target] | None = None,
+        *,
+        all: bool = False,
+        budget: Budget | None = None,
+    ) -> MeasureReport:
+        return await asyncio.to_thread(self.measure, targets, all=all, budget=budget)
+
+    async def adraft(
+        self,
+        targets: Target | Iterable[Target],
+        *,
+        provider: LLMProvider,
+        budget: Budget | int | None = None,
+        verify: bool = True,
+    ) -> DraftReport:
+        return await asyncio.to_thread(
+            self.draft, targets, provider=provider, budget=budget, verify=verify
+        )
+
+    async def acontext(
+        self,
+        question: str,
+        *,
+        budget_tokens: int = 4000,
+        profile: str = "agent",
+        format: str = "text",
+    ) -> ContextView:
+        return await asyncio.to_thread(
+            self.context, question, budget_tokens=budget_tokens, profile=profile, format=format
+        )
+
+    async def arefresh(self, *, label: str | None = None) -> RefreshReport:
+        return await asyncio.to_thread(self.refresh, label=label)
+
+    async def afind_path(self, a: Target, b: Target, *, k: int | None = None) -> PathResult:
+        return await asyncio.to_thread(self.find_path, a, b, k=k)
+
+
+__all__ = ["FIRST_TOUCH", "Guru"]

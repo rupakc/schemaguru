@@ -12,7 +12,7 @@ separators between blocks; :meth:`ViewRenderer.table_budget` reserves the always
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
@@ -21,7 +21,7 @@ from schemaguru._util.timeutil import require_aware
 from schemaguru._util.tokens import CharTokenCounter, TokenCounter
 from schemaguru.config import Config
 from schemaguru.diagnostics import Diagnostic, DiagnosticBag, Severity
-from schemaguru.graph.search import Graph, Path, Refusal, find_paths
+from schemaguru.graph.search import Automaton, Graph, Path, Refusal, find_paths
 from schemaguru.knowledge.resolve import resolve
 from schemaguru.model.detail import DetailLevel
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
@@ -78,10 +78,15 @@ class ContextView:
     fingerprint: str
     tokens: int
     diagnostics: tuple[Diagnostic, ...] = field(default=())
+    # what ``str(view)`` renders (a registered format name); not part of the view's identity
+    format: str = field(default="text", compare=False)
 
     @property
     def text(self) -> str:
         return SEPARATOR.join(b.text for b in self.blocks)
+
+    def __str__(self) -> str:
+        return formats.format_view(self, self.format)
 
     @classmethod
     def build(
@@ -157,7 +162,9 @@ class ViewRenderer:
         graph: Graph | None = None,
         waivers: Sequence[Waiver] = (),
         dialect: str | None = None,
+        rules: Callable[[ObjectRef, ObjectRef], Automaton | None] | None = None,
     ) -> None:
+        """``rules(src, dst)`` gives the waypoint automaton for a join-path search, if any."""
         self.store = store
         self.now = require_aware(now)
         self.cfg = cfg
@@ -165,6 +172,7 @@ class ViewRenderer:
         self.graph = graph
         self.waivers = tuple(waivers)
         self.dialect = dialect
+        self.rules = rules
         self._knowledge: dict[ObjectRef, TableKnowledge] = {}
         self._joins: list[Fact] | None = None
         self._globals: list[ViewBlock] | None = None
@@ -288,7 +296,8 @@ class ViewRenderer:
             seen: set[tuple[tuple[str, bool], ...]] = set()
             for i, a in enumerate(shown):
                 for b in shown[i + 1 :]:
-                    res = find_paths(self.graph, a, b, cfg=gcfg)
+                    auto = None if self.rules is None else self.rules(a, b)
+                    res = find_paths(self.graph, a, b, cfg=gcfg, automaton=auto)
                     if res.refusal in _HAZARD_REFUSALS:
                         why = res.explanation.replace(f"{a.canonical()} -> {b.canonical()} ", "", 1)
                         hazards.setdefault(why, []).append(f"{qname(a)} -> {qname(b)}")

@@ -82,15 +82,25 @@ def _is_type_checking(test: ast.expr) -> bool:
     )
 
 
-def _module_level_imports(tree: ast.AST) -> list[ast.Import | ast.ImportFrom]:
-    """Imports outside function bodies (module level, incl. if/try); TYPE_CHECKING skipped."""
+def _module_level_imports(
+    tree: ast.AST, skip_type_checking: bool = False
+) -> list[ast.Import | ast.ImportFrom]:
+    """Imports outside function bodies (module level, incl. if/try).
+
+    With ``skip_type_checking`` the body of ``if TYPE_CHECKING:`` is ignored (it never runs),
+    but its ``else:`` branch is still visited.
+    """
     found: list[ast.Import | ast.ImportFrom] = []
 
     def visit(node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
                 continue
-            if isinstance(child, ast.If) and _is_type_checking(child.test):
+            if skip_type_checking and isinstance(child, ast.If) and _is_type_checking(child.test):
+                for stmt in child.orelse:
+                    if isinstance(stmt, ast.Import | ast.ImportFrom):
+                        found.append(stmt)
+                    visit(stmt)
                 continue
             if isinstance(child, ast.Import | ast.ImportFrom):
                 found.append(child)
@@ -143,6 +153,7 @@ def check_layering(
         return [f"{filename}: module '{importer}' has no layer in LAYERS"]
     own = LAYERS[own_key]
     problems: list[str] = []
+    # TYPE_CHECKING imports count: the layer rule holds at the type level too.
     for node in _module_level_imports(ast.parse(source, filename)):
         for target in _imported_modules(node, importer, is_pkg):
             key = layer_key(target)
@@ -172,7 +183,7 @@ def check_optional_deps_lazy(source: str, filename: str = "<module>") -> list[st
     allowed = set(sys.stdlib_module_names) | ALWAYS_AVAILABLE
     return [
         f"{filename}:{node.lineno}: module-level third-party import '{top}'"
-        for node in _module_level_imports(ast.parse(source, filename))
+        for node in _module_level_imports(ast.parse(source, filename), skip_type_checking=True)
         for top in _top_levels(node)
         if top not in allowed
     ]
@@ -182,6 +193,7 @@ def check_optional_deps_lazy(source: str, filename: str = "<module>") -> list[st
 
 
 def test_layering() -> None:
+    assert _py_files(), f"no source files found under {SRC}"
     problems: list[str] = []
     for path in _py_files():
         problems += check_layering(
@@ -194,6 +206,7 @@ def test_layering() -> None:
 
 
 def test_factlang_seam() -> None:
+    assert _py_files(), f"no source files found under {SRC}"
     problems: list[str] = []
     for path in _py_files():
         problems += check_factlang_seam(
@@ -203,6 +216,7 @@ def test_factlang_seam() -> None:
 
 
 def test_optional_deps_lazy() -> None:
+    assert _py_files(), f"no source files found under {SRC}"
     problems: list[str] = []
     for path in _py_files():
         problems += check_optional_deps_lazy(path.read_text(encoding="utf-8"), str(path))
@@ -235,10 +249,6 @@ def test_layering_allows_downward_same_package_and_lazy_upward() -> None:
     assert check_layering("from schemaguru.catalog import x\n", "schemaguru.catalog.crawl") == []
     lazy = "def f():\n    from schemaguru.guru import Guru\n"
     assert check_layering(lazy, "schemaguru.model.ref") == []
-    guarded = (
-        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from schemaguru.guru import G\n"
-    )
-    assert check_layering(guarded, "schemaguru.model.ref") == []
 
 
 def test_facade_is_exempt_but_others_cannot_import_it() -> None:
@@ -288,3 +298,30 @@ def test_layer_table_matches_spec_5_1() -> None:
     }
     # every seam module is governed by a layer
     assert all(layer_key(m) for m in FACTLANG_SEAM)
+
+
+def test_negative_control_type_checking_upward_import(tmp_path: Path) -> None:
+    body = (
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from schemaguru.guru import G\n"
+    )
+    src, fn = _write(tmp_path, "tc.py", body)
+    assert check_layering(src, "schemaguru.model.ref", fn)  # flagged by the layer check
+    assert check_optional_deps_lazy(src, fn) == []  # not by the lazy-deps check
+    # the else branch is still checked by both rules
+    other = (
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    pass\nelse:\n"
+        "    import numpy\n    from schemaguru.guru import G\n"
+    )
+    src, fn = _write(tmp_path, "tc2.py", other)
+    assert check_layering(src, "schemaguru.model.ref", fn)
+    assert len(check_optional_deps_lazy(src, fn)) == 1
+    # a downward TYPE_CHECKING import is fine
+    ok = (
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from schemaguru.errors import E\n"
+    )
+    assert check_layering(ok, "schemaguru.model.ref") == []
+
+
+def test_real_tree_guard_detects_missing_source(tmp_path: Path) -> None:
+    assert _py_files(tmp_path / "does-not-exist") == []
+    assert _py_files()

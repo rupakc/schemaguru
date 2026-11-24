@@ -15,16 +15,28 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: write # pushing to <repo>.wiki.git needs it; nothing else is requested
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    env:
+      # the token reaches git only as an HTTP header for single commands: it is never written
+      # into a URL, a remote or .git/config
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      WIKI_URL: https://github.com/${{ github.repository }}.wiki.git
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Clone the wiki repository
         run: |
-          git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          if ! git -c http.extraheader="$auth" clone "$WIKI_URL" wiki; then
+            echo "::error::Cannot clone $WIKI_URL. The GitHub wiki repository does not exist until its first page is created: enable the wiki (Settings > Features > Wikis), create any page once in the web UI, then re-run this workflow."
+            exit 1
+          fi
       - name: Copy docs/wiki into it
         run: rsync -av --delete --exclude ".git" docs/wiki/ wiki/
       - name: Commit and push
@@ -38,4 +50,6 @@ jobs:
             exit 0
           fi
           git commit -m "docs: sync wiki from ${GITHUB_SHA::7}"
-          git push origin HEAD
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c http.extraheader="$auth" push "$WIKI_URL" HEAD

@@ -15,7 +15,7 @@
 | facts | `put_facts`, `iter_facts`, `facts_for(subjects, kinds)` |
 | search | `search(query, k)` (lexical, live tables, name hits first) |
 | snapshots | `snapshot(label, checks_run=...)`, `snapshot_facts`, `snapshot_checks_run`, `latest_snapshot` |
-| state | `crawl_state_get/set`, `ledger_add/ledger_total`, `queue_push/queue_pop`, `feedback_add/feedback_summary` |
+| state | `crawl_state_get`, `crawl_state_set`, `ledger_add`, `ledger_total`, `queue_push`, `queue_pop`, `feedback_add`, `feedback_summary` |
 | transactions | `transaction()` (a context manager) |
 
 The contracts that matter most (each one is relied on elsewhere):

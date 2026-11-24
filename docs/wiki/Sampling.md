@@ -1,6 +1,6 @@
 # Sampling
 
-> Small tables are measured exactly; tables too large to read in full (by default 50 GiB or 500 million rows) are measured on a representative sample.
+> Small tables are measured exactly; tables too large to read in full (by default 50 GiB by catalog bytes, or, only when bytes are unknown, 500 million rows) are measured on a representative sample.
 > Joins and keys use key-hash sampling (the same keys on both sides), column profiles use block sampling, and `LIMIT` is never a sampling method.
 > A sampled number is always labelled as an estimate with its fraction and interval, is never compared with an exact number, and can refute an expectation but never confirm one.
 

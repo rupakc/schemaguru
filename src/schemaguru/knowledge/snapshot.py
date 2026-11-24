@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from schemaguru.store.protocol import Store
 
 
-def take(store: Store, checks_run: Iterable[str] = frozenset(), label: str | None = None) -> str:
+def take(store: Store, checks_run: Iterable[str], label: str | None = None) -> str:
     """Freeze the store's facts; ``checks_run`` records what this run measured.
 
     A later diff must read a check missing from ``checks_run`` as "not measured", never as

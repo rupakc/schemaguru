@@ -179,7 +179,16 @@ def test_distinct_measured_all_retained_and_worst_warns() -> None:
     eff = resolve([a, b], now=NOW, ttl_days=14)[_key(FactKind.PII, STATUS)]
     assert {f.id for f in eff.all} == {a.id, b.id}
     assert eff.observed is not None and eff.observed.id == b.id
-    assert len(eff.contradictions) == 1  # the older contradicted measurement still warns
+    assert eff.contradictions == ()  # a newer measurement clears the older warning
+    older = next(f for f in eff.all if f.id == a.id)
+    assert older.status is Status.STALE  # kept in `all`, no longer warning
+    # but the newest measurement warns when it is the contradicted one
+    a2 = Fact.make(
+        FactKind.PII, STATUS, {"category": "email"}, Provenance.MEASURED,
+        Status.CONTRADICTED, method="shape", observed_at=_ago(0),
+    )  # fmt: skip
+    eff = resolve([a2, b], now=NOW, ttl_days=14)[_key(FactKind.PII, STATUS)]
+    assert len(eff.contradictions) == 1
 
 
 def test_draft_marked_unverified() -> None:
@@ -288,3 +297,67 @@ def test_estimated_never_confirms() -> None:
     eff = resolve([exp, est], now=NOW, ttl_days=14)[_key(FactKind.VALUES, STATUS)]
     assert eff.expectation is not None and eff.expectation.status is Status.UNVERIFIED
     assert eff.contradictions == ()
+
+
+def test_primary_key_expectation_not_replaced_by_catalog() -> None:
+    t = TBL
+    cat = Fact.make(
+        FactKind.PRIMARY_KEY,
+        t,
+        {"columns": ["id"]},
+        Provenance.CATALOG,
+        Status.OBSERVED,
+        observed_at=_ago(1),
+    )
+    hum = Fact.make(
+        FactKind.PRIMARY_KEY, t, {"columns": ["id", "tenant"]}, Provenance.HUMAN, Status.UNVERIFIED
+    )
+    eff = resolve([cat, hum], now=NOW, ttl_days=14)[_key(FactKind.PRIMARY_KEY, t)]
+    assert eff.primary is not None and eff.primary.id == hum.id
+    assert eff.expectation is not None and eff.expectation.id == hum.id
+    assert len(eff.contradictions) == 1 and "catalog primary key" in eff.contradictions[0]
+
+
+def test_declared_expectation_checked_alongside_human() -> None:
+    human = Fact.make(
+        FactKind.VALUES,
+        STATUS,
+        {"values": ["a", "b", "c"], "case_sensitive": True},
+        Provenance.HUMAN,
+        Status.UNVERIFIED,
+    )
+    decl = Fact.make(
+        FactKind.VALUES,
+        STATUS,
+        {"values": ["a", "b"], "case_sensitive": True},
+        Provenance.DECLARED,
+        Status.UNVERIFIED,
+    )
+    obs = Fact.make(
+        FactKind.VALUES, STATUS,
+        {
+            "case_sensitive": True,
+            "observed": [{"value": "a", "count": 1}, {"value": "c", "count": 9}],
+        },
+        Provenance.MEASURED, Status.OBSERVED, method="exact", observed_at=_ago(1),
+    )  # fmt: skip
+    eff = resolve([obs, decl, human], now=NOW, ttl_days=14)[_key(FactKind.VALUES, STATUS)]
+    assert eff.expectation is not None and eff.expectation.id == human.id
+    assert len(eff.contradictions) == 1  # human covers c; declared does not
+    assert "declared values a, b" in eff.contradictions[0] and "c (9 rows)" in eff.contradictions[0]
+
+
+def test_pii_human_beats_measured() -> None:
+    m = Fact.make(
+        FactKind.PII,
+        STATUS,
+        {"category": "email"},
+        Provenance.MEASURED,
+        Status.OBSERVED,
+        method="shape",
+        observed_at=_ago(1),
+    )
+    h = Fact.make(FactKind.PII, STATUS, {"category": "other"}, Provenance.HUMAN, Status.UNVERIFIED)
+    eff = resolve([m, h], now=NOW, ttl_days=14)[_key(FactKind.PII, STATUS)]
+    assert eff.primary is not None and eff.primary.id == h.id
+    assert eff.observed is not None and eff.observed.id == m.id

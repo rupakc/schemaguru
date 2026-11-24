@@ -44,6 +44,17 @@ ADVERSARIAL = {
 }
 
 
+SMALL_N = 12_500
+# Linear work doubles-to-quadruples when the input grows 4x; quadratic is 16x.
+# The ratio, not the wall clock, is what catches backtracking, so it stays
+# meaningful under coverage tracing, which slows every line by a similar factor.
+MAX_SCALING_RATIO = 8.0
+# Generous absolute ceiling: catastrophic backtracking takes seconds, not 2 s.
+ABS_CEILING_S = 2.0
+# Below this the small run is dominated by timer and scheduler noise.
+NOISE_FLOOR_S = 0.005
+
+
 def _best(fn: Callable[[str], object], arg: str) -> float:
     best = 1e9
     for _ in range(3):
@@ -53,25 +64,36 @@ def _best(fn: Callable[[str], object], arg: str) -> float:
     return best
 
 
+def _assert_scales_linearly(fn: Callable[[str], object], text: str, label: object) -> None:
+    """Assert fn on the 50k input is an absolute-fast, linear-scaling operation."""
+    t_small = _best(fn, text[:SMALL_N])
+    t_large = _best(fn, text)
+    ratio = t_large / max(t_small, NOISE_FLOOR_S)
+    assert t_large < ABS_CEILING_S, (label, t_large)
+    assert ratio < MAX_SCALING_RATIO, (label, t_small, t_large, round(ratio, 2))
+
+
 @pytest.mark.parametrize("key", sorted(ADVERSARIAL))
 def test_every_sweep_rule_is_fast(key: str) -> None:
     text = ADVERSARIAL[key]
     for category, rx, _ok, _tok in _RULES:
-        assert _best(lambda s, rx=rx: list(rx.finditer(s)), text) < 0.1, (category, rx.pattern[:40])
+        _assert_scales_linearly(
+            lambda s, rx=rx: list(rx.finditer(s)), text, (category, rx.pattern[:40])
+        )
 
 
 @pytest.mark.parametrize("key", sorted(ADVERSARIAL))
 def test_every_whole_value_detector_is_fast(key: str) -> None:
     text = ADVERSARIAL[key]
     for d in all_detectors():
-        assert _best(d.matches, text) < 0.1, d.name
+        _assert_scales_linearly(d.matches, text, d.name)
 
 
 @pytest.mark.parametrize("key", sorted(ADVERSARIAL))
 def test_mask_and_sweep_are_fast(key: str) -> None:
     text = ADVERSARIAL[key]
-    assert _best(mask_value, text) < 0.5
-    assert _best(sweep, text) < 0.5
+    _assert_scales_linearly(mask_value, text, "mask_value")
+    _assert_scales_linearly(sweep, text, "sweep")
 
 
 @pytest.mark.parametrize(

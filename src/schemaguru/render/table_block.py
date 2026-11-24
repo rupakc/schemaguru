@@ -1421,3 +1421,11 @@ def render_path(path: Path, *, snippet: str | None = None) -> list[str]:
         lines.append(f"    SQL: {first}")
         lines += [f"         {ln}" for ln in rest]
     return lines
+
+
+# ----- the value policy for other outbound surfaces ------------------------------------------
+
+ValuePresenter = _Analyser
+"""One table's value policy for surfaces other than a table block (the agent tools): ``mode``,
+``shown(column, value)``, ``free(text)``, ``reason(fact)``, ``pii_cols``; ``run()`` gives the
+policy-applied :class:`Analysis`. The same object the renderer uses, so they cannot drift."""

@@ -431,3 +431,34 @@ class FactLangBackend:
                 )
             )
         return out
+
+
+def scrub_evidence(ev: Evidence, mode: Mode) -> Evidence:
+    """``ev`` as it may leave SchemaGuru under ``mode`` (SQL templated, values scrubbed)."""
+    return _scrubbed(ev, mode)
+
+
+def check_tool_definition() -> dict[str, Any] | None:
+    """FactLang's ``factlang_check`` agent tool spec, or None when the installed FactLang has
+    no agent surface (``factlang.agent.tool_definitions`` + ``handle_tool_call``).
+
+    Only the definition crosses the seam (description, ``input_schema``); claims still run
+    through ``FactLangBackend.check``, so their evidence is scrubbed by the value policy.
+    """
+    defs = _attr("factlang.agent", "tool_definitions")
+    if not callable(defs) or not callable(_attr("factlang.agent", "handle_tool_call")):
+        return None
+    try:
+        specs = list(defs())
+    except Exception:
+        return None
+    for spec in specs:
+        if isinstance(spec, Mapping) and spec.get("name") == "factlang_check":
+            schema = spec.get("input_schema")
+            if isinstance(schema, Mapping) and isinstance(spec.get("description"), str):
+                return {
+                    "name": "factlang_check",
+                    "description": str(spec["description"]),
+                    "input_schema": dict(schema),
+                }
+    return None

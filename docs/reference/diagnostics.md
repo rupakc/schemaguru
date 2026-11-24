@@ -44,3 +44,4 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG801 | guard refused the SQL: not a single read-only SELECT/WITH statement |
 | SG802 | guard refused the SQL: it reads a never-query table |
 | SG803 | an agent tool call was refused: unknown tool or invalid arguments |
+| SG804 | an agent tool failed unexpectedly (error type and a masked message returned) |

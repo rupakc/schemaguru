@@ -107,8 +107,12 @@ class Config:
     llm_model: str = "claude-sonnet-5-5"
     # token counter for view budgets: chars/4 heuristic, or tiktoken (extra ``tiktoken``)
     token_counter: Literal["chars", "tiktoken"] = "chars"
+    # the agent tool ``check_fact`` runs claims on the warehouse (spend, under the budget);
+    # "deny" removes the tool and refuses calls to it
+    agent_checks: Literal["allow", "deny"] = "allow"
 
     def __post_init__(self) -> None:
+        _check("agent_checks", self.agent_checks, ("allow", "deny"))
         _check("measure_on_demand", self.measure_on_demand, ("queue", "background", "block"))
         _check("token_counter", self.token_counter, ("chars", "tiktoken"))
 

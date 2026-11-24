@@ -42,7 +42,7 @@ anthropic = ["anthropic>=0.40"]
 openai = ["openai>=1.50"]
 embeddings = ["numpy>=1.26"]
 tiktoken = ["tiktoken>=0.7"]
-mcp = ["mcp>=1.0"]
+mcp = ["mcp>=2"]
 server = ["starlette>=0.37", "uvicorn>=0.30"]
 langchain = ["langchain-core>=0.3"]
 llamaindex = ["llama-index-core>=0.11"]
@@ -63,7 +63,7 @@ all = [
   "openai>=1.50",
   "numpy>=1.26",
   "tiktoken>=0.7",
-  "mcp>=1.0",
+  "mcp>=2",
   "starlette>=0.37",
   "uvicorn>=0.30",
   "langchain-core>=0.3",

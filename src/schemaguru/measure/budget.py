@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from typing import Literal
 
 from schemaguru.config import Budget
@@ -46,8 +46,8 @@ class BudgetGuard:
         now = clock()
         self._start = now
         self._period_start = now
-        # request -> (charged bytes counted in the committed total, known estimate or None)
-        self._reserved: dict[Request, tuple[int | None, int | None]] = {}
+        # request (or any key) -> (charged bytes counted in the committed total, known estimate)
+        self._reserved: dict[Hashable, tuple[int | None, int | None]] = {}
         self.spent_bytes = 0  # this period, including pessimistic charges
         self.lifetime_spent_bytes = 0
         self.probes = 0
@@ -77,6 +77,14 @@ class BudgetGuard:
         return self.spent_bytes + sum(c for c, _ in self._reserved.values() if c is not None)
 
     def admit(self, estimate: CostEstimate) -> Admission:
+        return self.admit_key(estimate.request, estimate.bytes)
+
+    def admit_key(self, key: Hashable, known: int | None) -> Admission:
+        """Admit one priced unit of spend under ``key`` (``known=None``: unknown cost).
+
+        :meth:`admit` is this for a probe; hosts of other spend (an agent's claim check) use
+        it directly, with a key of their own, and pair it with :meth:`record_key`.
+        """
         b = self._budget
         now = self._clock()
         self._refill(now)
@@ -84,7 +92,6 @@ class BudgetGuard:
             return "over_total"
         if b.max_seconds is not None and now - self._start > b.max_seconds:
             return "over_total"
-        known = estimate.bytes
         if (
             known is not None
             and b.max_bytes_per_probe is not None
@@ -106,26 +113,33 @@ class BudgetGuard:
         self.probes += 1
         if known is None:
             self.unknown_cost += 1
-        self._reserved[estimate.request] = (charge, known)
+        self._reserved[key] = (charge, known)
         return "run"
 
     def record(self, result: MeasureResult) -> None:
         """Write what the probe spent to the ledger: reported bytes, else the admitted estimate,
         else the pessimistic charge (ledgered as unknown)."""
         reported = None if result.evidence is None else result.evidence.bytes_processed
-        charge, known = self._reserved.pop(result.request, (None, None))
-        note = _label(result.request)
+        self.record_key(result.request, reported, _label(result.request))
+
+    def record_key(
+        self, key: Hashable, reported: int | None, note: str, *, kind: str = LEDGER_KIND
+    ) -> None:
+        """Ledger the spend of an admitted ``key`` under ``kind`` (unknown spend under
+        ``<kind>.unknown_bytes``): reported bytes, else the estimate, else the charge."""
+        unknown_kind = f"{kind}.unknown_bytes"
+        charge, known = self._reserved.pop(key, (None, None))
         spent = reported if reported is not None else known
         if spent is not None:
             self._spend(int(spent))
-            self._store.ledger_add(LEDGER_KIND, int(spent), "bytes", note)
+            self._store.ledger_add(kind, int(spent), "bytes", note)
         else:
             self.unknown_spend += 1
-            self._store.ledger_add(LEDGER_UNKNOWN, 1, "queries", note)
+            self._store.ledger_add(unknown_kind, 1, "queries", note)
             if charge is not None:
                 self._spend(charge)
-                self._store.ledger_add(LEDGER_UNKNOWN, charge, "bytes", note + " (pessimistic)")
-        self._store.ledger_add(LEDGER_KIND, 1, "queries", note)
+                self._store.ledger_add(unknown_kind, charge, "bytes", note + " (pessimistic)")
+        self._store.ledger_add(kind, 1, "queries", note)
 
     def _spend(self, amount: int) -> None:
         self.spent_bytes += amount

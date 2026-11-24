@@ -1,0 +1,119 @@
+"""The MCP server (spec 18.3, extra ``mcp``): the agent tools plus ``schema://tables/{ref}``.
+
+Built on the official ``mcp`` SDK's low-level ``Server`` (``mcp>=2``: handlers are passed to
+the constructor as ``on_*`` callables) and served over stdio. The SDK is imported lazily, so
+this module imports without the extra. Every tool call goes through
+:func:`schemaguru.agent.dispatch.handle_tool_call` (value policy, never raises); a resource
+read is ``describe_table`` of the ref.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib
+from typing import Any
+from urllib.parse import unquote
+
+from schemaguru.__about__ import __version__
+from schemaguru.agent.dispatch import handle_tool_call
+from schemaguru.agent.tools import ToolHost, tool_definitions
+
+RESOURCE_PREFIX = "schema://tables/"
+RESOURCE_TEMPLATE = RESOURCE_PREFIX + "{ref}"
+MAX_LISTED_RESOURCES = 500  # tables listed by resources/list; any table is readable by template
+
+
+def _sdk() -> tuple[Any, Any]:
+    try:
+        types = importlib.import_module("mcp.types")
+        lowlevel = importlib.import_module("mcp.server.lowlevel")
+    except ImportError as e:  # pragma: no cover - exercised only without the extra
+        raise ImportError(
+            "the MCP server needs the 'mcp' extra: pip install schemaguru[mcp]"
+        ) from e
+    return types, lowlevel
+
+
+def build_server(guru: ToolHost, *, name: str = "schemaguru") -> Any:
+    """An ``mcp.server.lowlevel.Server`` exposing the tools and table resources of ``guru``."""
+    types, lowlevel = _sdk()
+
+    async def list_tools(ctx: Any, params: Any) -> Any:
+        tools = [
+            types.Tool(name=s["name"], description=s["description"], input_schema=s["input_schema"])
+            for s in tool_definitions(guru)
+        ]
+        return types.ListToolsResult(tools=tools)
+
+    async def call_tool(ctx: Any, params: Any) -> Any:
+        args = params.arguments if params.arguments is not None else {}
+        result = await asyncio.to_thread(handle_tool_call, guru, params.name, args)
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=result["text"])],
+            structured_content=result,
+            is_error="error" in result,
+        )
+
+    async def list_templates(ctx: Any, params: Any) -> Any:
+        template = types.ResourceTemplate(
+            name="table",
+            uri_template=RESOURCE_TEMPLATE,
+            description="Everything known about one table (the describe_table block).",
+            mime_type="text/plain",
+        )
+        return types.ListResourceTemplatesResult(resource_templates=[template])
+
+    async def list_resources(ctx: Any, params: Any) -> Any:
+        def refs() -> list[str]:
+            out: list[str] = []
+            for t in guru.store.iter_tables():
+                out.append(t.ref.canonical())
+                if len(out) >= MAX_LISTED_RESOURCES:
+                    break
+            return out
+
+        resources = [
+            types.Resource(name=ref, uri=RESOURCE_PREFIX + ref, mime_type="text/plain")
+            for ref in await asyncio.to_thread(refs)
+        ]
+        return types.ListResourcesResult(resources=resources)
+
+    async def read_resource(ctx: Any, params: Any) -> Any:
+        uri = str(params.uri)
+        if uri.startswith(RESOURCE_PREFIX):
+            ref = unquote(uri[len(RESOURCE_PREFIX) :])
+            result = await asyncio.to_thread(
+                handle_tool_call, guru, "describe_table", {"table": ref}
+            )
+            text = result["text"]
+        else:
+            text = f"SG803 unknown resource (expected {RESOURCE_TEMPLATE})"
+        contents = types.TextResourceContents(uri=uri, mime_type="text/plain", text=text)
+        return types.ReadResourceResult(contents=[contents])
+
+    return lowlevel.Server(
+        name,
+        version=__version__,
+        instructions="Schema intelligence for one data warehouse: call schema_context first.",
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
+        on_list_resource_templates=list_templates,
+        on_list_resources=list_resources,
+        on_read_resource=read_resource,
+    )
+
+
+async def serve_async(guru: ToolHost, *, name: str = "schemaguru") -> None:
+    """Serve ``guru`` over stdio until the client disconnects."""
+    server = build_server(guru, name=name)
+    stdio = importlib.import_module("mcp.server.stdio")
+    async with stdio.stdio_server() as (read, write):
+        await server.run(read, write, server.create_initialization_options())
+
+
+def serve(guru: ToolHost, *, name: str = "schemaguru") -> None:
+    """Blocking stdio MCP server (``schemaguru mcp``)."""
+    asyncio.run(serve_async(guru, name=name))
+
+
+__all__ = ["RESOURCE_TEMPLATE", "build_server", "serve", "serve_async"]

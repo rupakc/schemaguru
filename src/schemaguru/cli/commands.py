@@ -560,7 +560,7 @@ def context(args: argparse.Namespace, io: IO) -> int:
 def _tool(guru: Guru, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     result = guru.handle_tool_call(name, arguments)
     if "error" in result:
-        raise UsageError(str(result["error"]))
+        raise UsageError(str(result["text"]))  # "SG8xx <masked message>"
     return result
 
 
@@ -697,6 +697,7 @@ def serve(args: argparse.Namespace, io: IO) -> int:
 
 def mcp(args: argparse.Namespace, io: IO) -> int:
     module = _optional("schemaguru.agent.mcp", "mcp", "the MCP server")
+    _optional("mcp.server.lowlevel", "mcp", "the MCP SDK")  # the module imports it lazily
     entry = getattr(module, "serve", None)
     if not callable(entry):
         raise UsageError(

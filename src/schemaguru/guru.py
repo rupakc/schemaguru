@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
-import json
 import math
 import os
 import threading
@@ -46,9 +45,9 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, overload
+from typing import Any, TypeVar, overload
 
-from schemaguru._util.hashing import canonical_json, stable_hash
+from schemaguru._util.hashing import stable_hash
 from schemaguru._util.timeutil import require_aware, utcnow
 from schemaguru.catalog.crawl import CrawlReport
 from schemaguru.catalog.crawl import crawl as _crawl
@@ -63,7 +62,7 @@ from schemaguru.draft.accept import write_accepted
 from schemaguru.draft.pipeline import DraftReport, draft_tables
 from schemaguru.draft.provider import LLMProvider
 from schemaguru.draft.verify import verify_drafts
-from schemaguru.errors import SchemaGuruError
+from schemaguru.errors import AmbiguousNameError, SchemaGuruError
 from schemaguru.feedback.intake import report_error as _report_error
 from schemaguru.graph.chains import compile_chain
 from schemaguru.graph.edges import build_edges, entity_tables
@@ -78,19 +77,16 @@ from schemaguru.measure.flbridge import FactLangBackend
 from schemaguru.measure.requests import Request
 from schemaguru.measure.scheduler import BackgroundDrainer, MeasureReport, Scheduler
 from schemaguru.model.chains import Chain, FilterStep
-from schemaguru.model.detail import DetailLevel
 from schemaguru.model.evidence import Evidence
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
 from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays.loader import load_overlays as _load_overlays
-from schemaguru.overlays.schema import GLOBAL_SUBJECT, WaypointSpec
+from schemaguru.overlays.schema import WaypointSpec
 from schemaguru.refresh.report import RefreshReport
 from schemaguru.refresh.run import refresh as _refresh
 from schemaguru.render.fingerprint import fingerprint_views as _fingerprint_views
 from schemaguru.render.formats import format_view
 from schemaguru.render.fragments import validate_filter
-from schemaguru.render.legend import LEGEND
-from schemaguru.render.table_block import render_path
 from schemaguru.render.view import ContextView, ViewRenderer
 from schemaguru.scope.expand import expand
 from schemaguru.scope.pipeline import NOT_SHOWN_PROBE, build_scope
@@ -101,17 +97,9 @@ from schemaguru.store.protocol import Store
 from schemaguru.store.sqlite import SQLiteStore
 
 Target = str | ObjectRef
+_T = TypeVar("_T")
 FIRST_TOUCH = "first_touch"  # queue reason for a table a question scoped before it was measured
 _GLOB = frozenset("*?[")
-_TOOL_NAMES = (
-    "schema_context",
-    "search_tables",
-    "describe_table",
-    "find_join_path",
-    "column_values",
-    "check_fact",
-    "explain_term",
-)
 
 
 class _NoBackend:
@@ -187,14 +175,6 @@ def _counter_for(cfg: Config) -> TokenCounter:
     return TiktokenCounter() if cfg.token_counter == "tiktoken" else CharTokenCounter()
 
 
-def _tool_error(message: str) -> dict[str, Any]:
-    return {"error": message, "code": "SG803", "text": f"SG803 {message}"}
-
-
-def _json_safe(obj: Any) -> Any:
-    return json.loads(canonical_json(obj))
-
-
 class Guru:
     """Schema intelligence for one warehouse: crawl, measure, draft, overlay, scope, render."""
 
@@ -258,6 +238,7 @@ class Guru:
         self._runs = threading.Condition()
         self._active_runs = 0
         self._closing = False
+        self._check_guard: BudgetGuard | None = None
 
     # ----- construction ---------------------------------------------------------------------
 
@@ -351,6 +332,7 @@ class Guru:
                     self._cache = _LRU(value.scope.cache_entries)
                     if not self._explicit_counter:
                         self.counter = _counter_for(value)
+                    self._check_guard = None
                     self._invalidate()
             finally:
                 with self._lock:
@@ -418,7 +400,10 @@ class Guru:
                     return cands[0]
         if cands:
             listed = ", ".join(c.canonical() for c in cands)
-            raise SchemaGuruError(f"table name {name!r} is ambiguous: {listed}")
+            raise AmbiguousNameError(
+                f"table name {name!r} is ambiguous: {listed}",
+                tuple(c.canonical() for c in cands),
+            )
         raise SchemaGuruError(f"unknown table {name!r} (crawl first, or qualify the name)")
 
     def column_ref(self, name: Target) -> ObjectRef:
@@ -917,203 +902,37 @@ class Guru:
         """Byte-deterministic JSON export of the store (spec 7.3)."""
         export_json(self.store, path)
 
-    # ----- agent surface (spec 18) ------------------------------------------------------------
+    # ----- agent surface (spec 18; the logic lives in schemaguru.agent) -----------------------
 
     def tools(self) -> list[dict[str, Any]]:
         """JSON-schema tool specs (``name``, ``description``, ``input_schema``)."""
+        from schemaguru.agent.tools import tool_definitions
 
-        def spec(
-            name: str, description: str, props: dict[str, Any], req: list[str]
-        ) -> dict[str, Any]:
-            schema = {"type": "object", "properties": props, "required": req}
-            return {"name": name, "description": description, "input_schema": schema}
-
-        s = {"type": "string"}
-        return [
-            spec(
-                "schema_context",
-                "The warehouse tables, columns, measured joins and hazards relevant to a "
-                "question. Call this first.",
-                {"question": s, "budget_tokens": {"type": "integer", "minimum": 0}},
-                ["question"],
-            ),
-            spec(
-                "search_tables",
-                "Ranked tables matching a text query, with one-line descriptions.",
-                {"query": s, "k": {"type": "integer", "minimum": 1, "maximum": 100}},
-                ["query"],
-            ),
-            spec(
-                "describe_table",
-                "Everything known about one table: columns, keys, joins, values, pitfalls.",
-                {"table": s},
-                ["table"],
-            ),
-            spec(
-                "find_join_path",
-                "Measured join routes between two tables with join keys, or why there is none.",
-                {"from": s, "to": s},
-                ["from", "to"],
-            ),
-            spec(
-                "column_values",
-                "Observed and declared values of a column (table.column).",
-                {"column": s},
-                ["column"],
-            ),
-            spec(
-                "check_fact",
-                "Check a FactLang claim against the warehouse (e.g. 'ROWS shop.orders VALUE >=1').",
-                {"claim": s},
-                ["claim"],
-            ),
-            spec(
-                "explain_term",
-                "What a business term or metric means and which tables it maps to.",
-                {"term": s},
-                ["term"],
-            ),
-        ]
+        return tool_definitions(self)
 
     def handle_tool_call(self, name: str, args: Mapping[str, Any]) -> dict[str, Any]:
-        """Run one tool; always JSON with a ``text`` field. Bad calls return ``SG803``."""
-        handler = {
-            "schema_context": self._tool_context,
-            "search_tables": self._tool_search,
-            "describe_table": self._tool_describe,
-            "find_join_path": self._tool_path,
-            "column_values": self._tool_values,
-            "check_fact": self._tool_check,
-            "explain_term": self._tool_term,
-        }.get(name)
-        if handler is None:
-            return _tool_error(f"unknown tool {name!r}; known: {', '.join(_TOOL_NAMES)}")
-        try:
-            return handler(dict(args))
-        except (SchemaGuruError, KeyError, TypeError, ValueError) as e:
-            what = f"missing argument {e}" if isinstance(e, KeyError) else str(e)
-            return _tool_error(f"{name}: {what}")
+        """Run one tool; always JSON with a ``text`` field, never raises (errors: ``SG8xx``)."""
+        from schemaguru.agent.dispatch import handle_tool_call
 
-    def _tool_context(self, args: dict[str, Any]) -> dict[str, Any]:
-        budget = int(args.get("budget_tokens", 4000))
-        view = self.context(str(args["question"]), budget_tokens=budget)
-        return {
-            "text": view.text,
-            "tables": [t.canonical() for t in view.tables],
-            "fingerprint": view.fingerprint,
-        }
-
-    def _description(self, ref: ObjectRef) -> str:
-        facts = self.store.facts_for([ref], ["DESCRIPTION"])
-        eff = resolve(facts, now=self._now(), ttl_days=self._config.fact_ttl_days)
-        primary = next((e.primary for e in eff.values() if e.primary is not None), None)
-        text = None if primary is None else primary.value.get("text")
-        if isinstance(text, str) and text.strip():
-            return text.strip()
-        table = self.store.table(ref)
-        return (table.comment or "") if table is not None else ""
-
-    def _tool_search(self, args: dict[str, Any]) -> dict[str, Any]:
-        k = int(args.get("k", 10))
-        if not 1 <= k <= 100:
-            raise ValueError("k must be between 1 and 100")
-        hits = self.retriever.search(str(args["query"]), k)[:k]
-        rows = [
-            {"table": r.canonical(), "score": score, "description": self._description(r)}
-            for r, score in hits
-        ]
-        text = "\n".join(
-            f"{row['table']}" + (f" — {row['description']}" if row["description"] else "")
-            for row in rows
-        )
-        return {"text": text or "no matching tables", "tables": rows}
-
-    def _tool_describe(self, args: dict[str, Any]) -> dict[str, Any]:
-        ref = self.table_ref(str(args["table"]))
-        with self._lock:
-            text = self._renderer("agent").block_text(ref, DetailLevel.FULL)
-        return {"text": text, "table": ref.canonical()}
-
-    def _tool_path(self, args: dict[str, Any]) -> dict[str, Any]:
-        res = self.find_path(str(args["from"]), str(args["to"]))
-        lines: list[str] = []
-        for p in res.paths:
-            lines += render_path(p)
-        if res.refusal is not None or res.explanation:
-            lines.append(res.explanation)
-        paths = [
-            {
-                "tables": [t.canonical() for t in p.tables],
-                "coverage": p.coverage,
-                "provisional": p.provisional,
-                "cost": p.cost,
-            }
-            for p in res.paths
-        ]
-        return {
-            "text": "\n".join(lines),
-            "refusal": None if res.refusal is None else res.refusal.value,
-            "paths": paths,
-        }
-
-    def _tool_values(self, args: dict[str, Any]) -> dict[str, Any]:
-        col = self.column_ref(str(args["column"]))
-        with self._lock:
-            eff = self._renderer("agent").knowledge(col.table_ref()).get("VALUES", col.column)
-        entries: list[dict[str, Any]] = []
-        lines = [col.canonical()]
-        for f in [] if eff is None else eff.all:
-            value = _json_safe(dict(f.value))
-            entries.append(
-                {"provenance": f.provenance.value, "status": f.status.value, "value": value}
-            )
-            lines.append(f"  {f.provenance.value} {f.status.value}: {canonical_json(value)}")
-        for c in [] if eff is None else eff.contradictions:
-            lines.append(f"  ⚠ {c}")
-        if not entries:
-            lines.append("  no values known")
-        return {"text": "\n".join(lines), "column": col.canonical(), "entries": entries}
-
-    def _tool_check(self, args: dict[str, Any]) -> dict[str, Any]:
-        claim = str(args["claim"])
-        evidence = [_json_safe(e.to_dict()) for e in self.verify(claim)]
-        text = "\n".join(f"{e.get('verdict')}: {e.get('claim_text')}" for e in evidence)
-        text = text or "no verdict (the backend cannot check claims)"
-        return {"text": text, "evidence": evidence}
-
-    def _tool_term(self, args: dict[str, Any]) -> dict[str, Any]:
-        term = str(args["term"]).strip().casefold()
-        entries: list[dict[str, Any]] = []
-        for f in self.store.facts_for([GLOBAL_SUBJECT], ["GLOSSARY", "METRIC"]):
-            name = f.value.get("term") or f.value.get("name")
-            if not isinstance(name, str) or name.strip().casefold() != term:
-                continue
-            entries.append(
-                {
-                    "term": name,
-                    "kind": f.kind.name,
-                    "definition": f.value.get("definition"),
-                    "maps_to": _json_safe(f.value.get("maps_to") or []),
-                    "provenance": f.provenance.value,
-                }
-            )
-        text = "\n".join(f"{e['term']}: {e['definition']} ({e['provenance']})" for e in entries)
-        return {"text": text or f"no glossary entry for {args['term']!r}", "entries": entries}
+        return handle_tool_call(self, name, args)
 
     def prompt_block(self, question: str | None = None) -> str:
         """A system-prompt fragment: how to use the tools, the legend; with a question, its view."""
-        lines = [
-            "You can inspect the data warehouse with these tools:",
-            *(f"- {t['name']}: {t['description']}" for t in self.tools()),
-            "Call schema_context before writing SQL; use only tables and joins it shows, and "
-            "heed every ⚠ line.",
-        ]
+        from schemaguru.agent.prompt import prompt_block
+
+        return prompt_block(self, question)
+
+    def _with_renderer(self, fn: Callable[[ViewRenderer], _T], profile: str = "agent") -> _T:
+        """Run ``fn`` on a renderer of the current knowledge, under the graph lock."""
         with self._lock:
-            stable = [b.text for b in self._renderer("agent").global_blocks()]
-        block = "\n\n".join(["\n".join(lines), *stable, LEGEND])
-        if question is None:
-            return block
-        return block + "\n\n" + self.context(question).text
+            return fn(self._renderer(profile))
+
+    def _agent_guard(self) -> BudgetGuard:
+        """The budget guard every agent-requested warehouse check is admitted through."""
+        with self._lock:
+            if self._check_guard is None:
+                self._check_guard = BudgetGuard(self._config.budget, self.store)
+            return self._check_guard
 
     # ----- async twins (spec 19) --------------------------------------------------------------
 

@@ -632,50 +632,22 @@ def test_refresh_and_export(guru: Guru, tmp_path: Path) -> None:
 
 
 def test_tools_and_handle_tool_call(guru: Guru, tmp_path: Path) -> None:
+    """The façade delegates to schemaguru.agent (tested in depth in tests/unit/agent)."""
+    from schemaguru.agent import handle_tool_call, tool_definitions
+
     p = tmp_path / "o.yaml"
     p.write_text(OVERLAY, encoding="utf-8")
     guru.load_overlays(p)
     guru.measure(["shop.orders", "shop.customers"])
-    specs = guru.tools()
-    names = [s["name"] for s in specs]
-    assert names == [
-        "schema_context",
-        "search_tables",
-        "describe_table",
-        "find_join_path",
-        "column_values",
-        "check_fact",
-        "explain_term",
-    ]
-    assert all(s["input_schema"]["type"] == "object" and s["description"] for s in specs)
-
-    def call(name: str, args: dict[str, Any]) -> dict[str, Any]:
-        out = guru.handle_tool_call(name, args)
-        json.dumps(out)  # JSON-serialisable
-        assert isinstance(out["text"], str)
-        return out
-
-    assert "[shop.orders]" in call("schema_context", {"question": "refund rate by month"})["text"]
-    hits = call("search_tables", {"query": "orders", "k": 3})
-    assert hits["tables"][0]["table"] == "shop.orders"
-    assert "One row per order placed" in hits["tables"][0]["description"]
-    assert "[shop.orders]" in call("describe_table", {"table": "orders"})["text"]
-    path = call("find_join_path", {"from": "orders", "to": "customers"})
-    assert path["refusal"] is None and "shop.orders" in path["text"]
-    vals = call("column_values", {"column": "shop.orders.status"})
+    assert guru.tools() == tool_definitions(guru)
+    assert all(s["input_schema"]["type"] == "object" and s["description"] for s in guru.tools())
+    out = guru.handle_tool_call("describe_table", {"table": "orders"})
+    assert out == handle_tool_call(guru, "describe_table", {"table": "orders"})
+    assert "[shop.orders]" in out["text"]
+    vals = guru.handle_tool_call("column_values", {"column": "shop.orders.status"})
     assert "PAID" in vals["text"] and "refunded" in vals["text"]
-    assert call("check_fact", {"claim": "ROWS shop.orders VALUE >=1"})["evidence"] == []
-    term = call("explain_term", {"term": "Refund Rate"})
-    assert "refunded orders over all orders" in term["text"]
-    assert call("explain_term", {"term": "nothing"})["entries"] == []
-    for name, args in [
-        ("nope", {}),
-        ("describe_table", {}),
-        ("describe_table", {"table": "nowhere"}),
-        ("search_tables", {"query": "x", "k": "many"}),
-    ]:
-        err = call(name, args)
-        assert err["error"] and err["code"] == "SG803"
+    err = guru.handle_tool_call("nope", {})
+    assert err["error"]["code"] == "SG803" and json.loads(json.dumps(err)) == err
 
 
 def test_prompt_block(guru: Guru) -> None:

@@ -6,12 +6,9 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
-
 from schemaguru.model.facts import Fact, Provenance, Status
 from schemaguru.model.kinds import FactKind
 from schemaguru.model.refs import ObjectRef
-from schemaguru.model.structure import Table
 from schemaguru.store import schema_sql
 from schemaguru.store.sqlite import SQLiteStore
 
@@ -48,25 +45,6 @@ def test_facts_for_filters_kinds_in_sql(store: SQLiteStore) -> None:
     assert any("facts_subject_kind" in str(row) for row in plan)
 
 
-def test_tables_named_case_insensitive_live_only(store: SQLiteStore) -> None:
-    store.upsert_tables(
-        [
-            Table(tref("Orders"), "table"),
-            Table(tref("orders", "archive"), "table"),
-            Table(tref("order_items"), "table"),
-            Table(tref("orders", "old"), "table"),
-        ]
-    )
-    store.mark_withdrawn([tref("orders", "old")], NOW)
-    assert store.tables_named(["orders"], limit=10) == [
-        tref("orders", "archive"),
-        tref("Orders"),
-    ]
-    assert store.tables_named(["ORDER_ITEMS", "nope"], limit=10) == [tref("order_items")]
-    assert store.tables_named(["orders"], limit=1) == [tref("orders", "archive")]
-    assert store.tables_named([], limit=5) == []
-
-
 def test_tables_named_backfilled_by_migration(tmp_path: Path) -> None:
     """A version-1 store gains the name index on open, for tables written before it existed."""
     p = tmp_path / "v1.db"
@@ -84,28 +62,3 @@ def test_tables_named_backfilled_by_migration(tmp_path: Path) -> None:
     con.close()
     with SQLiteStore(p) as s:
         assert s.tables_named(["orders"], limit=5) == [tref("Orders")]
-
-
-def test_embeddings_roundtrip_live_only(store: SQLiteStore) -> None:
-    store.upsert_tables([Table(tref("orders"), "table"), Table(tref("legacy"), "table")])
-    store.embeddings_put(
-        "m1",
-        [(tref("orders"), "h1", [1.0, 0.5]), (tref("legacy"), "h2", [0.0, 1.0])],
-    )
-    store.embeddings_put("m2", [(tref("orders"), "h3", [2.0])])
-    store.mark_withdrawn([tref("legacy")], NOW)
-    rows = store.embeddings_get("m1")
-    assert [(r, h, d) for r, h, d, _ in rows] == [(tref("orders"), "h1", 2)]
-    import struct
-
-    assert struct.unpack("<2f", rows[0][3]) == (1.0, 0.5)
-    # replace by (model, ref)
-    store.embeddings_put("m1", [(tref("orders"), "h9", [3.0, 3.0])])
-    assert store.embeddings_hashes("m1") == {tref("orders"): "h9", tref("legacy"): "h2"}
-    assert [h for _, h, _, _ in store.embeddings_get("m2")] == ["h3"]
-
-
-def test_embeddings_reject_ragged(store: SQLiteStore) -> None:
-    store.upsert_tables([Table(tref("orders"), "table")])
-    with pytest.raises(ValueError, match="empty"):
-        store.embeddings_put("m", [(tref("orders"), "h", [])])

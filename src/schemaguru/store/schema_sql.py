@@ -19,10 +19,15 @@ VERSION_DDL = (
 )
 
 
-def migrations() -> list[tuple[int, str]]:
-    """``(version, sql)`` in ascending order; versions must be 1..N without gaps."""
+def migrations(dialect: str = "sqlite") -> list[tuple[int, str]]:
+    """``(version, sql)`` in ascending order; versions must be 1..N without gaps.
+
+    ``sqlite`` reads ``migrations/*.sql``; ``pg`` reads ``migrations/pg/*.sql`` (its own series).
+    """
     found: list[tuple[int, str]] = []
     root = resources.files("schemaguru.store").joinpath("migrations")
+    if dialect != "sqlite":
+        root = root.joinpath(dialect)
     for entry in root.iterdir():
         m = _NAME.match(entry.name)
         if m:
@@ -34,6 +39,7 @@ def migrations() -> list[tuple[int, str]]:
 
 
 LATEST_VERSION = len(migrations())
+LATEST_PG_VERSION = len(migrations("pg"))
 
 
 def statements(sql: str) -> list[str]:

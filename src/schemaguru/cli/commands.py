@@ -32,6 +32,7 @@ from schemaguru.overlays.dbt import import_dbt as _import_dbt
 from schemaguru.overlays.writer import export_drafts as _export_drafts
 
 DEFAULT_STORE = os.path.join(".schemaguru", "default.db")
+_PG_SCHEMES = ("postgres://", "postgresql://")
 _DRAFT_ONLY_KEYS = ("prompt_hash", "candidate")
 _REJECTED_KEY = "review.rejected"
 
@@ -155,21 +156,29 @@ def _guru(
     cfg = _config(args)
     url = _url(args)
     store = args.store or cfg.store_path
-    if url:
-        guru = Guru.connect(url, store=store, config=cfg, crawl=crawl)
-    else:
-        if need_url:
-            raise UsageError(f"{name} needs a warehouse: pass --url or set SCHEMAGURU_URL")
-        path = store or DEFAULT_STORE
-        if not os.path.exists(path):
-            raise UsageError(
-                f"no store at {path}: run `schemaguru crawl --url ...` first, or pass --store"
-            )
-        guru = Guru(store=path, config=cfg)
+    shared: Any = None  # a Postgres store (``--store postgres://...``) is opened here
+    if isinstance(store, str) and store.startswith(_PG_SCHEMES):
+        shared = _optional("schemaguru.store.postgres", "postgres-store", "the Postgres store")
+        shared = shared.PostgresStore(store)
     try:
-        yield guru
+        if url:
+            guru = Guru.connect(url, store=shared or store, config=cfg, crawl=crawl)
+        else:
+            if need_url:
+                raise UsageError(f"{name} needs a warehouse: pass --url or set SCHEMAGURU_URL")
+            path = store or DEFAULT_STORE
+            if shared is None and not os.path.exists(path):
+                raise UsageError(
+                    f"no store at {path}: run `schemaguru crawl --url ...` first, or pass --store"
+                )
+            guru = Guru(store=shared or path, config=cfg)
+        try:
+            yield guru
+        finally:
+            guru.close()
     finally:
-        guru.close()
+        if shared is not None:
+            shared.close()
 
 
 def _subject(f: Fact) -> str:

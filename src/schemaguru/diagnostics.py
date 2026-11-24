@@ -60,10 +60,19 @@ CODES: Mapping[str, str] = MappingProxyType(
         "SG605": "an identity chain cannot be compiled into a waypoint rule (it is not applied)",
         "SG701": "SQLite FTS5 is unavailable; search falls back to a slower LIKE scan",
         "SG702": "the store was written by a newer schema version than this library supports",
+        "SG703": "cannot connect to the Postgres store (named by host and database, never secrets)",
         "SG801": "guard refused the SQL: not a single read-only SELECT/WITH statement",
         "SG802": "guard refused the SQL: it reads a never-query table",
         "SG803": "an agent tool call was refused: unknown tool or invalid arguments",
         "SG804": "an agent tool failed unexpectedly (error type and a masked message returned)",
+        "SG805": "server: missing or invalid bearer token (HTTP 401)",
+        "SG806": "server: the route needs an admin token (HTTP 403)",
+        "SG807": "server: invalid request (bad JSON, missing or wrong-typed parameter; HTTP 400)",
+        "SG808": "server: the table or column named in the request is not in the store (HTTP 404)",
+        "SG809": "server: a refresh is already running on this store (HTTP 409)",
+        "SG810": "server: unexpected internal error; details are logged, not returned (HTTP 500)",
+        "SG811": "server: no usable bearer tokens configured (missing, too short, or unknown role)",
+        "SG812": "server: MCP over streamable HTTP is unavailable in this build (HTTP 501)",
     }
 )
 

@@ -82,6 +82,10 @@ dev = [
   "twine",
   "duckdb>=1.0",
   "numpy>=1.26",
+  # server mode is unit-tested with Starlette's TestClient (needs httpx) on every job
+  "starlette>=0.37",
+  "uvicorn>=0.30",
+  "httpx>=0.27",
 ]
 docs = ["mkdocs-material", "mkdocstrings[python]"]
 
@@ -138,6 +142,8 @@ omit = [
   "src/schemaguru/catalog/readers/databricks.py",
   "src/schemaguru/catalog/readers/oracle.py",
   "src/schemaguru/server/*",
+  # exercised by the integration job (postgres:16 service), not the unit matrix
+  "src/schemaguru/store/postgres.py",
   "src/schemaguru/agent/mcp.py",
   "src/schemaguru/agent/adapters/*",
   "src/schemaguru/draft/providers/anthropic.py",

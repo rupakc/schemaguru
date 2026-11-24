@@ -255,9 +255,13 @@ def _factlang_filter_keywords(parser: object) -> frozenset[str]:
 
 
 def test_filter_keywords_match_factlang() -> None:
+    """SchemaGuru uses FactLang's public set; it must equal the set FactLang's parser lexes."""
+    import factlang.syntax
     import factlang.syntax.parser as parser  # a hard dependency: never skipped
 
-    assert _factlang_filter_keywords(parser) == fragments.FILTER_KEYWORDS
+    assert fragments.FILTER_KEYWORDS is factlang.syntax.FILTER_KEYWORDS
+    assert isinstance(factlang.syntax.FILTER_KEYWORDS, frozenset)
+    assert _factlang_filter_keywords(parser) == factlang.syntax.FILTER_KEYWORDS
 
 
 def test_filter_keywords_check_fails_when_factlang_renames_it() -> None:

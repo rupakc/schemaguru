@@ -14,6 +14,8 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from factlang.syntax import FILTER_KEYWORDS  # public since FactLang 0.1.0
+
 from schemaguru._util.sqltext import scan
 from schemaguru.diagnostics import Diagnostic, DiagnosticBag, Severity
 from schemaguru.graph.search import Path
@@ -23,10 +25,8 @@ from schemaguru.overlays.schema import check_filter_syntax
 from schemaguru.render.table_block import path_aliases, qname
 
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
-# FactLang's filter keywords, matched as it lexes them (upper case): never a column reference
-FILTER_KEYWORDS = frozenset(
-    {"AND", "OR", "NOT", "IN", "IS", "NULL", "BETWEEN", "TRUE", "FALSE", "DATE", "TIMESTAMP"}
-)
+# FILTER_KEYWORDS (FactLang's, imported above): the words its filter lexer reads as keywords,
+# upper case; never a column reference
 
 
 def quote_catalog_names(text: str, columns: Iterable[str]) -> tuple[str, list[str]]:

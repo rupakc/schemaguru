@@ -1,0 +1,47 @@
+Global pitfalls:
+  ⚠ Pitfall: timestamps stored as text are UTC
+
+Never query:
+  ⚠ shop.broken_child — abandoned migration copy
+
+Legend:
+  ⚠ a hazard: measured, declared by a person, or drafted (then marked (draft)).
+  ≈ / ≥ estimated from a sample of a large table; never verified.
+  (draft) written by a language model and not checked.
+  measured <date> an observed number; verified <date> a claim that passed its check.
+  Absence of a warning is not verification.
+
+Glossary:
+  revenue: sum of payments.amount over paid orders [tables: shop.orders, shop.payments]
+
+[shop.order_items] One row per order line. (draft)
+  20,000 rows (measured 2026-11-20)
+  Keys: PK (order_id, line_no); order_id → shop.orders.order_id (N:1, match 100%); product_id → shop.products.product_id (N:1, match 100%)
+
+[shop.products] Product catalogue. (draft)
+  200 rows (measured 2026-10-01, stale)
+  Keys: PK product_id
+
+[shop.orders] One row per order. (draft)
+  ⚠ Pitfall (critical): a refund is a second payment row with a negative amount — fix: SUM(amount) nets refunds; count paid orders by status instead
+  ⚠ status: declared values 'paid','refunded','cancelled' — observed also 'PAID' (412 rows)
+  ⚠ status: case drift: 'paid'/'PAID' differ only in case — compare case-insensitively
+  ⚠ created_at: stored as VARCHAR, holds ISO-8601 timestamp (100% of values, measured 2026-11-20) — CAST before comparing
+  Answers (draft): revenue; order volume; basket size
+  10,000 rows (measured 2026-11-20)
+  Keys: PK order_id; account_id → shop.accounts.account_id (N:1, match 100%); customer_id → shop.customers.customer_id (N:1, match 98.04%)
+  live rows: (deleted IS NULL OR NOT deleted) (verified 2026-11-19)
+
+[shop.payments] One row per payment.
+  500 rows (measured 2026-11-20)
+  Keys: PK payment_id; order_id → shop.orders.order_id (1:1, match 100%)
+
+Join paths (measured joins; join keys are advisory):
+  shop.order_items → shop.products · coverage 100%
+    order_items.product_id = products.product_id (N:1)
+  shop.order_items → shop.orders · coverage 100%
+    order_items.order_id = orders.order_id (N:1)
+  shop.orders → shop.payments · coverage 5%
+    payments.order_id = orders.order_id (1:1)
+
+Not shown: no other candidate tables.

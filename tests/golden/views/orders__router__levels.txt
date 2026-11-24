@@ -1,0 +1,11 @@
+--- full
+shop.orders — One row per order. (draft)
+
+--- standard
+shop.orders — One row per order. (draft)
+
+--- lite
+shop.orders — One row per order. (draft)
+
+--- name-only
+shop.orders

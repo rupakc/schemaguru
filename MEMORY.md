@@ -119,3 +119,17 @@ embedding vectors live in `table_embeddings` (float32, keyed `(model, table)`, `
 degrades before tables drop. `TableRenderer.render(ref, level)` is the render-layer contract;
 LITE columns come from `scope.lite_columns`. Retrieval writes nothing; enqueueing `Scope.unmeasured`
 for lazy measurement is the host's job.
+
+## 2026-11-24 - Rendering (Task 14): shared primitives below layer 6; views budget separators
+Why: scope and render are both layer 6 and may not import each other, yet rendering needs the
+detail levels, the LITE column rule and the token counter; and `fit()` does not count separators.
+How to apply: `DetailLevel` lives in `model/detail.py`, `lite_columns`/`LITE_MAX_COLUMNS` in
+`knowledge/columns.py`, `TokenCounter`/`CharTokenCounter` in `_util/tokens.py`; `scope` re-exports
+them unchanged. `render.ViewRenderer` is the `TableRenderer`: `render(ref, level)` returns the block
+plus its separator, and `table_budget(budget, counter)` reserves the always-on blocks (global
+pitfalls, never-query, legend, a max-width "Not shown" line); `SG504` when those alone exceed the
+budget. Stable blocks come first; the legend appears iff a `⚠` does; join paths list hazard
+refusals (hub pivot, waypoint rules) as `⚠` lines so listed routes are never chained through a hub
+silently. A DRAFTED fact is tagged `(draft)` unless VERIFIED, whatever its status. Goldens:
+`SCHEMAGURU_UPDATE_GOLDEN=1 pytest tests/golden`, then read the diff. `overlays.check_filter_syntax`
+cannot call `render.fragments.validate_filter` (layer 3 below 6); its TODO stays for the facade.

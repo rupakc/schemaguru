@@ -1,0 +1,61 @@
+Global pitfalls:
+  ⚠ Pitfall: timestamps stored as text are UTC
+
+Never query:
+  ⚠ shop.broken_child — abandoned migration copy
+
+Legend:
+  ⚠ a hazard: measured, declared by a person, or drafted (then marked (draft)).
+  ≈ / ≥ estimated from a sample of a large table; never verified.
+  (draft) written by a language model and not checked.
+  measured <date> an observed number; verified <date> a claim that passed its check.
+  Absence of a warning is not verification.
+
+Glossary:
+  revenue: sum of payments.amount over paid orders [tables: shop.orders, shop.payments]
+
+TABLE shop.orders
+PITFALL ⚠ critical: a refund is a second payment row with a negative amount — fix: SUM(amount) nets refunds; count paid orders by status instead
+WARN ⚠ status: declared values 'paid','refunded','cancelled' — observed also 'PAID' (412 rows)
+WARN ⚠ status: case drift: 'paid'/'PAID' differ only in case — compare case-insensitively
+WARN ⚠ created_at: stored as VARCHAR, holds ISO-8601 timestamp (100% of values, measured 2026-11-20) — CAST before comparing
+ROWS 10000 measured 2026-11-20
+PK order_id unique measured 2026-11-20
+SOFT_DELETE (deleted IS NULL OR NOT deleted) verified 2026-11-19
+COLUMNS order_id INTEGER | customer_id INTEGER | account_id INTEGER | status VARCHAR | created_at VARCHAR | deleted BOOLEAN
+JOIN customer_id -> shop.customers.customer_id N:1 match=0.9804 coverage=1 measured 2026-11-20
+JOIN account_id -> shop.accounts.account_id N:1 match=1 coverage=0.4 measured 2026-11-20
+VALUES status declared='paid','refunded','cancelled' observed_extra='PAID':412
+TYPE created_at stored_as=VARCHAR means=ISO-8601 timestamp rate=1 measured 2026-11-20
+
+TABLE shop.payments
+ROWS 500 measured 2026-11-20
+PK payment_id declared enforced
+COLUMNS payment_id INTEGER | order_id INTEGER | amount INTEGER
+JOIN order_id -> shop.orders.order_id 1:1 match=1 coverage=0.05 measured 2026-11-20
+
+TABLE shop.customers
+ROWS 1000 measured 2026-11-20
+PK customer_id unique measured 2026-11-20
+COLUMNS customer_id INTEGER | email VARCHAR | phone VARCHAR | segment VARCHAR
+PII email category=email
+DISTINCT email 1000 measured 2026-11-20
+NULLS phone rate=0.1 measured 2026-11-20
+VALUES segment observed='retail':334,'wholesale':333,'vip':333 measured 2026-11-20
+
+TABLE shop.order_items
+ROWS 20000 measured 2026-11-20
+PK order_id, line_no unique measured 2026-11-20
+COLUMNS order_id INTEGER | line_no INTEGER | product_id INTEGER
+JOIN order_id -> shop.orders.order_id N:1 match=1 coverage=1 measured 2026-11-20
+JOIN product_id -> shop.products.product_id N:1 match=1 coverage=1 measured 2026-11-20
+
+Join paths (measured joins; join keys are advisory):
+  shop.orders → shop.payments · coverage 5%
+    payments.order_id = orders.order_id (1:1)
+  shop.orders → shop.customers · coverage 98.04%
+    orders.customer_id = customers.customer_id (N:1)
+  shop.orders → shop.order_items · coverage 100%
+    order_items.order_id = orders.order_id (N:1)
+
+Not shown: no other candidate tables.

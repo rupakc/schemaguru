@@ -1,0 +1,50 @@
+--- full
+[shop.orders] One row per order. (draft)
+  ⚠ Pitfall (critical): a refund is a second payment row with a negative amount — fix: SUM(amount) nets refunds; count paid orders by status instead
+  ⚠ status: declared values 'paid','refunded','cancelled' — observed also 'PAID' (412 rows)
+  ⚠ status: case drift: 'paid'/'PAID' differ only in case — compare case-insensitively
+  ⚠ created_at: stored as VARCHAR, holds ISO-8601 timestamp (100% of values, measured 2026-11-20) — CAST before comparing
+  Answers (draft): revenue; order volume; basket size
+  10,000 rows (measured 2026-11-20)
+  Columns:
+    order_id     INTEGER  PK (unique, measured 2026-11-20); ← shop.order_items.order_id (coverage 100%), ← shop.payments.order_id (coverage 5%)
+    customer_id  INTEGER  → shop.customers.customer_id N:1, match 98.04% (measured 2026-11-20)
+    account_id   INTEGER  → shop.accounts.account_id N:1, match 100%, coverage 40% (measured 2026-11-20)
+    status       VARCHAR  values: 'paid','refunded','cancelled' (+ observed 'PAID'); Order lifecycle state. (draft)
+    created_at   VARCHAR  text holding ISO-8601 timestamp (see warning)
+    deleted      BOOLEAN  live rows: (deleted IS NULL OR NOT deleted) (verified 2026-11-19); holds TRUE (300 rows) or NULL (9,700 rows), never FALSE (measured 2026-11-20)
+  Provenance: drafted text marked (draft) is unchecked · human overlay · measured 2026-11-20
+
+--- standard
+[shop.orders] One row per order. (draft)
+  ⚠ Pitfall (critical): a refund is a second payment row with a negative amount — fix: SUM(amount) nets refunds; count paid orders by status instead
+  ⚠ status: declared values 'paid','refunded','cancelled' — observed also 'PAID' (412 rows)
+  ⚠ status: case drift: 'paid'/'PAID' differ only in case — compare case-insensitively
+  ⚠ created_at: stored as VARCHAR, holds ISO-8601 timestamp (100% of values, measured 2026-11-20) — CAST before comparing
+  Answers (draft): revenue; order volume; basket size
+  10,000 rows (measured 2026-11-20)
+  Columns:
+    order_id     INTEGER  PK (unique, measured 2026-11-20)
+    customer_id  INTEGER  → shop.customers.customer_id N:1, match 98.04% (measured 2026-11-20)
+    account_id   INTEGER  → shop.accounts.account_id N:1, match 100%, coverage 40% (measured 2026-11-20)
+    status       VARCHAR  values: 'paid','refunded','cancelled' (+ observed 'PAID')
+    created_at   VARCHAR  text holding ISO-8601 timestamp (see warning)
+    deleted      BOOLEAN  live rows: (deleted IS NULL OR NOT deleted) (verified 2026-11-19); holds TRUE (300 rows) or NULL (9,700 rows), never FALSE (measured 2026-11-20)
+  Provenance: drafted text marked (draft) is unchecked · human overlay · measured 2026-11-20
+
+--- lite
+[shop.orders] One row per order. (draft)
+  ⚠ Pitfall (critical): a refund is a second payment row with a negative amount — fix: SUM(amount) nets refunds; count paid orders by status instead
+  ⚠ status: declared values 'paid','refunded','cancelled' — observed also 'PAID' (412 rows)
+  ⚠ status: case drift: 'paid'/'PAID' differ only in case — compare case-insensitively
+  ⚠ created_at: stored as VARCHAR, holds ISO-8601 timestamp (100% of values, measured 2026-11-20) — CAST before comparing
+  Columns:
+    order_id     INTEGER  PK (unique, measured 2026-11-20)
+    customer_id  INTEGER  → shop.customers.customer_id N:1, match 98.04% (measured 2026-11-20)
+    account_id   INTEGER  → shop.accounts.account_id N:1, match 100%, coverage 40% (measured 2026-11-20)
+    status       VARCHAR
+    created_at   VARCHAR  text holding ISO-8601 timestamp (see warning)
+    deleted      BOOLEAN  live rows: (deleted IS NULL OR NOT deleted) (verified 2026-11-19); holds TRUE (300 rows) or NULL (9,700 rows), never FALSE (measured 2026-11-20)
+
+--- name-only
+[shop.orders] One row per order. (draft) (4 warnings not shown; describe the table)

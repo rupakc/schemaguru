@@ -1,0 +1,23 @@
+Global pitfalls:
+  ⚠ Pitfall: timestamps stored as text are UTC
+
+Never query:
+  ⚠ shop.broken_child — abandoned migration copy
+
+Legend:
+  ⚠ a hazard: measured, declared by a person, or drafted (then marked (draft)).
+  ≈ / ≥ estimated from a sample of a large table; never verified.
+  (draft) written by a language model and not checked.
+  measured <date> an observed number; verified <date> a claim that passed its check.
+  Absence of a warning is not verification.
+
+Glossary:
+  revenue: sum of payments.amount over paid orders [tables: shop.orders, shop.payments]
+
+shop.events — One row per tracked user event. (draft)
+shop.sessions
+shop.accounts — One row per business account.
+shop.orders — One row per order. (draft)
+shop.customers — One row per customer account holder.
+
+Not shown: no other candidate tables.

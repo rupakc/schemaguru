@@ -1,17 +1,8 @@
-"""Token counting for budget fitting (spec 12.1 step 4)."""
+"""Token counting for budget fitting (spec 12.1 step 4).
 
-from __future__ import annotations
+The counters live in ``schemaguru._util.tokens`` so rendering (same layer) can use them too.
+"""
 
-import math
-from typing import Protocol
+from schemaguru._util.tokens import CharTokenCounter, TokenCounter
 
-
-class TokenCounter(Protocol):
-    def count(self, text: str) -> int: ...
-
-
-class CharTokenCounter:
-    """The default heuristic: ``ceil(len(text) / 4)``. Exact counters are extras."""
-
-    def count(self, text: str) -> int:
-        return math.ceil(len(text) / 4)
+__all__ = ["CharTokenCounter", "TokenCounter"]

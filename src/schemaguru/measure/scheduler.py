@@ -66,6 +66,8 @@ class MeasureReport:
     errors: list[Diagnostic] = field(default_factory=list)
     bytes: int = 0
     sampled_tables: list[ObjectRef] = field(default_factory=list)
+    # fact-kind names this run produced facts for (what the run actually checked, spec 15)
+    checks_run: set[str] = field(default_factory=set)
 
 
 def _diag(code: str, message: str, location: str | None = None) -> Diagnostic:
@@ -206,6 +208,7 @@ class Scheduler:
             if facts:
                 self.store.put_facts(facts)
                 report.facts_written += len(facts)
+                report.checks_run |= {f.kind.name for f in facts}
             if ran:
                 report.measured_tables.append(ref)
 

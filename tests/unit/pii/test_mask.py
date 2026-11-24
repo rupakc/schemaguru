@@ -63,3 +63,43 @@ def test_mask_free_text_lives_in_pii_and_masks_shapes() -> None:
 
     text, hits = mask_free_text("Binder Error: value 'alice@example.com' is not valid")
     assert "alice@example.com" not in text and "<email>" in text and hits >= 1
+
+
+# ---- sql_template: blank literals with the shared agreed lexer, fail closed -------------------
+
+import pytest  # noqa: E402
+
+from schemaguru.pii import scrub_tree, sql_template  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 1 WHERE x = E'it\\'s secret@x.com'",  # backslash escape (E-string)
+        "SELECT 1 WHERE x = r'ab\\'c' AND y = 'secret@x.com'",  # raw-string backslash
+        "SELECT $$alice@example.com$$",  # dollar quoting
+        "SELECT $tag$alice@example.com$tag$",
+    ],
+)
+def test_sql_template_never_leaks_through_dialect_quoting(sql: str) -> None:
+    out = sql_template(sql)
+    assert out is None or ("@" not in out and "secret" not in out and "alice" not in out), out
+
+
+def test_sql_template_blanks_plain_literals_and_keeps_identifiers() -> None:
+    sql = "SELECT \"email\", 'O''Brien' FROM t WHERE e IN ('alice@example.com', N'bob')"
+    assert sql_template(sql) == 'SELECT "email", ? FROM t WHERE e IN (?, N?)'
+
+
+def test_sql_template_masks_pii_shaped_double_quoted_spans() -> None:
+    out = sql_template('SELECT 1 WHERE email = "alice@example.com"')
+    assert out == "SELECT 1 WHERE email = ?"
+
+
+def test_sql_template_ambiguous_or_unterminated_is_none() -> None:
+    assert sql_template("SELECT 'unterminated alice@example.com") is None
+
+
+def test_scrub_tree_replacement_reaches_nested_params() -> None:
+    tree = ["x@y.com", ["x@y.com"], {"a": "x@y.com", "n": 5}]
+    assert scrub_tree(tree, "none", replacement="?") == ["?", ["?"], {"a": "?", "n": 5}]

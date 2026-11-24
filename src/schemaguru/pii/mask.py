@@ -6,6 +6,7 @@ import re
 from collections.abc import Mapping
 from typing import Any, Literal
 
+from schemaguru._util.sqltext import agreed_lex
 from schemaguru.pii.detectors import first_match, name_spans, names_enabled
 from schemaguru.pii.sweep import sweep, sweep_detail
 
@@ -91,27 +92,59 @@ def mask_text(text: str) -> str:
     return masked if cat is not None else text
 
 
-_SQL_LITERAL = re.compile(r"[eEnN]?'(?:[^']|'')*'")
+_RUN = re.compile(r"([qdD]+)|([eij]+|[bj]+)|(m+)|(c+)")
 
 
-def sql_template(sql: str) -> str:
-    """The SQL with every quoted string literal replaced by a ``?`` placeholder."""
-    return _SQL_LITERAL.sub("?", sql)
+def sql_template(sql: str) -> str | None:
+    """The SQL with every string literal replaced by ``?`` (spec 11); ``None`` when unsure.
+
+    Segmentation is the shared agreed lexer (:func:`schemaguru._util.sqltext.agreed_lex`): when
+    dialect variants (backslash escapes, ``$tag$``, triple quotes, ``q''``, ...) disagree, or a
+    literal is left open, nothing is stored. Comments are dropped. Quoted identifiers are kept
+    unless they hold ``@`` or a PII shape.
+    """
+    lexed, ok = agreed_lex(sql)
+    if not ok or not lexed.terminated or lexed.bang:
+        return None
+    out: list[str] = []
+    for m in _RUN.finditer(lexed.kinds):
+        a, b = m.span()
+        text = sql[a:b]
+        if m.group(1):
+            out.append("?")
+        elif m.group(2):
+            inner = text[1:-1] if len(text) >= 2 else text
+            pii = "@" in inner or mask_value(inner)[1] is not None
+            out.append("?" if pii else text)
+        elif m.group(3):
+            out.append(" ")
+        else:
+            out.append(text)
+    return "".join(out)
 
 
 _SQL_KEYS = frozenset({"sql", "query", "rendered_sql"})
 
 
-def scrub_tree(node: Any, mode: Literal["masked", "raw", "none"], *, key: str | None = None) -> Any:
+def scrub_tree(
+    node: Any,
+    mode: Literal["masked", "raw", "none"],
+    *,
+    key: str | None = None,
+    replacement: str | None = None,
+) -> Any:
     """Deep-walk a JSON-like tree for storage (spec 11).
 
     SQL-valued keys keep only their template. ``raw`` keeps values; ``masked`` masks every
     string; ``none`` masks every string and replaces each value-bearing list (a list of objects
-    with a ``value``) by its count under ``<key>_count``.
+    with a ``value``) by its count under ``<key>_count``. ``replacement`` replaces every
+    non-SQL string outright (e.g. ``"?"`` for parameters under ``none``).
     """
     if isinstance(node, str):
         if key in _SQL_KEYS:
             return sql_template(node)
+        if replacement is not None:
+            return replacement
         return node if mode == "raw" else mask_text(node)
     if isinstance(node, Mapping):
         out: dict[str, Any] = {}
@@ -120,10 +153,10 @@ def scrub_tree(node: Any, mode: Literal["masked", "raw", "none"], *, key: str | 
             if mode == "none" and _value_bearing(v):
                 out[f"{ks}_count"] = len(v)
                 continue
-            out[ks] = scrub_tree(v, mode, key=ks)
+            out[ks] = scrub_tree(v, mode, key=ks, replacement=replacement)
         return out
     if isinstance(node, list | tuple):
-        return [scrub_tree(v, mode, key=key) for v in node]
+        return [scrub_tree(v, mode, key=key, replacement=replacement) for v in node]
     return node
 
 

@@ -91,3 +91,17 @@ def test_join_takes_the_most_restrictive_side() -> None:
 def test_check_without_a_table_uses_the_most_restrictive_configured_mode() -> None:
     s = SamplingConfig(llm_values="raw", per_glob={"hr.*": "none"}, store_raw_samples=True)
     assert flbridge.evidence_mode(None, s) == "none"
+
+
+def test_none_mode_scrubs_nested_params() -> None:
+    s = SamplingConfig(llm_values="none")
+    e = FakeEv(params=("x@y.com", ["x@y.com"], {"v": "x@y.com"}, 3))
+    ev = flbridge._evidence(e, [e], mode=flbridge.evidence_mode(TopValues(COL, 20), s))
+    assert ev is not None and "x@y.com" not in repr(ev.to_dict())
+    assert ev.params == ("?", ["?"], {"v": "?"}, 3)
+
+
+def test_ambiguous_sql_is_not_stored() -> None:
+    e = FakeEv(sql="SELECT 1 WHERE x = E'it\\'s secret@x.com'")
+    ev = flbridge._evidence(e, [e], mode="masked")
+    assert ev is not None and (ev.sql is None or "secret" not in ev.sql)

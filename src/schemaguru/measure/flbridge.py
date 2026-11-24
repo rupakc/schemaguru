@@ -265,9 +265,9 @@ def evidence_mode(req: Request | None, sampling: SamplingConfig) -> Mode:
 
 
 def _scrub_params(params: Sequence[Any], mode: Mode) -> tuple[Any, ...]:
-    if mode == "none":
-        return tuple("?" if isinstance(p, str) else p for p in params)
-    return tuple(scrub_tree(list(params), mode))
+    """Parameters at any depth: ``none`` replaces every string with ``?``; else masked/raw."""
+    replacement = "?" if mode == "none" else None
+    return tuple(scrub_tree(list(params), mode, replacement=replacement))
 
 
 def _evidence(

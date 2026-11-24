@@ -33,6 +33,14 @@ ADVERSARIAL = {
     "digits-": "1-" * (N // 2),
     "0049": "00" + "1 " * (N // 2),
     "Baker ": "Baker " * (N // 6),
+    "AKIA": "AKIA" * (N // 4),
+    "ghp_": "gh" + "p_" * (N // 2),
+    "ghp_long": "gh" + "p_" + "a" * N,
+    "xoxb-": "xox" + "b-" * (N // 2),
+    "xoxb-long": "xo" + "xb-" + "a" * N + "!",
+    "AIza": "AIza" * (N // 4),
+    "AIza-long": "AI" + "za" + "a" * N,
+    "sk_": "sk_test_" * (N // 8),
 }
 
 
@@ -248,3 +256,39 @@ def test_kv_rule_leaves_schema_prose(prose: str) -> None:
 def test_kv_rule_still_masks_credentials(secret: str) -> None:
     out, n = sweep(secret)
     assert n >= 1 and "<secret>" in out and "Zx9" not in out and "hunter2" not in out, out
+
+
+# Fixtures are assembled at runtime so secret scanners do not flag this file.
+_AWS = "AK" + "IA" + "ZX9QM2LP8RT4VB7N"
+_GH = "gh" + "p_" + "Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5Wy0Ue4Ra7Bc"
+_SLACK = "xo" + "xb-" + "1234567890-Zx9Qm2Lp8Rt4Vb7Nc1"
+_GOOG = "AI" + "za" + "Sy" + "Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5Wy0Ue4Ra7"
+
+
+@pytest.mark.parametrize("secret", [_AWS, _GH, _SLACK, _GOOG, "AS" + "IA" + "ZX9QM2LP8RT4VB7N"])
+def test_bare_credentials_masked_in_prose(secret: str) -> None:
+    assert len(secret) > 15
+    text, n = sweep(f"leaked {secret} here, ok")
+    assert text == "leaked <secret> here, ok" and n == 1, text
+    assert sweep(f"({secret})")[0] == "(<secret>)"
+    assert sweep(text) == (text, 0)
+    assert mask_value(secret)[0] == "<secret>"
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "ghost_town",
+        "the akia river",
+        "akiaiosfodnn7example",
+        "xox",
+        "xoxo hugs",
+        "ghp_short",
+        "AKIA short",
+        "AKIAZX9QM2LP8RT4VB7NX",
+        "AIza too short",
+        "ghp is a prefix",
+    ],
+)
+def test_credential_lookalikes_pass(prose: str) -> None:
+    assert sweep(prose) == (prose, 0)

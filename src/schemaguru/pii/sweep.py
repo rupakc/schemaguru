@@ -35,6 +35,15 @@ _PROVIDER_KEY = re.compile(r"\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}")
 _KNOWN_PREFIX = re.compile(r"(?:sk|pk|rk)_(?:live|test)_|gh[pousr]_|AKIA[0-9A-Z]|xox[abprs]-|eyJ")
 
 
+# Bare credentials in prose, by their published shapes (fixed or bounded lengths: linear time).
+_CREDENTIAL_SHAPES = (
+    r"(?:AKIA|ASIA)[0-9A-Z]{16}",  # AWS access key id
+    r"gh[pousr]_[A-Za-z0-9]{36,255}",  # GitHub tokens
+    r"xox[abposr]-[A-Za-z0-9\-]{10,255}",  # Slack tokens
+    r"AIza[0-9A-Za-z_\-]{35}",  # Google API key
+)
+
+
 def _token_like(value: str) -> bool:
     """A value that looks like a credential, not an identifier or a word.
 
@@ -91,6 +100,7 @@ _RULES: tuple[_Rule, ...] = (
     ("secret", _b(d.JWT_RE.pattern), d.jwt_ok, _tok("<secret>")),
     ("secret", _KV, _kv_ok, _kv_sub),
     ("secret", _PROVIDER_KEY, lambda _m: True, _tok("<secret>")),
+    *[("secret", _b(pat), lambda _m: True, _tok("<secret>")) for pat in _CREDENTIAL_SHAPES],
     ("email", re.compile(d.EMAIL_RE.pattern), lambda _m: True, _tok("<email>")),
     ("uuid", _b(d.UUID_RE.pattern), lambda _m: True, _tok("<uuid>")),
     ("iban", _b(d.IBAN_RE.pattern), _iban_ok, _iban_sub),

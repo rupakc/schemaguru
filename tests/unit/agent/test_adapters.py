@@ -115,7 +115,7 @@ REROUTE = {"table": "orders", "_name": "explain_term"}
 def _refused_or_same(raw: str | dict[str, Any]) -> None:
     out = json.loads(raw) if isinstance(raw, str) else raw
     if "error" in out:
-        assert out["error"]["code"] == "SG803" and "'_name'" in out["error"]["message"]
+        assert out["error"]["code"] == "SG803" and "unexpected argument" in out["error"]["message"]
     else:
         assert out["table"] == "shop.orders"  # still describe_table, never explain_term
     assert "entries" not in out
@@ -126,11 +126,11 @@ def test_anthropic_name_argument_cannot_reroute(shop_guru: Guru, no_seam_check: 
 
     block = {"type": "tool_use", "id": "t", "name": "describe_table", "input": REROUTE}
     out = adapter.run_tool_use(shop_guru, block)
-    assert out["is_error"] and "'_name'" in out["content"]
+    assert out["is_error"] and "unexpected argument" in out["content"]
     pytest.importorskip("anthropic")
     runner = {t.name: t for t in adapter.runner_tools(shop_guru)}
     text = runner["describe_table"].call(REROUTE)
-    assert text.startswith("SG803 ") and "'_name'" in text
+    assert text.startswith("SG803 ") and "unexpected argument" in text
 
 
 def test_langchain_name_argument_cannot_reroute(shop_guru: Guru, no_seam_check: Any) -> None:

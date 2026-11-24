@@ -147,3 +147,57 @@ def test_mcp_resource_errors_are_mcp_errors(shop_guru: Guru) -> None:
     assert all(isinstance(e, MCPError) for e in errors), errors
     assert all(e.code == -32602 for e in errors)
     assert errors[0].message.startswith("SG803 ") and errors[0].data["error"]["code"] == "SG803"
+
+
+def test_mcp_uris_are_normalised_and_errors_echo_no_values(planted: Any) -> None:
+    from mcp import Client
+    from mcp.shared.exceptions import MCPError
+
+    from schemaguru.agent.mcp import build_server
+
+    g = planted("masked")
+
+    async def session() -> list[Any]:
+        out: list[Any] = []
+        async with Client(build_server(g)) as client:
+            ok = await client.read_resource("schema://tables/customers?x=Quentin Shapeless#f")
+            out.append(ok)
+            for uri in (
+                "schema://tables/nope.Bartholomew Kipling",
+                "bogus://Yolanda Brightwater",
+                "schema://tables/" + "Z" * 600,
+            ):
+                try:
+                    await client.read_resource(uri)
+                    out.append(None)
+                except MCPError as e:
+                    out.append(e)
+        return out
+
+    ok, missing, bogus, long = _run(session())
+    assert [str(c.uri) for c in ok.contents] == ["schema://tables/shop.customers"]
+    assert missing.data["uri"] == "schema://tables/?" and bogus.data["uri"] == "bogus://"
+    assert long.data["uri"] == "schema://tables/?"
+    for e in (missing, bogus, long):
+        dumped = json.dumps(e.data) + e.message
+        assert "Bartholomew" not in dumped and "Yolanda" not in dumped and "ZZZ" not in dumped
+
+
+def test_mcp_raw_mode_echoes_the_ref_cut_to_200(planted: Any) -> None:
+    from mcp import Client
+    from mcp.shared.exceptions import MCPError
+
+    from schemaguru.agent.mcp import build_server
+
+    g = planted("raw")
+
+    async def session() -> Any:
+        async with Client(build_server(g)) as client:
+            try:
+                await client.read_resource("schema://tables/" + "Z" * 600 + "?q=1")
+            except MCPError as e:
+                return e
+        return None
+
+    e = _run(session())
+    assert e.data["uri"] == "schema://tables/" + "Z" * 200

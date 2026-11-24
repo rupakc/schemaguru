@@ -15,7 +15,7 @@ from typing import Any
 from urllib.parse import unquote
 
 from schemaguru.__about__ import __version__
-from schemaguru.agent.dispatch import handle_tool_call
+from schemaguru.agent.dispatch import MAX_ECHO, error_text, handle_tool_call
 from schemaguru.agent.tools import ToolHost, tool_definitions
 
 RESOURCE_PREFIX = "schema://tables/"
@@ -41,6 +41,17 @@ def resource_ref(uri: str) -> str | None:
     ref = uri[len(RESOURCE_PREFIX) :].split("#", 1)[0].split("?", 1)[0]
     ref = unquote(ref).strip()
     return ref or None
+
+
+def echo_uri(guru: ToolHost, uri: str) -> str:
+    """What an error may say about a requested URI: its scheme plus the ref, cut to 200
+    characters, quoted literals masked by the value policy (``?`` unless values are raw)."""
+    scheme = uri.split("://", 1)[0] + "://" if "://" in uri else ""
+    ref = resource_ref(uri) if uri.startswith(RESOURCE_PREFIX) else None
+    if ref is None:
+        return scheme
+    shown = error_text(guru, "'" + ref.replace("'", "''")[:MAX_ECHO] + "'").strip("'")
+    return RESOURCE_PREFIX + shown
 
 
 def _not_found(uri: str, message: str, error: Any = None) -> Exception:
@@ -102,12 +113,16 @@ def build_server(guru: ToolHost, *, name: str = "schemaguru") -> Any:
         uri = str(params.uri)
         ref = resource_ref(uri)
         if ref is None:
-            raise _not_found(uri, f"SG803 unknown resource (expected {RESOURCE_TEMPLATE})")
+            raise _not_found(
+                echo_uri(guru, uri), f"SG803 unknown resource (expected {RESOURCE_TEMPLATE})"
+            )
         result = await asyncio.to_thread(handle_tool_call, guru, "describe_table", {"table": ref})
         if "error" in result:
-            raise _not_found(uri, str(result["text"]), result["error"])
+            raise _not_found(echo_uri(guru, uri), str(result["text"]), result["error"])
         text = str(result["text"])
-        contents = types.TextResourceContents(uri=uri, mime_type="text/plain", text=text)
+        # the normalised URI: the resolved canonical ref, no query or fragment
+        canonical = RESOURCE_PREFIX + str(result["table"])
+        contents = types.TextResourceContents(uri=canonical, mime_type="text/plain", text=text)
         return types.ReadResourceResult(contents=[contents])
 
     return lowlevel.Server(

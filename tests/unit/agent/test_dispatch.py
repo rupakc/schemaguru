@@ -58,13 +58,17 @@ def test_dispatch_roundtrip_each_tool(shop_guru: Guru, seam_check: Any) -> None:
     ("name", "args", "needle"),
     [
         ("nope", {}, "unknown tool"),
-        ("describe_table", {}, "missing required argument 'table'"),
-        ("describe_table", {"table": 3}, "'table' must be a string"),
-        ("describe_table", {"table": "orders", "extra": 1}, "unexpected argument 'extra'"),
-        ("search_tables", {"query": "x", "k": "many"}, "'k' must be an integer"),
-        ("search_tables", {"query": "x", "k": True}, "'k' must be an integer"),
-        ("search_tables", {"query": "x", "k": 0}, "'k' must be >= 1"),
-        ("search_tables", {"query": "x", "k": 1000}, "'k' must be <= 100"),
+        ("describe_table", {}, "missing required argument `table`"),
+        ("describe_table", {"table": 3}, "`table` must be a string"),
+        (
+            "describe_table",
+            {"table": "orders", "extra": 1},
+            "unexpected argument ? (arguments: table)",
+        ),
+        ("search_tables", {"query": "x", "k": "many"}, "`k` must be an integer"),
+        ("search_tables", {"query": "x", "k": True}, "`k` must be an integer"),
+        ("search_tables", {"query": "x", "k": 0}, "`k` must be >= 1"),
+        ("search_tables", {"query": "x", "k": 1000}, "`k` must be <= 100"),
         ("describe_table", {"table": "nowhere"}, "unknown table"),
         ("column_values", {"column": "orders"}, "not a column reference"),
         ("schema_context", "not a mapping", "arguments must be an object"),
@@ -340,7 +344,7 @@ def test_stored_evidence_scrubs_the_sample() -> None:
 @pytest.mark.parametrize(
     ("name", "args", "needle"),
     [
-        ("describe_table", {"table": "x" * 513}, "'table' is longer than 512 characters"),
+        ("describe_table", {"table": "x" * 513}, "`table` is longer than 512 characters"),
         ("schema_context", {"question": "q" * 20_001}, "longer than 20000 characters"),
         ("explain_term", {"term": "t" * 20_001}, "longer than 20000 characters"),
     ],
@@ -352,12 +356,34 @@ def test_overlong_arguments_are_refused(
     assert out["error"]["code"] == "SG803" and needle in out["error"]["message"]
 
 
-def test_echoes_in_error_messages_are_cut_to_200_chars(shop_guru: Guru) -> None:
-    out = call(shop_guru, "describe_table", {"table": "y" * 500})
-    assert out["error"]["code"] == "SG803"
+def test_error_messages_hide_quoted_values_unless_raw(planted: Callable[..., Guru]) -> None:
+    """Masked and none: a quoted literal is ``?`` (a value need not have a personal shape);
+    raw: echoes are cut to 200 characters. Single- and double-quoted (repr) literals alike."""
+    for mode in ("masked", "none"):
+        g = planted(mode)
+        out = call(g, "describe_table", {"table": "wholesale_xq_secret"})
+        assert out["error"]["code"] == "SG803" and "?" in out["error"]["message"]
+        assert "wholesale_xq_secret" not in json.dumps(out)
+        out = call(g, "describe_table", {"table": "no'" + "B" * 505})  # repr uses "..."
+        assert "BBB" not in json.dumps(out)
+        assert "BBB" not in json.dumps(call(g, "x'" + "A" * 5000 + "BBB", {}))
+    raw = planted("raw")
+    out = call(raw, "describe_table", {"table": "y" * 500})
     assert "y" * 200 + "…" in out["error"]["message"] and "y" * 201 not in out["text"]
-    out = call(shop_guru, "n" * 400, {})
-    assert "n" * 201 not in out["text"]
+    assert "n" * 201 not in call(raw, "n" * 400, {})["text"]
+
+
+@pytest.mark.parametrize("mode", ["masked", "none"])
+def test_backend_exception_values_are_hidden(
+    planted: Callable[..., Guru], seam_check: Any, mode: str
+) -> None:
+    class Boom(_EvidenceBackend):
+        def check(self, claims: str) -> list[Evidence]:
+            raise RuntimeError("offending value 'wholesale_xq_secret' for 'Yolanda Brightwater'")
+
+    out = call(planted(mode, backend=Boom()), "check_fact", {"claims": "x"})
+    assert out["error"]["code"] == "SG804"
+    assert out["error"]["message"] == "offending value ? for ?"
 
 
 @pytest.mark.parametrize("bad", [None, 3, ["describe_table"], {"x": 1}])

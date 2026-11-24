@@ -17,8 +17,8 @@
   drainer: one byte total; ``max_probes``/``max_seconds`` count across calls) and ledgered
   under ``agent_check``. Its evidence leaves as an allow-list (verdict, claim text with quoted
   literals as ``?``, SQL template, bytes, tier, duration): raw, sample and params never do.
-* **Error messages** echo at most 200 characters of a caller's value, are masked, and in
-  ``none`` mode show every quoted literal as ``?``.
+* **Error messages** show every quoted literal as ``?`` unless values are raw (then echoes
+  are cut to 200 characters), and are masked and swept.
 """
 
 from __future__ import annotations
@@ -83,20 +83,32 @@ def _error(code: str, message: str, **extra: Any) -> dict[str, Any]:
     return {"error": err, "text": f"{code} {message}"}
 
 
-_LONG_QUOTE = re.compile(r"'([^'\n]{" + str(MAX_ECHO) + r"})[^'\n]+'")
+_LONG_QUOTE = re.compile(
+    r"'([^'\n]{" + str(MAX_ECHO) + r"})[^'\n]+'" + r'|"([^"\n]{' + str(MAX_ECHO) + r'})[^"\n]+"'
+)
+# a quoted literal in a message: '...' (SQL doubling or backslash escapes) or "..." (a repr)
+_QUOTED = re.compile(r"'(?:[^'\\\n]|\\.|'')*'|\"(?:[^\"\\\n]|\\.)*\"")
 
 
-def _message(guru: ToolHost, text: str) -> str:
-    """An error message as it leaves: long echoes cut to ``MAX_ECHO`` characters, free text
-    masked, and in ``none`` mode every quoted literal replaced by ``?``."""
-    text = _LONG_QUOTE.sub(lambda m: f"'{m.group(1)}…'", text)
-    text = mask_free_text(text)[0]
+def _cut(m: re.Match[str]) -> str:
+    if m.group(1) is not None:
+        return f"'{m.group(1)}…'"
+    return f'"{m.group(2)}…"'
+
+
+def error_text(guru: ToolHost, text: str) -> str:
+    """An error message as it leaves (spec 11): unless values are raw, every quoted literal
+    (a caller's value, a value quoted by a backend) becomes ``?``; raw keeps them, cut to
+    ``MAX_ECHO`` characters. Then free-text masking and the outbound sweep. The tools' own
+    argument names are written in backticks, so they stay readable."""
     try:
         mode = outbound_mode(guru)
     except Exception:
         mode = "none"  # cannot tell: the most restrictive
-    if mode == "none":
-        text = predicate_text(text, "none")[0]
+    if mode == "raw":
+        return _LONG_QUOTE.sub(_cut, text)
+    text = _QUOTED.sub("?", text)
+    text = mask_free_text(text)[0]
     return outbound(text, mode)[0]
 
 
@@ -147,7 +159,7 @@ def _validate(spec: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any
     props: Mapping[str, Any] = schema.get("properties", {})
     for name in schema.get("required", []):
         if name not in args:
-            raise ToolError("SG803", f"{spec['name']}: missing required argument {name!r}")
+            raise ToolError("SG803", f"{spec['name']}: missing required argument `{name}`")
     out: dict[str, Any] = {}
     for name, value in args.items():
         prop = props.get(name)
@@ -160,18 +172,18 @@ def _validate(spec: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any
         check = _JSON_TYPES.get(typ) if isinstance(typ, str) else None
         if check is not None and not check(value):
             article = _ARTICLE.get(str(typ), f"a {typ}")
-            raise ToolError("SG803", f"{spec['name']}: {name!r} must be {article}")
+            raise ToolError("SG803", f"{spec['name']}: `{name}` must be {article}")
         if isinstance(value, int | float) and not isinstance(value, bool):
             lo, hi = prop.get("minimum"), prop.get("maximum")
             if lo is not None and value < lo:
-                raise ToolError("SG803", f"{spec['name']}: {name!r} must be >= {lo}")
+                raise ToolError("SG803", f"{spec['name']}: `{name}` must be >= {lo}")
             if hi is not None and value > hi:
-                raise ToolError("SG803", f"{spec['name']}: {name!r} must be <= {hi}")
+                raise ToolError("SG803", f"{spec['name']}: `{name}` must be <= {hi}")
         if isinstance(value, str) and len(value.strip()) < int(prop.get("minLength", 0)):
-            raise ToolError("SG803", f"{spec['name']}: {name!r} must not be empty")
+            raise ToolError("SG803", f"{spec['name']}: `{name}` must not be empty")
         cap = prop.get("maxLength")
         if isinstance(value, str) and isinstance(cap, int) and len(value) > cap:
-            raise ToolError("SG803", f"{spec['name']}: {name!r} is longer than {cap} characters")
+            raise ToolError("SG803", f"{spec['name']}: `{name}` is longer than {cap} characters")
         out[name] = value
     return out
 
@@ -455,11 +467,11 @@ def handle_tool_call(guru: ToolHost, name: str, args: Mapping[str, Any]) -> dict
         return _run(guru, name, args)
     except ToolError as e:
         extra: dict[str, Any] = {"candidates": e.candidates} if e.candidates else {}
-        return _error(e.code, _message(guru, e.message), **extra)
+        return _error(e.code, error_text(guru, e.message), **extra)
     except SchemaGuruError as e:
-        return _error("SG803", _message(guru, f"{name}: {e}"))
+        return _error("SG803", error_text(guru, f"{name}: {e}"))
     except Exception as e:  # a tool result is always JSON (spec 18.1)
-        return _error("SG804", _message(guru, str(e)), type=type(e).__name__)
+        return _error("SG804", error_text(guru, str(e)), type=type(e).__name__)
 
 
-__all__ = ["CHECK_LEDGER_KIND", "ToolError", "handle_tool_call", "outbound_mode"]
+__all__ = ["CHECK_LEDGER_KIND", "ToolError", "error_text", "handle_tool_call", "outbound_mode"]

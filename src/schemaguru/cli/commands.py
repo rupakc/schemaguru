@@ -590,7 +590,10 @@ def context(args: argparse.Namespace, io: IO) -> int:
 def _tool(guru: Guru, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     result = guru.handle_tool_call(name, arguments)
     if "error" in result:
-        raise UsageError(str(result["text"]))  # "SG8xx <masked message>"
+        # the tool message hides quoted values (it is written for an LLM); the person at the
+        # terminal typed the arguments, so they are shown back to them
+        given = ", ".join(f"{k}={v}" for k, v in arguments.items())
+        raise UsageError(f"{result['text']} [{given}]")
     return result
 
 

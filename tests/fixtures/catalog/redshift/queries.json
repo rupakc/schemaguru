@@ -1,0 +1,529 @@
+{
+ "dialect": "redshift",
+ "queries": [
+  {
+   "params": [],
+   "rows": [
+    {
+     "name": "dev"
+    }
+   ],
+   "sql": "select current_database() as name"
+  },
+  {
+   "params": [
+    "dev",
+    "information_schema",
+    "pg_catalog",
+    "pg_internal",
+    "pg_automv",
+    "catalog_history",
+    "pg\\_%"
+   ],
+   "rows": [
+    {
+     "schema_name": "ops",
+     "table_count": 2
+    },
+    {
+     "schema_name": "shop",
+     "table_count": 4
+    },
+    {
+     "schema_name": "spectrum",
+     "table_count": 1
+    }
+   ],
+   "sql": "select s.schema_name as schema_name, (select count(*) from svv_all_tables t where t.database_name = s.database_name and t.schema_name = s.schema_name) as table_count from svv_all_schemas s where s.database_name = ? and s.schema_name not in (?, ?, ?, ?, ?) and s.schema_name not like ? order by s.schema_name"
+  },
+  {
+   "params": [
+    "dev",
+    "ops",
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "external_name": null,
+     "remarks": null,
+     "size_mb": 64,
+     "table_name": "events",
+     "table_type": "TABLE",
+     "tbl_rows": 500000
+    },
+    {
+     "external_name": null,
+     "remarks": null,
+     "size_mb": 10,
+     "table_name": "sessions",
+     "table_type": "TABLE",
+     "tbl_rows": 90000
+    }
+   ],
+   "sql": "select t.table_name as table_name, t.table_type as table_type, t.remarks as remarks, i.tbl_rows as tbl_rows, i.\"size\" as size_mb, e.tablename as external_name from svv_all_tables t left join svv_table_info i on i.\"schema\" = t.schema_name and i.\"table\" = t.table_name and t.database_name = current_database() left join svv_external_tables e on e.schemaname = t.schema_name and e.tablename = t.table_name where t.database_name = ? and t.schema_name = ? and (cast(? as varchar) is null or t.table_name > ?) order by t.table_name limit ?"
+  },
+  {
+   "params": [
+    "dev",
+    "shop",
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "external_name": null,
+     "remarks": null,
+     "size_mb": 12,
+     "table_name": "Order Items",
+     "table_type": "TABLE",
+     "tbl_rows": 25000
+    },
+    {
+     "external_name": null,
+     "remarks": "people who buy",
+     "size_mb": 2,
+     "table_name": "customers",
+     "table_type": "TABLE",
+     "tbl_rows": 1000
+    },
+    {
+     "external_name": null,
+     "remarks": null,
+     "size_mb": 8,
+     "table_name": "orders",
+     "table_type": "TABLE",
+     "tbl_rows": 10000
+    },
+    {
+     "external_name": null,
+     "remarks": null,
+     "size_mb": null,
+     "table_name": "v_open_orders",
+     "table_type": "VIEW",
+     "tbl_rows": null
+    }
+   ],
+   "sql": "select t.table_name as table_name, t.table_type as table_type, t.remarks as remarks, i.tbl_rows as tbl_rows, i.\"size\" as size_mb, e.tablename as external_name from svv_all_tables t left join svv_table_info i on i.\"schema\" = t.schema_name and i.\"table\" = t.table_name and t.database_name = current_database() left join svv_external_tables e on e.schemaname = t.schema_name and e.tablename = t.table_name where t.database_name = ? and t.schema_name = ? and (cast(? as varchar) is null or t.table_name > ?) order by t.table_name limit ?"
+  },
+  {
+   "params": [
+    "dev",
+    "spectrum",
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "external_name": "lake_events",
+     "remarks": null,
+     "size_mb": null,
+     "table_name": "lake_events",
+     "table_type": "EXTERNAL TABLE",
+     "tbl_rows": null
+    }
+   ],
+   "sql": "select t.table_name as table_name, t.table_type as table_type, t.remarks as remarks, i.tbl_rows as tbl_rows, i.\"size\" as size_mb, e.tablename as external_name from svv_all_tables t left join svv_table_info i on i.\"schema\" = t.schema_name and i.\"table\" = t.table_name and t.database_name = current_database() left join svv_external_tables e on e.schemaname = t.schema_name and e.tablename = t.table_name where t.database_name = ? and t.schema_name = ? and (cast(? as varchar) is null or t.table_name > ?) order by t.table_name limit ?"
+  },
+  {
+   "params": [
+    "dev",
+    "ops",
+    "events",
+    "ops",
+    "sessions",
+    "shop",
+    "Order Items",
+    "shop",
+    "customers",
+    "shop",
+    "orders",
+    "shop",
+    "v_open_orders",
+    "spectrum",
+    "lake_events"
+   ],
+   "rows": [
+    {
+     "character_maximum_length": null,
+     "column_default": null,
+     "column_name": "customer_id",
+     "data_type": "bigint",
+     "is_nullable": "NO",
+     "numeric_precision": 64,
+     "numeric_scale": 0,
+     "ordinal_position": 1,
+     "remarks": "surrogate key",
+     "schema_name": "shop",
+     "table_name": "customers"
+    },
+    {
+     "character_maximum_length": 320,
+     "column_default": null,
+     "column_name": "email",
+     "data_type": "character varying",
+     "is_nullable": "YES",
+     "numeric_precision": null,
+     "numeric_scale": null,
+     "ordinal_position": 2,
+     "remarks": "login address",
+     "schema_name": "shop",
+     "table_name": "customers"
+    },
+    {
+     "character_maximum_length": 16,
+     "column_default": null,
+     "column_name": "segment",
+     "data_type": "character varying",
+     "is_nullable": "YES",
+     "numeric_precision": null,
+     "numeric_scale": null,
+     "ordinal_position": 3,
+     "remarks": null,
+     "schema_name": "shop",
+     "table_name": "customers"
+    },
+    {
+     "character_maximum_length": null,
+     "column_default": null,
+     "column_name": "created_at",
+     "data_type": "timestamp without time zone",
+     "is_nullable": "YES",
+     "numeric_precision": null,
+     "numeric_scale": null,
+     "ordinal_position": 4,
+     "remarks": null,
+     "schema_name": "shop",
+     "table_name": "customers"
+    },
+    {
+     "character_maximum_length": null,
+     "column_default": null,
+     "column_name": "order_id",
+     "data_type": "bigint",
+     "is_nullable": "NO",
+     "numeric_precision": 64,
+     "numeric_scale": 0,
+     "ordinal_position": 1,
+     "remarks": null,
+     "schema_name": "shop",
+     "table_name": "orders"
+    },
+    {
+     "character_maximum_length": null,
+     "column_default": null,
+     "column_name": "customer_id",
+     "data_type": "bigint",
+     "is_nullable": "YES",
+     "numeric_precision": 64,
+     "numeric_scale": 0,
+     "ordinal_position": 2,
+     "remarks": null,
+     "schema_name": "shop",
+     "table_name": "orders"
+    },
+    {
+     "character_maximum_length": null,
+     "column_default": null,
+     "column_name": "total",
+     "data_type": "numeric",
+     "is_nullable": "YES",
+     "numeric_precision": 10,
+     "numeric_scale": 2,
+     "ordinal_position": 3,
+     "remarks": null,
+     "schema_name": "shop",
+     "table_name": "orders"
+    },
+    {
+     "character_maximum_length": null,
+     "column_default": null,
+     "column_name": "order_id",
+     "data_type": "bigint",
+     "is_nullable": "NO",
+     "numeric_precision": 64,
+     "numeric_scale": 0,
+     "ordinal_position": 1,
+     "remarks": null,
+     "schema_name": "shop",
+     "table_name": "Order Items"
+    },
+    {
+     "character_maximum_length": null,
+     "column_default": null,
+     "column_name": "line_no",
+     "data_type": "integer",
+     "is_nullable": "NO",
+     "numeric_precision": 32,
+     "numeric_scale": 0,
+     "ordinal_position": 2,
+     "remarks": null,
+     "schema_name": "shop",
+     "table_name": "Order Items"
+    },
+    {
+     "character_maximum_length": null,
+     "column_default": "0",
+     "column_name": "Unit Price",
+     "data_type": "double precision",
+     "is_nullable": "YES",
+     "numeric_precision": 53,
+     "numeric_scale": null,
+     "ordinal_position": 3,
+     "remarks": null,
+     "schema_name": "shop",
+     "table_name": "Order Items"
+    },
+    {
+     "character_maximum_length": null,
+     "column_default": null,
+     "column_name": "order_id",
+     "data_type": "bigint",
+     "is_nullable": "YES",
+     "numeric_precision": 64,
+     "numeric_scale": 0,
+     "ordinal_position": 1,
+     "remarks": null,
+     "schema_name": "shop",
+     "table_name": "v_open_orders"
+    },
+    {
+     "character_maximum_length": null,
+     "column_default": null,
+     "column_name": "event_id",
+     "data_type": "bigint",
+     "is_nullable": "NO",
+     "numeric_precision": 64,
+     "numeric_scale": 0,
+     "ordinal_position": 1,
+     "remarks": null,
+     "schema_name": "ops",
+     "table_name": "events"
+    },
+    {
+     "character_maximum_length": 36,
+     "column_default": null,
+     "column_name": "session_id",
+     "data_type": "character varying",
+     "is_nullable": "YES",
+     "numeric_precision": null,
+     "numeric_scale": null,
+     "ordinal_position": 2,
+     "remarks": null,
+     "schema_name": "ops",
+     "table_name": "events"
+    },
+    {
+     "character_maximum_length": null,
+     "column_default": null,
+     "column_name": "payload",
+     "data_type": "super",
+     "is_nullable": "YES",
+     "numeric_precision": null,
+     "numeric_scale": null,
+     "ordinal_position": 3,
+     "remarks": "raw event body",
+     "schema_name": "ops",
+     "table_name": "events"
+    },
+    {
+     "character_maximum_length": 36,
+     "column_default": null,
+     "column_name": "session_id",
+     "data_type": "character varying",
+     "is_nullable": "NO",
+     "numeric_precision": null,
+     "numeric_scale": null,
+     "ordinal_position": 1,
+     "remarks": null,
+     "schema_name": "ops",
+     "table_name": "sessions"
+    },
+    {
+     "character_maximum_length": null,
+     "column_default": null,
+     "column_name": "started_at",
+     "data_type": "timestamp with time zone",
+     "is_nullable": "YES",
+     "numeric_precision": null,
+     "numeric_scale": null,
+     "ordinal_position": 2,
+     "remarks": null,
+     "schema_name": "ops",
+     "table_name": "sessions"
+    }
+   ],
+   "sql": "select schema_name, table_name, column_name, ordinal_position, data_type, is_nullable, column_default, remarks, character_maximum_length, numeric_precision, numeric_scale from svv_all_columns where database_name = ? and ((schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?)) order by schema_name, table_name, ordinal_position"
+  },
+  {
+   "params": [
+    "spectrum",
+    "lake_events"
+   ],
+   "rows": [
+    {
+     "columnname": "event_id",
+     "columnnum": 1,
+     "external_type": "bigint",
+     "is_nullable": "true",
+     "schemaname": "spectrum",
+     "tablename": "lake_events"
+    },
+    {
+     "columnname": "payload",
+     "columnnum": 2,
+     "external_type": "varchar(65535)",
+     "is_nullable": "true",
+     "schemaname": "spectrum",
+     "tablename": "lake_events"
+    },
+    {
+     "columnname": "event_date",
+     "columnnum": 3,
+     "external_type": "date",
+     "is_nullable": "true",
+     "schemaname": "spectrum",
+     "tablename": "lake_events"
+    }
+   ],
+   "sql": "select schemaname, tablename, columnname, columnnum, external_type, is_nullable from svv_external_columns where ((schemaname = ? and tablename = ?)) order by schemaname, tablename, columnnum"
+  },
+  {
+   "params": [
+    "p",
+    "u",
+    "f",
+    "ops",
+    "events",
+    "ops",
+    "sessions",
+    "shop",
+    "Order Items",
+    "shop",
+    "customers",
+    "shop",
+    "orders",
+    "shop",
+    "v_open_orders",
+    "spectrum",
+    "lake_events"
+   ],
+   "rows": [
+    {
+     "column_name": "customer_id",
+     "constraint_name": "customers_pkey",
+     "contype": "p",
+     "pos": 1,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "shop",
+     "table_name": "customers"
+    },
+    {
+     "column_name": "email",
+     "constraint_name": "customers_email_key",
+     "contype": "u",
+     "pos": 1,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "shop",
+     "table_name": "customers"
+    },
+    {
+     "column_name": "order_id",
+     "constraint_name": "orders_pkey",
+     "contype": "p",
+     "pos": 1,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "shop",
+     "table_name": "orders"
+    },
+    {
+     "column_name": "customer_id",
+     "constraint_name": "orders_customer_fk",
+     "contype": "f",
+     "pos": 1,
+     "ref_column": "customer_id",
+     "ref_schema": "shop",
+     "ref_table": "customers",
+     "schema_name": "shop",
+     "table_name": "orders"
+    },
+    {
+     "column_name": "order_id",
+     "constraint_name": "order_items_pkey",
+     "contype": "p",
+     "pos": 1,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "shop",
+     "table_name": "Order Items"
+    },
+    {
+     "column_name": "line_no",
+     "constraint_name": "order_items_pkey",
+     "contype": "p",
+     "pos": 2,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "shop",
+     "table_name": "Order Items"
+    },
+    {
+     "column_name": "order_id",
+     "constraint_name": "order_items_order_fk",
+     "contype": "f",
+     "pos": 1,
+     "ref_column": "order_id",
+     "ref_schema": "shop",
+     "ref_table": "orders",
+     "schema_name": "shop",
+     "table_name": "Order Items"
+    },
+    {
+     "column_name": "event_id",
+     "constraint_name": "events_pkey",
+     "contype": "p",
+     "pos": 1,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "ops",
+     "table_name": "events"
+    },
+    {
+     "column_name": "session_id",
+     "constraint_name": "events_session_fk",
+     "contype": "f",
+     "pos": 1,
+     "ref_column": "session_id",
+     "ref_schema": "ops",
+     "ref_table": "sessions",
+     "schema_name": "ops",
+     "table_name": "events"
+    },
+    {
+     "column_name": "session_id",
+     "constraint_name": "sessions_pkey",
+     "contype": "p",
+     "pos": 1,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "schema_name": "ops",
+     "table_name": "sessions"
+    }
+   ],
+   "sql": "select n.nspname as schema_name, c.relname as table_name, con.conname as constraint_name, con.contype as contype, k.i as pos, a.attname as column_name, fn.nspname as ref_schema, fc.relname as ref_table, fa.attname as ref_column from pg_constraint con join pg_class c on c.oid = con.conrelid join pg_namespace n on n.oid = c.relnamespace join (select generate_series(1, 32) as i) k on k.i <= array_upper(con.conkey, 1) join pg_attribute a on a.attrelid = con.conrelid and a.attnum = con.conkey[k.i] left join pg_class fc on fc.oid = con.confrelid left join pg_namespace fn on fn.oid = fc.relnamespace left join pg_attribute fa on fa.attrelid = con.confrelid and fa.attnum = con.confkey[k.i] where con.contype in (?, ?, ?) and ((n.nspname = ? and c.relname = ?) or (n.nspname = ? and c.relname = ?) or (n.nspname = ? and c.relname = ?) or (n.nspname = ? and c.relname = ?) or (n.nspname = ? and c.relname = ?) or (n.nspname = ? and c.relname = ?) or (n.nspname = ? and c.relname = ?)) order by n.nspname, c.relname, con.conname, k.i"
+  }
+ ]
+}

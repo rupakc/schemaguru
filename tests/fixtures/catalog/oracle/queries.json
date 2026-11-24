@@ -1,0 +1,473 @@
+{
+ "dialect": "oracle",
+ "queries": [
+  {
+   "params": [
+    "N"
+   ],
+   "rows": [
+    {
+     "NAME": "OPS",
+     "TABLE_COUNT": 2
+    },
+    {
+     "NAME": "SHOP",
+     "TABLE_COUNT": 4
+    }
+   ],
+   "sql": "select u.username as name, (select count(*) from all_tables t where t.owner = u.username) + (select count(*) from all_views v where v.owner = u.username) as table_count from all_users u where u.oracle_maintained = ? order by u.username"
+  },
+  {
+   "params": [
+    "OPS",
+    "OPS",
+    "OPS",
+    "OPS",
+    1001
+   ],
+   "rows": [
+    {
+     "COMMENTS": null,
+     "KIND": "TABLE",
+     "NUM_ROWS": 500000,
+     "PARTITIONING_TYPE": null,
+     "TABLE_NAME": "EVENTS"
+    },
+    {
+     "COMMENTS": null,
+     "KIND": "TABLE",
+     "NUM_ROWS": null,
+     "PARTITIONING_TYPE": null,
+     "TABLE_NAME": "SESSIONS"
+    }
+   ],
+   "sql": "select x.table_name as table_name, x.kind as kind, x.num_rows as num_rows, c.comments as comments, p.partitioning_type as partitioning_type from ( select t.table_name as table_name, 'table' as kind, t.num_rows as num_rows from all_tables t where t.owner = ? and t.nested = 'no' and t.dropped = 'no' and t.iot_name is null and not exists (select 1 from all_mviews m where m.owner = t.owner and m.mview_name = t.table_name) union all select v.view_name, 'view', null from all_views v where v.owner = ? union all select m.mview_name, 'materialized view', null from all_mviews m where m.owner = ?) x left join all_tab_comments c on c.owner = ? and c.table_name = x.table_name left join all_part_tables p on p.owner = c.owner and p.table_name = x.table_name order by x.table_name fetch first ? rows only"
+  },
+  {
+   "params": [
+    "SHOP",
+    "SHOP",
+    "SHOP",
+    "SHOP",
+    1001
+   ],
+   "rows": [
+    {
+     "COMMENTS": "people who buy",
+     "KIND": "TABLE",
+     "NUM_ROWS": 1000,
+     "PARTITIONING_TYPE": null,
+     "TABLE_NAME": "CUSTOMERS"
+    },
+    {
+     "COMMENTS": null,
+     "KIND": "TABLE",
+     "NUM_ROWS": 10000,
+     "PARTITIONING_TYPE": "RANGE",
+     "TABLE_NAME": "ORDERS"
+    },
+    {
+     "COMMENTS": null,
+     "KIND": "TABLE",
+     "NUM_ROWS": 25000,
+     "PARTITIONING_TYPE": null,
+     "TABLE_NAME": "Order Items"
+    },
+    {
+     "COMMENTS": null,
+     "KIND": "VIEW",
+     "NUM_ROWS": null,
+     "PARTITIONING_TYPE": null,
+     "TABLE_NAME": "V_OPEN_ORDERS"
+    }
+   ],
+   "sql": "select x.table_name as table_name, x.kind as kind, x.num_rows as num_rows, c.comments as comments, p.partitioning_type as partitioning_type from ( select t.table_name as table_name, 'table' as kind, t.num_rows as num_rows from all_tables t where t.owner = ? and t.nested = 'no' and t.dropped = 'no' and t.iot_name is null and not exists (select 1 from all_mviews m where m.owner = t.owner and m.mview_name = t.table_name) union all select v.view_name, 'view', null from all_views v where v.owner = ? union all select m.mview_name, 'materialized view', null from all_mviews m where m.owner = ?) x left join all_tab_comments c on c.owner = ? and c.table_name = x.table_name left join all_part_tables p on p.owner = c.owner and p.table_name = x.table_name order by x.table_name fetch first ? rows only"
+  },
+  {
+   "params": [
+    "NO",
+    "OPS",
+    "EVENTS",
+    "OPS",
+    "SESSIONS",
+    "SHOP",
+    "CUSTOMERS",
+    "SHOP",
+    "ORDERS",
+    "SHOP",
+    "Order Items",
+    "SHOP",
+    "V_OPEN_ORDERS"
+   ],
+   "rows": [
+    {
+     "CHAR_LENGTH": 0,
+     "COLUMN_ID": 1,
+     "COLUMN_NAME": "CUSTOMER_ID",
+     "COMMENTS": "surrogate key",
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 22,
+     "DATA_PRECISION": 10,
+     "DATA_SCALE": 0,
+     "DATA_TYPE": "NUMBER",
+     "NULLABLE": "N",
+     "OWNER": "SHOP",
+     "TABLE_NAME": "CUSTOMERS"
+    },
+    {
+     "CHAR_LENGTH": 320,
+     "COLUMN_ID": 2,
+     "COLUMN_NAME": "EMAIL",
+     "COMMENTS": "login address",
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 1280,
+     "DATA_PRECISION": null,
+     "DATA_SCALE": null,
+     "DATA_TYPE": "VARCHAR2",
+     "NULLABLE": "Y",
+     "OWNER": "SHOP",
+     "TABLE_NAME": "CUSTOMERS"
+    },
+    {
+     "CHAR_LENGTH": 0,
+     "COLUMN_ID": 3,
+     "COLUMN_NAME": "CREATED_AT",
+     "COMMENTS": null,
+     "DATA_DEFAULT": "SYSTIMESTAMP ",
+     "DATA_LENGTH": 11,
+     "DATA_PRECISION": null,
+     "DATA_SCALE": 6,
+     "DATA_TYPE": "TIMESTAMP(6)",
+     "NULLABLE": "Y",
+     "OWNER": "SHOP",
+     "TABLE_NAME": "CUSTOMERS"
+    },
+    {
+     "CHAR_LENGTH": 0,
+     "COLUMN_ID": 1,
+     "COLUMN_NAME": "ORDER_ID",
+     "COMMENTS": null,
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 22,
+     "DATA_PRECISION": 10,
+     "DATA_SCALE": 0,
+     "DATA_TYPE": "NUMBER",
+     "NULLABLE": "N",
+     "OWNER": "SHOP",
+     "TABLE_NAME": "ORDERS"
+    },
+    {
+     "CHAR_LENGTH": 0,
+     "COLUMN_ID": 2,
+     "COLUMN_NAME": "CUSTOMER_ID",
+     "COMMENTS": null,
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 22,
+     "DATA_PRECISION": 10,
+     "DATA_SCALE": 0,
+     "DATA_TYPE": "NUMBER",
+     "NULLABLE": "Y",
+     "OWNER": "SHOP",
+     "TABLE_NAME": "ORDERS"
+    },
+    {
+     "CHAR_LENGTH": 0,
+     "COLUMN_ID": 3,
+     "COLUMN_NAME": "TOTAL",
+     "COMMENTS": null,
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 22,
+     "DATA_PRECISION": 10,
+     "DATA_SCALE": 2,
+     "DATA_TYPE": "NUMBER",
+     "NULLABLE": "Y",
+     "OWNER": "SHOP",
+     "TABLE_NAME": "ORDERS"
+    },
+    {
+     "CHAR_LENGTH": 0,
+     "COLUMN_ID": 4,
+     "COLUMN_NAME": "PLACED",
+     "COMMENTS": null,
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 7,
+     "DATA_PRECISION": null,
+     "DATA_SCALE": null,
+     "DATA_TYPE": "DATE",
+     "NULLABLE": "Y",
+     "OWNER": "SHOP",
+     "TABLE_NAME": "ORDERS"
+    },
+    {
+     "CHAR_LENGTH": 0,
+     "COLUMN_ID": 1,
+     "COLUMN_NAME": "ORDER_ID",
+     "COMMENTS": null,
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 22,
+     "DATA_PRECISION": 10,
+     "DATA_SCALE": 0,
+     "DATA_TYPE": "NUMBER",
+     "NULLABLE": "N",
+     "OWNER": "SHOP",
+     "TABLE_NAME": "Order Items"
+    },
+    {
+     "CHAR_LENGTH": 0,
+     "COLUMN_ID": 2,
+     "COLUMN_NAME": "LINE_NO",
+     "COMMENTS": null,
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 22,
+     "DATA_PRECISION": 5,
+     "DATA_SCALE": 0,
+     "DATA_TYPE": "NUMBER",
+     "NULLABLE": "N",
+     "OWNER": "SHOP",
+     "TABLE_NAME": "Order Items"
+    },
+    {
+     "CHAR_LENGTH": 0,
+     "COLUMN_ID": 3,
+     "COLUMN_NAME": "Unit Price",
+     "COMMENTS": null,
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 8,
+     "DATA_PRECISION": null,
+     "DATA_SCALE": null,
+     "DATA_TYPE": "BINARY_DOUBLE",
+     "NULLABLE": "Y",
+     "OWNER": "SHOP",
+     "TABLE_NAME": "Order Items"
+    },
+    {
+     "CHAR_LENGTH": 0,
+     "COLUMN_ID": 1,
+     "COLUMN_NAME": "ORDER_ID",
+     "COMMENTS": null,
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 22,
+     "DATA_PRECISION": 10,
+     "DATA_SCALE": 0,
+     "DATA_TYPE": "NUMBER",
+     "NULLABLE": "Y",
+     "OWNER": "SHOP",
+     "TABLE_NAME": "V_OPEN_ORDERS"
+    },
+    {
+     "CHAR_LENGTH": 0,
+     "COLUMN_ID": 1,
+     "COLUMN_NAME": "EVENT_ID",
+     "COMMENTS": null,
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 22,
+     "DATA_PRECISION": 18,
+     "DATA_SCALE": 0,
+     "DATA_TYPE": "NUMBER",
+     "NULLABLE": "N",
+     "OWNER": "OPS",
+     "TABLE_NAME": "EVENTS"
+    },
+    {
+     "CHAR_LENGTH": 36,
+     "COLUMN_ID": 2,
+     "COLUMN_NAME": "SESSION_ID",
+     "COMMENTS": null,
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 144,
+     "DATA_PRECISION": null,
+     "DATA_SCALE": null,
+     "DATA_TYPE": "VARCHAR2",
+     "NULLABLE": "Y",
+     "OWNER": "OPS",
+     "TABLE_NAME": "EVENTS"
+    },
+    {
+     "CHAR_LENGTH": 0,
+     "COLUMN_ID": 3,
+     "COLUMN_NAME": "PAYLOAD",
+     "COMMENTS": "raw event body",
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 4000,
+     "DATA_PRECISION": null,
+     "DATA_SCALE": null,
+     "DATA_TYPE": "CLOB",
+     "NULLABLE": "Y",
+     "OWNER": "OPS",
+     "TABLE_NAME": "EVENTS"
+    },
+    {
+     "CHAR_LENGTH": 36,
+     "COLUMN_ID": 1,
+     "COLUMN_NAME": "SESSION_ID",
+     "COMMENTS": null,
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 144,
+     "DATA_PRECISION": null,
+     "DATA_SCALE": null,
+     "DATA_TYPE": "VARCHAR2",
+     "NULLABLE": "N",
+     "OWNER": "OPS",
+     "TABLE_NAME": "SESSIONS"
+    },
+    {
+     "CHAR_LENGTH": 0,
+     "COLUMN_ID": 2,
+     "COLUMN_NAME": "TOKEN",
+     "COMMENTS": null,
+     "DATA_DEFAULT": null,
+     "DATA_LENGTH": 16,
+     "DATA_PRECISION": null,
+     "DATA_SCALE": null,
+     "DATA_TYPE": "RAW",
+     "NULLABLE": "Y",
+     "OWNER": "OPS",
+     "TABLE_NAME": "SESSIONS"
+    }
+   ],
+   "sql": "select c.owner as owner, c.table_name as table_name, c.column_name as column_name, c.column_id as column_id, c.data_type as data_type, c.data_length as data_length, c.char_length as char_length, c.data_precision as data_precision, c.data_scale as data_scale, c.nullable as nullable, c.data_default as data_default, m.comments as comments from all_tab_columns c left join all_col_comments m on m.owner = c.owner and m.table_name = c.table_name and m.column_name = c.column_name where c.hidden_column = ? and ((c.owner = ? and c.table_name = ?) or (c.owner = ? and c.table_name = ?) or (c.owner = ? and c.table_name = ?) or (c.owner = ? and c.table_name = ?) or (c.owner = ? and c.table_name = ?) or (c.owner = ? and c.table_name = ?)) order by c.owner, c.table_name, c.column_id"
+  },
+  {
+   "params": [
+    "P",
+    "U",
+    "R",
+    "OPS",
+    "EVENTS",
+    "OPS",
+    "SESSIONS",
+    "SHOP",
+    "CUSTOMERS",
+    "SHOP",
+    "ORDERS",
+    "SHOP",
+    "Order Items",
+    "SHOP",
+    "V_OPEN_ORDERS"
+   ],
+   "rows": [
+    {
+     "COLUMN_NAME": "CUSTOMER_ID",
+     "CONSTRAINT_NAME": "PK_CUSTOMERS",
+     "CONSTRAINT_TYPE": "P",
+     "OWNER": "SHOP",
+     "POSITION": 1,
+     "REF_COLUMN": null,
+     "REF_OWNER": null,
+     "REF_TABLE": null,
+     "STATUS": "ENABLED",
+     "TABLE_NAME": "CUSTOMERS"
+    },
+    {
+     "COLUMN_NAME": "EMAIL",
+     "CONSTRAINT_NAME": "UQ_CUSTOMERS_EMAIL",
+     "CONSTRAINT_TYPE": "U",
+     "OWNER": "SHOP",
+     "POSITION": 1,
+     "REF_COLUMN": null,
+     "REF_OWNER": null,
+     "REF_TABLE": null,
+     "STATUS": "ENABLED",
+     "TABLE_NAME": "CUSTOMERS"
+    },
+    {
+     "COLUMN_NAME": "ORDER_ID",
+     "CONSTRAINT_NAME": "PK_ORDERS",
+     "CONSTRAINT_TYPE": "P",
+     "OWNER": "SHOP",
+     "POSITION": 1,
+     "REF_COLUMN": null,
+     "REF_OWNER": null,
+     "REF_TABLE": null,
+     "STATUS": "ENABLED",
+     "TABLE_NAME": "ORDERS"
+    },
+    {
+     "COLUMN_NAME": "CUSTOMER_ID",
+     "CONSTRAINT_NAME": "FK_ORDERS_CUSTOMER",
+     "CONSTRAINT_TYPE": "R",
+     "OWNER": "SHOP",
+     "POSITION": 1,
+     "REF_COLUMN": "CUSTOMER_ID",
+     "REF_OWNER": "SHOP",
+     "REF_TABLE": "CUSTOMERS",
+     "STATUS": "DISABLED",
+     "TABLE_NAME": "ORDERS"
+    },
+    {
+     "COLUMN_NAME": "ORDER_ID",
+     "CONSTRAINT_NAME": "PK_ORDER_ITEMS",
+     "CONSTRAINT_TYPE": "P",
+     "OWNER": "SHOP",
+     "POSITION": 1,
+     "REF_COLUMN": null,
+     "REF_OWNER": null,
+     "REF_TABLE": null,
+     "STATUS": "ENABLED",
+     "TABLE_NAME": "Order Items"
+    },
+    {
+     "COLUMN_NAME": "LINE_NO",
+     "CONSTRAINT_NAME": "PK_ORDER_ITEMS",
+     "CONSTRAINT_TYPE": "P",
+     "OWNER": "SHOP",
+     "POSITION": 2,
+     "REF_COLUMN": null,
+     "REF_OWNER": null,
+     "REF_TABLE": null,
+     "STATUS": "ENABLED",
+     "TABLE_NAME": "Order Items"
+    },
+    {
+     "COLUMN_NAME": "ORDER_ID",
+     "CONSTRAINT_NAME": "FK_ITEMS_ORDER",
+     "CONSTRAINT_TYPE": "R",
+     "OWNER": "SHOP",
+     "POSITION": 1,
+     "REF_COLUMN": "ORDER_ID",
+     "REF_OWNER": "SHOP",
+     "REF_TABLE": "ORDERS",
+     "STATUS": "DISABLED",
+     "TABLE_NAME": "Order Items"
+    },
+    {
+     "COLUMN_NAME": "EVENT_ID",
+     "CONSTRAINT_NAME": "PK_EVENTS",
+     "CONSTRAINT_TYPE": "P",
+     "OWNER": "OPS",
+     "POSITION": 1,
+     "REF_COLUMN": null,
+     "REF_OWNER": null,
+     "REF_TABLE": null,
+     "STATUS": "ENABLED",
+     "TABLE_NAME": "EVENTS"
+    },
+    {
+     "COLUMN_NAME": "SESSION_ID",
+     "CONSTRAINT_NAME": "PK_SESSIONS",
+     "CONSTRAINT_TYPE": "P",
+     "OWNER": "OPS",
+     "POSITION": 1,
+     "REF_COLUMN": null,
+     "REF_OWNER": null,
+     "REF_TABLE": null,
+     "STATUS": "ENABLED",
+     "TABLE_NAME": "SESSIONS"
+    },
+    {
+     "COLUMN_NAME": "SESSION_ID",
+     "CONSTRAINT_NAME": "FK_EVENTS_SESSION",
+     "CONSTRAINT_TYPE": "R",
+     "OWNER": "OPS",
+     "POSITION": 1,
+     "REF_COLUMN": "SESSION_ID",
+     "REF_OWNER": "OPS",
+     "REF_TABLE": "SESSIONS",
+     "STATUS": "DISABLED",
+     "TABLE_NAME": "EVENTS"
+    }
+   ],
+   "sql": "select k.owner as owner, k.table_name as table_name, k.constraint_name as constraint_name, k.constraint_type as constraint_type, k.status as status, cc.column_name as column_name, cc.position as position, rc.owner as ref_owner, rc.table_name as ref_table, rcc.column_name as ref_column from all_constraints k join all_cons_columns cc on cc.owner = k.owner and cc.constraint_name = k.constraint_name left join all_constraints rc on rc.owner = k.r_owner and rc.constraint_name = k.r_constraint_name left join all_cons_columns rcc on rcc.owner = rc.owner and rcc.constraint_name = rc.constraint_name and rcc.position = cc.position where k.constraint_type in (?, ?, ?) and ((k.owner = ? and k.table_name = ?) or (k.owner = ? and k.table_name = ?) or (k.owner = ? and k.table_name = ?) or (k.owner = ? and k.table_name = ?) or (k.owner = ? and k.table_name = ?) or (k.owner = ? and k.table_name = ?)) order by k.owner, k.table_name, k.constraint_name, cc.position"
+  }
+ ]
+}

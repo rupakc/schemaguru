@@ -1,0 +1,480 @@
+{
+ "dialect": "bigquery",
+ "queries": [
+  {
+   "params": [],
+   "rows": [
+    {
+     "catalog_name": "demo-project",
+     "schema_name": "ops"
+    },
+    {
+     "catalog_name": "demo-project",
+     "schema_name": "shop"
+    }
+   ],
+   "sql": "select catalog_name, schema_name from `region-us`.information_schema.schemata order by schema_name"
+  },
+  {
+   "params": [
+    "description",
+    null,
+    null,
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "creation_time": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "description": null,
+     "last_modified": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "table_name": "events",
+     "table_type": "BASE TABLE",
+     "total_logical_bytes": 7340032,
+     "total_rows": 500000
+    },
+    {
+     "creation_time": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "description": null,
+     "last_modified": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "table_name": "sessions",
+     "table_type": "BASE TABLE",
+     "total_logical_bytes": 1310720,
+     "total_rows": 90000
+    }
+   ],
+   "sql": "select t.table_name as table_name, t.table_type as table_type, t.creation_time as creation_time, d.option_value as description, s.total_rows as total_rows, s.total_logical_bytes as total_logical_bytes, s.storage_last_modified_time as last_modified from `demo-project`.`ops`.information_schema.tables t left join `demo-project`.`ops`.information_schema.table_options d on d.table_name = t.table_name and d.option_name = ? left join `region-us`.information_schema.table_storage s on s.table_schema = t.table_schema and s.table_name = t.table_name and s.project_id = t.table_catalog where (cast(? as string) is null or t.table_name > ?) and (cast(? as timestamp) is null or s.storage_last_modified_time >= ?) order by t.table_name limit ?"
+  },
+  {
+   "params": [
+    "description",
+    null,
+    null,
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "creation_time": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "description": "\"people who buy\"",
+     "last_modified": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "table_name": "customers",
+     "table_type": "BASE TABLE",
+     "total_logical_bytes": 81920,
+     "total_rows": 1000
+    },
+    {
+     "creation_time": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "description": null,
+     "last_modified": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "table_name": "order-items",
+     "table_type": "BASE TABLE",
+     "total_logical_bytes": 1048576,
+     "total_rows": 25000
+    },
+    {
+     "creation_time": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "description": "\"one row per \\\"order\\\"\"",
+     "last_modified": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "table_name": "orders",
+     "table_type": "BASE TABLE",
+     "total_logical_bytes": 524288,
+     "total_rows": 10000
+    },
+    {
+     "creation_time": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "description": null,
+     "last_modified": null,
+     "table_name": "v_open_orders",
+     "table_type": "VIEW",
+     "total_logical_bytes": null,
+     "total_rows": null
+    }
+   ],
+   "sql": "select t.table_name as table_name, t.table_type as table_type, t.creation_time as creation_time, d.option_value as description, s.total_rows as total_rows, s.total_logical_bytes as total_logical_bytes, s.storage_last_modified_time as last_modified from `demo-project`.`shop`.information_schema.tables t left join `demo-project`.`shop`.information_schema.table_options d on d.table_name = t.table_name and d.option_name = ? left join `region-us`.information_schema.table_storage s on s.table_schema = t.table_schema and s.table_name = t.table_name and s.project_id = t.table_catalog where (cast(? as string) is null or t.table_name > ?) and (cast(? as timestamp) is null or s.storage_last_modified_time >= ?) order by t.table_name limit ?"
+  },
+  {
+   "params": [
+    "events",
+    "sessions"
+   ],
+   "rows": [
+    {
+     "column_default": "NULL",
+     "column_name": "event_id",
+     "data_type": "INT64",
+     "description": null,
+     "is_nullable": "NO",
+     "ordinal_position": 1,
+     "table_name": "events"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "session_id",
+     "data_type": "STRING",
+     "description": null,
+     "is_nullable": "YES",
+     "ordinal_position": 2,
+     "table_name": "events"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "payload",
+     "data_type": "JSON",
+     "description": "raw event body",
+     "is_nullable": "YES",
+     "ordinal_position": 3,
+     "table_name": "events"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "context",
+     "data_type": "STRUCT<ip STRING, agent STRING>",
+     "description": null,
+     "is_nullable": "YES",
+     "ordinal_position": 4,
+     "table_name": "events"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "session_id",
+     "data_type": "STRING",
+     "description": null,
+     "is_nullable": "NO",
+     "ordinal_position": 1,
+     "table_name": "sessions"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "started_at",
+     "data_type": "TIMESTAMP",
+     "description": null,
+     "is_nullable": "YES",
+     "ordinal_position": 2,
+     "table_name": "sessions"
+    }
+   ],
+   "sql": "select c.table_name as table_name, c.column_name as column_name, c.ordinal_position as ordinal_position, c.data_type as data_type, c.is_nullable as is_nullable, c.column_default as column_default, f.description as description from `demo-project`.`ops`.information_schema.columns c left join `demo-project`.`ops`.information_schema.column_field_paths f on f.table_name = c.table_name and f.column_name = c.column_name and f.field_path = c.column_name where c.table_name in (?, ?) order by c.table_name, c.ordinal_position"
+  },
+  {
+   "params": [
+    "customers",
+    "order-items",
+    "orders",
+    "v_open_orders"
+   ],
+   "rows": [
+    {
+     "column_default": "NULL",
+     "column_name": "customer_id",
+     "data_type": "INT64",
+     "description": "surrogate key",
+     "is_nullable": "NO",
+     "ordinal_position": 1,
+     "table_name": "customers"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "email",
+     "data_type": "STRING",
+     "description": "login address",
+     "is_nullable": "YES",
+     "ordinal_position": 2,
+     "table_name": "customers"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "segment",
+     "data_type": "STRING",
+     "description": null,
+     "is_nullable": "YES",
+     "ordinal_position": 3,
+     "table_name": "customers"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "created_at",
+     "data_type": "TIMESTAMP",
+     "description": null,
+     "is_nullable": "YES",
+     "ordinal_position": 4,
+     "table_name": "customers"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "tags",
+     "data_type": "ARRAY<STRING>",
+     "description": null,
+     "is_nullable": "YES",
+     "ordinal_position": 5,
+     "table_name": "customers"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "order_id",
+     "data_type": "INT64",
+     "description": null,
+     "is_nullable": "NO",
+     "ordinal_position": 1,
+     "table_name": "orders"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "customer_id",
+     "data_type": "INT64",
+     "description": null,
+     "is_nullable": "YES",
+     "ordinal_position": 2,
+     "table_name": "orders"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "status",
+     "data_type": "STRING",
+     "description": null,
+     "is_nullable": "YES",
+     "ordinal_position": 3,
+     "table_name": "orders"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "total",
+     "data_type": "NUMERIC(10, 2)",
+     "description": null,
+     "is_nullable": "YES",
+     "ordinal_position": 4,
+     "table_name": "orders"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "deleted",
+     "data_type": "BOOL",
+     "description": null,
+     "is_nullable": "YES",
+     "ordinal_position": 5,
+     "table_name": "orders"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "order_id",
+     "data_type": "INT64",
+     "description": null,
+     "is_nullable": "NO",
+     "ordinal_position": 1,
+     "table_name": "order-items"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "line_no",
+     "data_type": "INT64",
+     "description": null,
+     "is_nullable": "NO",
+     "ordinal_position": 2,
+     "table_name": "order-items"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "product_id",
+     "data_type": "INT64",
+     "description": null,
+     "is_nullable": "YES",
+     "ordinal_position": 3,
+     "table_name": "order-items"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "order_id",
+     "data_type": "INT64",
+     "description": null,
+     "is_nullable": "YES",
+     "ordinal_position": 1,
+     "table_name": "v_open_orders"
+    },
+    {
+     "column_default": "NULL",
+     "column_name": "status",
+     "data_type": "STRING",
+     "description": null,
+     "is_nullable": "YES",
+     "ordinal_position": 2,
+     "table_name": "v_open_orders"
+    }
+   ],
+   "sql": "select c.table_name as table_name, c.column_name as column_name, c.ordinal_position as ordinal_position, c.data_type as data_type, c.is_nullable as is_nullable, c.column_default as column_default, f.description as description from `demo-project`.`shop`.information_schema.columns c left join `demo-project`.`shop`.information_schema.column_field_paths f on f.table_name = c.table_name and f.column_name = c.column_name and f.field_path = c.column_name where c.table_name in (?, ?, ?, ?) order by c.table_name, c.ordinal_position"
+  },
+  {
+   "params": [
+    "FOREIGN KEY",
+    "PRIMARY KEY",
+    "events",
+    "sessions"
+   ],
+   "rows": [
+    {
+     "column_name": "event_id",
+     "constraint_name": "events.pk$",
+     "constraint_type": "PRIMARY KEY",
+     "enforced": "NO",
+     "ordinal_position": 1,
+     "ref_catalog": null,
+     "ref_column": null,
+     "ref_position": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "table_name": "events",
+     "unique_position": null
+    },
+    {
+     "column_name": "session_id",
+     "constraint_name": "sessions.pk$",
+     "constraint_type": "PRIMARY KEY",
+     "enforced": "NO",
+     "ordinal_position": 1,
+     "ref_catalog": null,
+     "ref_column": null,
+     "ref_position": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "table_name": "sessions",
+     "unique_position": null
+    },
+    {
+     "column_name": "session_id",
+     "constraint_name": "events.fk_session",
+     "constraint_type": "FOREIGN KEY",
+     "enforced": "NO",
+     "ordinal_position": 1,
+     "ref_catalog": "demo-project",
+     "ref_column": "session_id",
+     "ref_position": 1,
+     "ref_schema": "ops",
+     "ref_table": "sessions",
+     "table_name": "events",
+     "unique_position": 1
+    }
+   ],
+   "sql": "select k.table_name as table_name, k.constraint_name as constraint_name, tc.constraint_type as constraint_type, tc.enforced as enforced, k.column_name as column_name, k.ordinal_position as ordinal_position, k.position_in_unique_constraint as unique_position, u.table_catalog as ref_catalog, u.table_schema as ref_schema, u.table_name as ref_table, u.column_name as ref_column, pk.ordinal_position as ref_position from `demo-project`.`ops`.information_schema.key_column_usage k join `demo-project`.`ops`.information_schema.table_constraints tc on tc.constraint_name = k.constraint_name and tc.table_name = k.table_name left join `demo-project`.`ops`.information_schema.constraint_column_usage u on u.constraint_name = k.constraint_name and tc.constraint_type = ? left join `demo-project`.`ops`.information_schema.key_column_usage pk on pk.table_name = u.table_name and pk.column_name = u.column_name and pk.constraint_name in (select constraint_name from `demo-project`.`ops`.information_schema.table_constraints where constraint_type = ?) where k.table_name in (?, ?) order by k.table_name, k.constraint_name, k.ordinal_position"
+  },
+  {
+   "params": [
+    "FOREIGN KEY",
+    "PRIMARY KEY",
+    "customers",
+    "order-items",
+    "orders",
+    "v_open_orders"
+   ],
+   "rows": [
+    {
+     "column_name": "customer_id",
+     "constraint_name": "customers.pk$",
+     "constraint_type": "PRIMARY KEY",
+     "enforced": "NO",
+     "ordinal_position": 1,
+     "ref_catalog": null,
+     "ref_column": null,
+     "ref_position": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "table_name": "customers",
+     "unique_position": null
+    },
+    {
+     "column_name": "order_id",
+     "constraint_name": "orders.pk$",
+     "constraint_type": "PRIMARY KEY",
+     "enforced": "NO",
+     "ordinal_position": 1,
+     "ref_catalog": null,
+     "ref_column": null,
+     "ref_position": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "table_name": "orders",
+     "unique_position": null
+    },
+    {
+     "column_name": "customer_id",
+     "constraint_name": "orders.fk_customer",
+     "constraint_type": "FOREIGN KEY",
+     "enforced": "NO",
+     "ordinal_position": 1,
+     "ref_catalog": "demo-project",
+     "ref_column": "customer_id",
+     "ref_position": 1,
+     "ref_schema": "shop",
+     "ref_table": "customers",
+     "table_name": "orders",
+     "unique_position": 1
+    },
+    {
+     "column_name": "order_id",
+     "constraint_name": "order-items.pk$",
+     "constraint_type": "PRIMARY KEY",
+     "enforced": "NO",
+     "ordinal_position": 1,
+     "ref_catalog": null,
+     "ref_column": null,
+     "ref_position": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "table_name": "order-items",
+     "unique_position": null
+    },
+    {
+     "column_name": "line_no",
+     "constraint_name": "order-items.pk$",
+     "constraint_type": "PRIMARY KEY",
+     "enforced": "NO",
+     "ordinal_position": 2,
+     "ref_catalog": null,
+     "ref_column": null,
+     "ref_position": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "table_name": "order-items",
+     "unique_position": null
+    },
+    {
+     "column_name": "order_id",
+     "constraint_name": "order-items.fk_order",
+     "constraint_type": "FOREIGN KEY",
+     "enforced": "NO",
+     "ordinal_position": 1,
+     "ref_catalog": "demo-project",
+     "ref_column": "order_id",
+     "ref_position": 1,
+     "ref_schema": "shop",
+     "ref_table": "orders",
+     "table_name": "order-items",
+     "unique_position": 1
+    }
+   ],
+   "sql": "select k.table_name as table_name, k.constraint_name as constraint_name, tc.constraint_type as constraint_type, tc.enforced as enforced, k.column_name as column_name, k.ordinal_position as ordinal_position, k.position_in_unique_constraint as unique_position, u.table_catalog as ref_catalog, u.table_schema as ref_schema, u.table_name as ref_table, u.column_name as ref_column, pk.ordinal_position as ref_position from `demo-project`.`shop`.information_schema.key_column_usage k join `demo-project`.`shop`.information_schema.table_constraints tc on tc.constraint_name = k.constraint_name and tc.table_name = k.table_name left join `demo-project`.`shop`.information_schema.constraint_column_usage u on u.constraint_name = k.constraint_name and tc.constraint_type = ? left join `demo-project`.`shop`.information_schema.key_column_usage pk on pk.table_name = u.table_name and pk.column_name = u.column_name and pk.constraint_name in (select constraint_name from `demo-project`.`shop`.information_schema.table_constraints where constraint_type = ?) where k.table_name in (?, ?, ?, ?) order by k.table_name, k.constraint_name, k.ordinal_position"
+  }
+ ]
+}

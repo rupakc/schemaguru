@@ -1,0 +1,523 @@
+{
+ "dialect": "databricks",
+ "queries": [
+  {
+   "params": [
+    "system",
+    "__databricks_internal"
+   ],
+   "rows": [
+    {
+     "catalog_name": "lake"
+    },
+    {
+     "catalog_name": "main"
+    }
+   ],
+   "sql": "select catalog_name from system.information_schema.catalogs where catalog_name not in (?, ?) order by catalog_name"
+  },
+  {
+   "params": [
+    "lake",
+    "lake",
+    "information_schema"
+   ],
+   "rows": [
+    {
+     "catalog_name": "lake",
+     "comment": null,
+     "schema_name": "raw"
+    }
+   ],
+   "sql": "select s.catalog_name as catalog_name, s.schema_name as schema_name, s.comment as comment from system.information_schema.schemata s where (cast(? as string) is null or s.catalog_name = ?) and s.schema_name <> ? order by s.catalog_name, s.schema_name"
+  },
+  {
+   "params": [
+    "main",
+    "main",
+    "information_schema"
+   ],
+   "rows": [
+    {
+     "catalog_name": "main",
+     "comment": null,
+     "schema_name": "ops"
+    },
+    {
+     "catalog_name": "main",
+     "comment": "retail data",
+     "schema_name": "shop"
+    }
+   ],
+   "sql": "select s.catalog_name as catalog_name, s.schema_name as schema_name, s.comment as comment from system.information_schema.schemata s where (cast(? as string) is null or s.catalog_name = ?) and s.schema_name <> ? order by s.catalog_name, s.schema_name"
+  },
+  {
+   "params": [
+    "lake",
+    "raw",
+    null,
+    null,
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "comment": "files in object storage",
+     "created": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "last_altered": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "table_name": "lake_events",
+     "table_type": "EXTERNAL"
+    }
+   ],
+   "sql": "select table_name, table_type, comment, created, last_altered from system.information_schema.tables where table_catalog = ? and table_schema = ? and (cast(? as string) is null or table_name > ?) and (cast(? as timestamp) is null or last_altered >= ?) order by table_name limit ?"
+  },
+  {
+   "params": [
+    "main",
+    "ops",
+    null,
+    null,
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "comment": null,
+     "created": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "last_altered": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "table_name": "events",
+     "table_type": "MANAGED"
+    },
+    {
+     "comment": null,
+     "created": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "last_altered": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "table_name": "sessions",
+     "table_type": "MANAGED"
+    }
+   ],
+   "sql": "select table_name, table_type, comment, created, last_altered from system.information_schema.tables where table_catalog = ? and table_schema = ? and (cast(? as string) is null or table_name > ?) and (cast(? as timestamp) is null or last_altered >= ?) order by table_name limit ?"
+  },
+  {
+   "params": [
+    "main",
+    "shop",
+    null,
+    null,
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "comment": "people who buy",
+     "created": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "last_altered": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "table_name": "customers",
+     "table_type": "MANAGED"
+    },
+    {
+     "comment": null,
+     "created": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "last_altered": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "table_name": "order-items",
+     "table_type": "MANAGED"
+    },
+    {
+     "comment": null,
+     "created": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "last_altered": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "table_name": "orders",
+     "table_type": "MANAGED"
+    },
+    {
+     "comment": null,
+     "created": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "last_altered": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "table_name": "v_open_orders",
+     "table_type": "VIEW"
+    }
+   ],
+   "sql": "select table_name, table_type, comment, created, last_altered from system.information_schema.tables where table_catalog = ? and table_schema = ? and (cast(? as string) is null or table_name > ?) and (cast(? as timestamp) is null or last_altered >= ?) order by table_name limit ?"
+  },
+  {
+   "params": [
+    "lake",
+    "raw",
+    "lake_events",
+    "main",
+    "ops",
+    "events",
+    "main",
+    "ops",
+    "sessions",
+    "main",
+    "shop",
+    "customers",
+    "main",
+    "shop",
+    "order-items",
+    "main",
+    "shop",
+    "orders",
+    "main",
+    "shop",
+    "v_open_orders"
+   ],
+   "rows": [
+    {
+     "column_default": null,
+     "column_name": "customer_id",
+     "comment": "surrogate key",
+     "full_data_type": "bigint",
+     "is_nullable": "NO",
+     "ordinal_position": 0,
+     "table_catalog": "main",
+     "table_name": "customers",
+     "table_schema": "shop"
+    },
+    {
+     "column_default": null,
+     "column_name": "email",
+     "comment": "login address",
+     "full_data_type": "string",
+     "is_nullable": "YES",
+     "ordinal_position": 1,
+     "table_catalog": "main",
+     "table_name": "customers",
+     "table_schema": "shop"
+    },
+    {
+     "column_default": null,
+     "column_name": "tags",
+     "comment": null,
+     "full_data_type": "array<string>",
+     "is_nullable": "YES",
+     "ordinal_position": 2,
+     "table_catalog": "main",
+     "table_name": "customers",
+     "table_schema": "shop"
+    },
+    {
+     "column_default": null,
+     "column_name": "order_id",
+     "comment": null,
+     "full_data_type": "bigint",
+     "is_nullable": "NO",
+     "ordinal_position": 0,
+     "table_catalog": "main",
+     "table_name": "orders",
+     "table_schema": "shop"
+    },
+    {
+     "column_default": null,
+     "column_name": "customer_id",
+     "comment": null,
+     "full_data_type": "bigint",
+     "is_nullable": "YES",
+     "ordinal_position": 1,
+     "table_catalog": "main",
+     "table_name": "orders",
+     "table_schema": "shop"
+    },
+    {
+     "column_default": null,
+     "column_name": "total",
+     "comment": null,
+     "full_data_type": "decimal(10,2)",
+     "is_nullable": "YES",
+     "ordinal_position": 2,
+     "table_catalog": "main",
+     "table_name": "orders",
+     "table_schema": "shop"
+    },
+    {
+     "column_default": null,
+     "column_name": "order_id",
+     "comment": null,
+     "full_data_type": "bigint",
+     "is_nullable": "NO",
+     "ordinal_position": 0,
+     "table_catalog": "main",
+     "table_name": "order-items",
+     "table_schema": "shop"
+    },
+    {
+     "column_default": null,
+     "column_name": "line_no",
+     "comment": null,
+     "full_data_type": "int",
+     "is_nullable": "NO",
+     "ordinal_position": 1,
+     "table_catalog": "main",
+     "table_name": "order-items",
+     "table_schema": "shop"
+    },
+    {
+     "column_default": null,
+     "column_name": "order_id",
+     "comment": null,
+     "full_data_type": "bigint",
+     "is_nullable": "YES",
+     "ordinal_position": 0,
+     "table_catalog": "main",
+     "table_name": "v_open_orders",
+     "table_schema": "shop"
+    },
+    {
+     "column_default": null,
+     "column_name": "event_id",
+     "comment": null,
+     "full_data_type": "bigint",
+     "is_nullable": "NO",
+     "ordinal_position": 0,
+     "table_catalog": "main",
+     "table_name": "events",
+     "table_schema": "ops"
+    },
+    {
+     "column_default": null,
+     "column_name": "session_id",
+     "comment": null,
+     "full_data_type": "string",
+     "is_nullable": "YES",
+     "ordinal_position": 1,
+     "table_catalog": "main",
+     "table_name": "events",
+     "table_schema": "ops"
+    },
+    {
+     "column_default": null,
+     "column_name": "attrs",
+     "comment": null,
+     "full_data_type": "map<string,string>",
+     "is_nullable": "YES",
+     "ordinal_position": 2,
+     "table_catalog": "main",
+     "table_name": "events",
+     "table_schema": "ops"
+    },
+    {
+     "column_default": null,
+     "column_name": "session_id",
+     "comment": null,
+     "full_data_type": "string",
+     "is_nullable": "NO",
+     "ordinal_position": 0,
+     "table_catalog": "main",
+     "table_name": "sessions",
+     "table_schema": "ops"
+    },
+    {
+     "column_default": null,
+     "column_name": "started_at",
+     "comment": null,
+     "full_data_type": "timestamp",
+     "is_nullable": "YES",
+     "ordinal_position": 1,
+     "table_catalog": "main",
+     "table_name": "sessions",
+     "table_schema": "ops"
+    },
+    {
+     "column_default": null,
+     "column_name": "event_id",
+     "comment": null,
+     "full_data_type": "bigint",
+     "is_nullable": "YES",
+     "ordinal_position": 0,
+     "table_catalog": "lake",
+     "table_name": "lake_events",
+     "table_schema": "raw"
+    },
+    {
+     "column_default": null,
+     "column_name": "event_date",
+     "comment": null,
+     "full_data_type": "date",
+     "is_nullable": "YES",
+     "ordinal_position": 1,
+     "table_catalog": "lake",
+     "table_name": "lake_events",
+     "table_schema": "raw"
+    }
+   ],
+   "sql": "select table_catalog, table_schema, table_name, column_name, ordinal_position, full_data_type, is_nullable, column_default, comment from system.information_schema.columns where ((table_catalog = ? and table_schema = ? and table_name = ?) or (table_catalog = ? and table_schema = ? and table_name = ?) or (table_catalog = ? and table_schema = ? and table_name = ?) or (table_catalog = ? and table_schema = ? and table_name = ?) or (table_catalog = ? and table_schema = ? and table_name = ?) or (table_catalog = ? and table_schema = ? and table_name = ?) or (table_catalog = ? and table_schema = ? and table_name = ?)) order by table_catalog, table_schema, table_name, ordinal_position"
+  },
+  {
+   "params": [
+    "lake",
+    "raw",
+    "lake_events",
+    "main",
+    "ops",
+    "events",
+    "main",
+    "ops",
+    "sessions",
+    "main",
+    "shop",
+    "customers",
+    "main",
+    "shop",
+    "order-items",
+    "main",
+    "shop",
+    "orders",
+    "main",
+    "shop",
+    "v_open_orders"
+   ],
+   "rows": [
+    {
+     "column_name": "customer_id",
+     "constraint_name": "pk_customers",
+     "constraint_type": "PRIMARY KEY",
+     "ordinal_position": 1,
+     "ref_catalog": null,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "table_catalog": "main",
+     "table_name": "customers",
+     "table_schema": "shop"
+    },
+    {
+     "column_name": "order_id",
+     "constraint_name": "pk_orders",
+     "constraint_type": "PRIMARY KEY",
+     "ordinal_position": 1,
+     "ref_catalog": null,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "table_catalog": "main",
+     "table_name": "orders",
+     "table_schema": "shop"
+    },
+    {
+     "column_name": "customer_id",
+     "constraint_name": "fk_orders_customer",
+     "constraint_type": "FOREIGN KEY",
+     "ordinal_position": 1,
+     "ref_catalog": "main",
+     "ref_column": "customer_id",
+     "ref_schema": "shop",
+     "ref_table": "customers",
+     "table_catalog": "main",
+     "table_name": "orders",
+     "table_schema": "shop"
+    },
+    {
+     "column_name": "order_id",
+     "constraint_name": "pk_items",
+     "constraint_type": "PRIMARY KEY",
+     "ordinal_position": 1,
+     "ref_catalog": null,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "table_catalog": "main",
+     "table_name": "order-items",
+     "table_schema": "shop"
+    },
+    {
+     "column_name": "line_no",
+     "constraint_name": "pk_items",
+     "constraint_type": "PRIMARY KEY",
+     "ordinal_position": 2,
+     "ref_catalog": null,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "table_catalog": "main",
+     "table_name": "order-items",
+     "table_schema": "shop"
+    },
+    {
+     "column_name": "order_id",
+     "constraint_name": "fk_items_order",
+     "constraint_type": "FOREIGN KEY",
+     "ordinal_position": 1,
+     "ref_catalog": "main",
+     "ref_column": "order_id",
+     "ref_schema": "shop",
+     "ref_table": "orders",
+     "table_catalog": "main",
+     "table_name": "order-items",
+     "table_schema": "shop"
+    },
+    {
+     "column_name": "event_id",
+     "constraint_name": "pk_events",
+     "constraint_type": "PRIMARY KEY",
+     "ordinal_position": 1,
+     "ref_catalog": null,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "table_catalog": "main",
+     "table_name": "events",
+     "table_schema": "ops"
+    },
+    {
+     "column_name": "session_id",
+     "constraint_name": "pk_sessions",
+     "constraint_type": "PRIMARY KEY",
+     "ordinal_position": 1,
+     "ref_catalog": null,
+     "ref_column": null,
+     "ref_schema": null,
+     "ref_table": null,
+     "table_catalog": "main",
+     "table_name": "sessions",
+     "table_schema": "ops"
+    },
+    {
+     "column_name": "session_id",
+     "constraint_name": "fk_events_session",
+     "constraint_type": "FOREIGN KEY",
+     "ordinal_position": 1,
+     "ref_catalog": "main",
+     "ref_column": "session_id",
+     "ref_schema": "ops",
+     "ref_table": "sessions",
+     "table_catalog": "main",
+     "table_name": "events",
+     "table_schema": "ops"
+    }
+   ],
+   "sql": "select k.table_catalog as table_catalog, k.table_schema as table_schema, k.table_name as table_name, k.constraint_name as constraint_name, tc.constraint_type as constraint_type, k.column_name as column_name, k.ordinal_position as ordinal_position, pk.table_catalog as ref_catalog, pk.table_schema as ref_schema, pk.table_name as ref_table, pk.column_name as ref_column from system.information_schema.key_column_usage k join system.information_schema.table_constraints tc on tc.constraint_catalog = k.constraint_catalog and tc.constraint_schema = k.constraint_schema and tc.constraint_name = k.constraint_name left join system.information_schema.referential_constraints rc on rc.constraint_catalog = k.constraint_catalog and rc.constraint_schema = k.constraint_schema and rc.constraint_name = k.constraint_name left join system.information_schema.key_column_usage pk on pk.constraint_catalog = rc.unique_constraint_catalog and pk.constraint_schema = rc.unique_constraint_schema and pk.constraint_name = rc.unique_constraint_name and pk.ordinal_position = k.position_in_unique_constraint where ((k.table_catalog = ? and k.table_schema = ? and k.table_name = ?) or (k.table_catalog = ? and k.table_schema = ? and k.table_name = ?) or (k.table_catalog = ? and k.table_schema = ? and k.table_name = ?) or (k.table_catalog = ? and k.table_schema = ? and k.table_name = ?) or (k.table_catalog = ? and k.table_schema = ? and k.table_name = ?) or (k.table_catalog = ? and k.table_schema = ? and k.table_name = ?) or (k.table_catalog = ? and k.table_schema = ? and k.table_name = ?)) order by k.table_catalog, k.table_schema, k.table_name, k.constraint_name, k.ordinal_position"
+  }
+ ]
+}

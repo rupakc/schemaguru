@@ -1,0 +1,579 @@
+{
+ "dialect": "snowflake",
+ "queries": [
+  {
+   "params": [],
+   "rows": [
+    {
+     "NAME": "DEMO_DB"
+    }
+   ],
+   "sql": "select current_database() as name"
+  },
+  {
+   "params": [
+    "INFORMATION_SCHEMA"
+   ],
+   "rows": [
+    {
+     "COMMENT": "operational telemetry",
+     "SCHEMA_NAME": "OPS"
+    },
+    {
+     "COMMENT": null,
+     "SCHEMA_NAME": "SHOP"
+    }
+   ],
+   "sql": "select schema_name, comment from \"demo_db\".information_schema.schemata where schema_name <> ? order by schema_name"
+  },
+  {
+   "params": [
+    "OPS",
+    null,
+    null,
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "BYTES": 7340032,
+     "CLUSTERING_KEY": "LINEAR(TO_DATE(TS))",
+     "COMMENT": null,
+     "CREATED": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "LAST_ALTERED": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "ROW_COUNT": 500000,
+     "TABLE_NAME": "EVENTS",
+     "TABLE_TYPE": "BASE TABLE"
+    },
+    {
+     "BYTES": 1310720,
+     "CLUSTERING_KEY": null,
+     "COMMENT": null,
+     "CREATED": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "LAST_ALTERED": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "ROW_COUNT": 90000,
+     "TABLE_NAME": "SESSIONS",
+     "TABLE_TYPE": "BASE TABLE"
+    }
+   ],
+   "sql": "select table_name, table_type, row_count, bytes, created, last_altered, comment, clustering_key from \"demo_db\".information_schema.tables where table_schema = ? and (cast(? as varchar) is null or table_name > ?) and (cast(? as timestamp_tz) is null or last_altered >= ?) order by table_name limit ?"
+  },
+  {
+   "params": [
+    "SHOP",
+    null,
+    null,
+    null,
+    null,
+    1001
+   ],
+   "rows": [
+    {
+     "BYTES": 81920,
+     "CLUSTERING_KEY": "LINEAR(SEGMENT)",
+     "COMMENT": "people who buy",
+     "CREATED": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "LAST_ALTERED": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "ROW_COUNT": 1000,
+     "TABLE_NAME": "CUSTOMERS",
+     "TABLE_TYPE": "BASE TABLE"
+    },
+    {
+     "BYTES": 524288,
+     "CLUSTERING_KEY": "LINEAR(CUSTOMER_ID, CREATED_AT)",
+     "COMMENT": null,
+     "CREATED": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "LAST_ALTERED": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "ROW_COUNT": 10000,
+     "TABLE_NAME": "ORDERS",
+     "TABLE_TYPE": "BASE TABLE"
+    },
+    {
+     "BYTES": 1048576,
+     "CLUSTERING_KEY": null,
+     "COMMENT": null,
+     "CREATED": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "LAST_ALTERED": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "ROW_COUNT": 25000,
+     "TABLE_NAME": "Order Items",
+     "TABLE_TYPE": "BASE TABLE"
+    },
+    {
+     "BYTES": null,
+     "CLUSTERING_KEY": null,
+     "COMMENT": null,
+     "CREATED": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "LAST_ALTERED": {
+      "$datetime": "2026-02-11T14:00:00+00:00"
+     },
+     "ROW_COUNT": null,
+     "TABLE_NAME": "V_OPEN_ORDERS",
+     "TABLE_TYPE": "VIEW"
+    }
+   ],
+   "sql": "select table_name, table_type, row_count, bytes, created, last_altered, comment, clustering_key from \"demo_db\".information_schema.tables where table_schema = ? and (cast(? as varchar) is null or table_name > ?) and (cast(? as timestamp_tz) is null or last_altered >= ?) order by table_name limit ?"
+  },
+  {
+   "params": [
+    "OPS",
+    "EVENTS",
+    "SESSIONS"
+   ],
+   "rows": [
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "EVENT_ID",
+     "COMMENT": null,
+     "DATA_TYPE": "NUMBER",
+     "IS_NULLABLE": "NO",
+     "NUMERIC_PRECISION": 38,
+     "NUMERIC_SCALE": 0,
+     "ORDINAL_POSITION": 1,
+     "TABLE_NAME": "EVENTS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": 36,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "SESSION_ID",
+     "COMMENT": null,
+     "DATA_TYPE": "TEXT",
+     "IS_NULLABLE": "YES",
+     "NUMERIC_PRECISION": null,
+     "NUMERIC_SCALE": null,
+     "ORDINAL_POSITION": 2,
+     "TABLE_NAME": "EVENTS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "PAYLOAD",
+     "COMMENT": null,
+     "DATA_TYPE": "VARIANT",
+     "IS_NULLABLE": "YES",
+     "NUMERIC_PRECISION": null,
+     "NUMERIC_SCALE": null,
+     "ORDINAL_POSITION": 3,
+     "TABLE_NAME": "EVENTS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "ATTRS",
+     "COMMENT": null,
+     "DATA_TYPE": "OBJECT",
+     "IS_NULLABLE": "YES",
+     "NUMERIC_PRECISION": null,
+     "NUMERIC_SCALE": null,
+     "ORDINAL_POSITION": 4,
+     "TABLE_NAME": "EVENTS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": 36,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "SESSION_ID",
+     "COMMENT": null,
+     "DATA_TYPE": "TEXT",
+     "IS_NULLABLE": "NO",
+     "NUMERIC_PRECISION": null,
+     "NUMERIC_SCALE": null,
+     "ORDINAL_POSITION": 1,
+     "TABLE_NAME": "SESSIONS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "STARTED_AT",
+     "COMMENT": null,
+     "DATA_TYPE": "TIMESTAMP_LTZ",
+     "IS_NULLABLE": "YES",
+     "NUMERIC_PRECISION": null,
+     "NUMERIC_SCALE": null,
+     "ORDINAL_POSITION": 2,
+     "TABLE_NAME": "SESSIONS"
+    }
+   ],
+   "sql": "select table_name, column_name, ordinal_position, data_type, is_nullable, column_default, comment, numeric_precision, numeric_scale, character_maximum_length from \"demo_db\".information_schema.columns where table_schema = ? and table_name in (?, ?) order by table_name, ordinal_position"
+  },
+  {
+   "params": [
+    "SHOP",
+    "CUSTOMERS",
+    "ORDERS",
+    "Order Items",
+    "V_OPEN_ORDERS"
+   ],
+   "rows": [
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "CUSTOMER_ID",
+     "COMMENT": "surrogate key",
+     "DATA_TYPE": "NUMBER",
+     "IS_NULLABLE": "NO",
+     "NUMERIC_PRECISION": 38,
+     "NUMERIC_SCALE": 0,
+     "ORDINAL_POSITION": 1,
+     "TABLE_NAME": "CUSTOMERS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": 320,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "EMAIL",
+     "COMMENT": "login address",
+     "DATA_TYPE": "TEXT",
+     "IS_NULLABLE": "YES",
+     "NUMERIC_PRECISION": null,
+     "NUMERIC_SCALE": null,
+     "ORDINAL_POSITION": 2,
+     "TABLE_NAME": "CUSTOMERS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": 16777216,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "SEGMENT",
+     "COMMENT": null,
+     "DATA_TYPE": "TEXT",
+     "IS_NULLABLE": "YES",
+     "NUMERIC_PRECISION": null,
+     "NUMERIC_SCALE": null,
+     "ORDINAL_POSITION": 3,
+     "TABLE_NAME": "CUSTOMERS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "CREATED_AT",
+     "COMMENT": null,
+     "DATA_TYPE": "TIMESTAMP_NTZ",
+     "IS_NULLABLE": "YES",
+     "NUMERIC_PRECISION": null,
+     "NUMERIC_SCALE": null,
+     "ORDINAL_POSITION": 4,
+     "TABLE_NAME": "CUSTOMERS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "TAGS",
+     "COMMENT": null,
+     "DATA_TYPE": "ARRAY",
+     "IS_NULLABLE": "YES",
+     "NUMERIC_PRECISION": null,
+     "NUMERIC_SCALE": null,
+     "ORDINAL_POSITION": 5,
+     "TABLE_NAME": "CUSTOMERS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "ORDER_ID",
+     "COMMENT": null,
+     "DATA_TYPE": "NUMBER",
+     "IS_NULLABLE": "NO",
+     "NUMERIC_PRECISION": 38,
+     "NUMERIC_SCALE": 0,
+     "ORDINAL_POSITION": 1,
+     "TABLE_NAME": "ORDERS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "CUSTOMER_ID",
+     "COMMENT": null,
+     "DATA_TYPE": "NUMBER",
+     "IS_NULLABLE": "YES",
+     "NUMERIC_PRECISION": 38,
+     "NUMERIC_SCALE": 0,
+     "ORDINAL_POSITION": 2,
+     "TABLE_NAME": "ORDERS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "TOTAL",
+     "COMMENT": null,
+     "DATA_TYPE": "NUMBER",
+     "IS_NULLABLE": "YES",
+     "NUMERIC_PRECISION": 10,
+     "NUMERIC_SCALE": 2,
+     "ORDINAL_POSITION": 3,
+     "TABLE_NAME": "ORDERS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "PLACED_AT",
+     "COMMENT": null,
+     "DATA_TYPE": "TIMESTAMP_TZ",
+     "IS_NULLABLE": "YES",
+     "NUMERIC_PRECISION": null,
+     "NUMERIC_SCALE": null,
+     "ORDINAL_POSITION": 4,
+     "TABLE_NAME": "ORDERS"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "ORDER_ID",
+     "COMMENT": null,
+     "DATA_TYPE": "NUMBER",
+     "IS_NULLABLE": "NO",
+     "NUMERIC_PRECISION": 38,
+     "NUMERIC_SCALE": 0,
+     "ORDINAL_POSITION": 1,
+     "TABLE_NAME": "Order Items"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "LINE_NO",
+     "COMMENT": null,
+     "DATA_TYPE": "NUMBER",
+     "IS_NULLABLE": "NO",
+     "NUMERIC_PRECISION": 38,
+     "NUMERIC_SCALE": 0,
+     "ORDINAL_POSITION": 2,
+     "TABLE_NAME": "Order Items"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "Unit Price",
+     "COMMENT": "quoted lower-case column",
+     "DATA_TYPE": "FLOAT",
+     "IS_NULLABLE": "YES",
+     "NUMERIC_PRECISION": null,
+     "NUMERIC_SCALE": null,
+     "ORDINAL_POSITION": 3,
+     "TABLE_NAME": "Order Items"
+    },
+    {
+     "CHARACTER_MAXIMUM_LENGTH": null,
+     "COLUMN_DEFAULT": null,
+     "COLUMN_NAME": "ORDER_ID",
+     "COMMENT": null,
+     "DATA_TYPE": "NUMBER",
+     "IS_NULLABLE": "YES",
+     "NUMERIC_PRECISION": 38,
+     "NUMERIC_SCALE": 0,
+     "ORDINAL_POSITION": 1,
+     "TABLE_NAME": "V_OPEN_ORDERS"
+    }
+   ],
+   "sql": "select table_name, column_name, ordinal_position, data_type, is_nullable, column_default, comment, numeric_precision, numeric_scale, character_maximum_length from \"demo_db\".information_schema.columns where table_schema = ? and table_name in (?, ?, ?, ?) order by table_name, ordinal_position"
+  },
+  {
+   "params": [],
+   "rows": [
+    {
+     "column_name": "EVENT_ID",
+     "comment": null,
+     "constraint_name": "PK_EVENTS",
+     "created_on": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "database_name": "DEMO_DB",
+     "key_sequence": 1,
+     "rely": "false",
+     "schema_name": "OPS",
+     "table_name": "EVENTS"
+    },
+    {
+     "column_name": "SESSION_ID",
+     "comment": null,
+     "constraint_name": "PK_SESSIONS",
+     "created_on": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "database_name": "DEMO_DB",
+     "key_sequence": 1,
+     "rely": "false",
+     "schema_name": "OPS",
+     "table_name": "SESSIONS"
+    }
+   ],
+   "sql": "show primary keys in schema \"demo_db\".\"ops\""
+  },
+  {
+   "params": [],
+   "rows": [],
+   "sql": "show unique keys in schema \"demo_db\".\"ops\""
+  },
+  {
+   "params": [],
+   "rows": [
+    {
+     "comment": null,
+     "created_on": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "deferrability": "NOT DEFERRABLE",
+     "delete_rule": "NO ACTION",
+     "fk_column_name": "SESSION_ID",
+     "fk_database_name": "DEMO_DB",
+     "fk_name": "FK_EVENTS_SESSION",
+     "fk_schema_name": "OPS",
+     "fk_table_name": "EVENTS",
+     "key_sequence": 1,
+     "pk_column_name": "SESSION_ID",
+     "pk_database_name": "DEMO_DB",
+     "pk_name": "PK",
+     "pk_schema_name": "OPS",
+     "pk_table_name": "SESSIONS",
+     "rely": "false",
+     "update_rule": "NO ACTION"
+    }
+   ],
+   "sql": "show imported keys in schema \"demo_db\".\"ops\""
+  },
+  {
+   "params": [],
+   "rows": [
+    {
+     "column_name": "CUSTOMER_ID",
+     "comment": null,
+     "constraint_name": "PK_CUSTOMERS",
+     "created_on": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "database_name": "DEMO_DB",
+     "key_sequence": 1,
+     "rely": "false",
+     "schema_name": "SHOP",
+     "table_name": "CUSTOMERS"
+    },
+    {
+     "column_name": "ORDER_ID",
+     "comment": null,
+     "constraint_name": "PK_ORDERS",
+     "created_on": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "database_name": "DEMO_DB",
+     "key_sequence": 1,
+     "rely": "false",
+     "schema_name": "SHOP",
+     "table_name": "ORDERS"
+    },
+    {
+     "column_name": "LINE_NO",
+     "comment": null,
+     "constraint_name": "PK_ORDER_ITEMS",
+     "created_on": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "database_name": "DEMO_DB",
+     "key_sequence": 2,
+     "rely": "false",
+     "schema_name": "SHOP",
+     "table_name": "Order Items"
+    },
+    {
+     "column_name": "ORDER_ID",
+     "comment": null,
+     "constraint_name": "PK_ORDER_ITEMS",
+     "created_on": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "database_name": "DEMO_DB",
+     "key_sequence": 1,
+     "rely": "false",
+     "schema_name": "SHOP",
+     "table_name": "Order Items"
+    }
+   ],
+   "sql": "show primary keys in schema \"demo_db\".\"shop\""
+  },
+  {
+   "params": [],
+   "rows": [
+    {
+     "column_name": "EMAIL",
+     "comment": null,
+     "constraint_name": "UQ_CUSTOMERS_EMAIL",
+     "created_on": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "database_name": "DEMO_DB",
+     "key_sequence": 1,
+     "rely": "false",
+     "schema_name": "SHOP",
+     "table_name": "CUSTOMERS"
+    }
+   ],
+   "sql": "show unique keys in schema \"demo_db\".\"shop\""
+  },
+  {
+   "params": [],
+   "rows": [
+    {
+     "comment": null,
+     "created_on": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "deferrability": "NOT DEFERRABLE",
+     "delete_rule": "NO ACTION",
+     "fk_column_name": "CUSTOMER_ID",
+     "fk_database_name": "DEMO_DB",
+     "fk_name": "FK_ORDERS_CUST",
+     "fk_schema_name": "SHOP",
+     "fk_table_name": "ORDERS",
+     "key_sequence": 1,
+     "pk_column_name": "CUSTOMER_ID",
+     "pk_database_name": "DEMO_DB",
+     "pk_name": "PK",
+     "pk_schema_name": "SHOP",
+     "pk_table_name": "CUSTOMERS",
+     "rely": "false",
+     "update_rule": "NO ACTION"
+    },
+    {
+     "comment": null,
+     "created_on": {
+      "$datetime": "2026-01-05T09:30:00+00:00"
+     },
+     "deferrability": "NOT DEFERRABLE",
+     "delete_rule": "NO ACTION",
+     "fk_column_name": "ORDER_ID",
+     "fk_database_name": "DEMO_DB",
+     "fk_name": "FK_ITEMS_ORDER",
+     "fk_schema_name": "SHOP",
+     "fk_table_name": "Order Items",
+     "key_sequence": 1,
+     "pk_column_name": "ORDER_ID",
+     "pk_database_name": "DEMO_DB",
+     "pk_name": "PK",
+     "pk_schema_name": "SHOP",
+     "pk_table_name": "ORDERS",
+     "rely": "false",
+     "update_rule": "NO ACTION"
+    }
+   ],
+   "sql": "show imported keys in schema \"demo_db\".\"shop\""
+  }
+ ]
+}

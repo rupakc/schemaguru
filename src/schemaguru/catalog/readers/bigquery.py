@@ -154,7 +154,7 @@ class BigQueryReader:
             f"{where}ORDER BY schema_name",
             (project,) if project else (),
         )
-        return Page([Schema(project, r["schema_name"]) for r in rows])
+        return Page([Schema(r["catalog_name"] or project, r["schema_name"]) for r in rows])
 
     def list_tables(
         self, schema: Schema, *, page_token: str | None, changed_since: datetime | None

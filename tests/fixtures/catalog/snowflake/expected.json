@@ -1,0 +1,552 @@
+{
+ "columns": [
+  {
+   "comment": null,
+   "default": null,
+   "family": "struct",
+   "native_type": "OBJECT",
+   "nullable": true,
+   "ordinal": 4,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "ATTRS",
+    "schema": "OPS",
+    "table": "EVENTS"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "NUMBER(38,0)",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "EVENT_ID",
+    "schema": "OPS",
+    "table": "EVENTS"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "json",
+   "native_type": "VARIANT",
+   "nullable": true,
+   "ordinal": 3,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "PAYLOAD",
+    "schema": "OPS",
+    "table": "EVENTS"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "TEXT(36)",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "SESSION_ID",
+    "schema": "OPS",
+    "table": "EVENTS"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "TEXT(36)",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "SESSION_ID",
+    "schema": "OPS",
+    "table": "SESSIONS"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "timestamp",
+   "native_type": "TIMESTAMP_LTZ",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "STARTED_AT",
+    "schema": "OPS",
+    "table": "SESSIONS"
+   }
+  },
+  {
+   "comment": "quoted lower-case column",
+   "default": null,
+   "family": "float",
+   "native_type": "FLOAT",
+   "nullable": true,
+   "ordinal": 3,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "Unit Price",
+    "schema": "SHOP",
+    "table": "Order Items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "NUMBER(38,0)",
+   "nullable": false,
+   "ordinal": 2,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "LINE_NO",
+    "schema": "SHOP",
+    "table": "Order Items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "NUMBER(38,0)",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "ORDER_ID",
+    "schema": "SHOP",
+    "table": "Order Items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "timestamp",
+   "native_type": "TIMESTAMP_NTZ",
+   "nullable": true,
+   "ordinal": 4,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "CREATED_AT",
+    "schema": "SHOP",
+    "table": "CUSTOMERS"
+   }
+  },
+  {
+   "comment": "surrogate key",
+   "default": null,
+   "family": "integer",
+   "native_type": "NUMBER(38,0)",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "CUSTOMER_ID",
+    "schema": "SHOP",
+    "table": "CUSTOMERS"
+   }
+  },
+  {
+   "comment": "login address",
+   "default": null,
+   "family": "string",
+   "native_type": "TEXT(320)",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "EMAIL",
+    "schema": "SHOP",
+    "table": "CUSTOMERS"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "TEXT(16777216)",
+   "nullable": true,
+   "ordinal": 3,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "SEGMENT",
+    "schema": "SHOP",
+    "table": "CUSTOMERS"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "array",
+   "native_type": "ARRAY",
+   "nullable": true,
+   "ordinal": 5,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "TAGS",
+    "schema": "SHOP",
+    "table": "CUSTOMERS"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "NUMBER(38,0)",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "CUSTOMER_ID",
+    "schema": "SHOP",
+    "table": "ORDERS"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "NUMBER(38,0)",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "ORDER_ID",
+    "schema": "SHOP",
+    "table": "ORDERS"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "timestamp",
+   "native_type": "TIMESTAMP_TZ",
+   "nullable": true,
+   "ordinal": 4,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "PLACED_AT",
+    "schema": "SHOP",
+    "table": "ORDERS"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "decimal",
+   "native_type": "NUMBER(10,2)",
+   "nullable": true,
+   "ordinal": 3,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "TOTAL",
+    "schema": "SHOP",
+    "table": "ORDERS"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "NUMBER(38,0)",
+   "nullable": true,
+   "ordinal": 1,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": "ORDER_ID",
+    "schema": "SHOP",
+    "table": "V_OPEN_ORDERS"
+   }
+  }
+ ],
+ "constraints": [
+  {
+   "columns": [
+    "SESSION_ID"
+   ],
+   "enforced": false,
+   "kind": "foreign_key",
+   "ref_columns": [
+    "SESSION_ID"
+   ],
+   "ref_table": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "OPS",
+    "table": "SESSIONS"
+   },
+   "table": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "OPS",
+    "table": "EVENTS"
+   }
+  },
+  {
+   "columns": [
+    "EVENT_ID"
+   ],
+   "enforced": false,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "OPS",
+    "table": "EVENTS"
+   }
+  },
+  {
+   "columns": [
+    "SESSION_ID"
+   ],
+   "enforced": false,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "OPS",
+    "table": "SESSIONS"
+   }
+  },
+  {
+   "columns": [
+    "ORDER_ID"
+   ],
+   "enforced": false,
+   "kind": "foreign_key",
+   "ref_columns": [
+    "ORDER_ID"
+   ],
+   "ref_table": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "SHOP",
+    "table": "ORDERS"
+   },
+   "table": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "SHOP",
+    "table": "Order Items"
+   }
+  },
+  {
+   "columns": [
+    "ORDER_ID",
+    "LINE_NO"
+   ],
+   "enforced": false,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "SHOP",
+    "table": "Order Items"
+   }
+  },
+  {
+   "columns": [
+    "CUSTOMER_ID"
+   ],
+   "enforced": false,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "SHOP",
+    "table": "CUSTOMERS"
+   }
+  },
+  {
+   "columns": [
+    "EMAIL"
+   ],
+   "enforced": false,
+   "kind": "unique",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "SHOP",
+    "table": "CUSTOMERS"
+   }
+  },
+  {
+   "columns": [
+    "CUSTOMER_ID"
+   ],
+   "enforced": false,
+   "kind": "foreign_key",
+   "ref_columns": [
+    "CUSTOMER_ID"
+   ],
+   "ref_table": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "SHOP",
+    "table": "CUSTOMERS"
+   },
+   "table": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "SHOP",
+    "table": "ORDERS"
+   }
+  },
+  {
+   "columns": [
+    "ORDER_ID"
+   ],
+   "enforced": false,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "SHOP",
+    "table": "ORDERS"
+   }
+  }
+ ],
+ "schemas": [
+  {
+   "catalog": "DEMO_DB",
+   "comment": "operational telemetry",
+   "name": "OPS",
+   "table_count": null
+  },
+  {
+   "catalog": "DEMO_DB",
+   "comment": null,
+   "name": "SHOP",
+   "table_count": null
+  }
+ ],
+ "tables": [
+  {
+   "bytes": 7340032,
+   "clustering": null,
+   "comment": null,
+   "created_at": "2026-01-05T09:30:00+00:00",
+   "kind": "table",
+   "last_altered": "2026-02-11T14:00:00+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "OPS",
+    "table": "EVENTS"
+   },
+   "row_count": 500000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": 1310720,
+   "clustering": null,
+   "comment": null,
+   "created_at": "2026-01-05T09:30:00+00:00",
+   "kind": "table",
+   "last_altered": "2026-02-11T14:00:00+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "OPS",
+    "table": "SESSIONS"
+   },
+   "row_count": 90000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": 1048576,
+   "clustering": null,
+   "comment": null,
+   "created_at": "2026-01-05T09:30:00+00:00",
+   "kind": "table",
+   "last_altered": "2026-02-11T14:00:00+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "SHOP",
+    "table": "Order Items"
+   },
+   "row_count": 25000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": 81920,
+   "clustering": [
+    "SEGMENT"
+   ],
+   "comment": "people who buy",
+   "created_at": "2026-01-05T09:30:00+00:00",
+   "kind": "table",
+   "last_altered": "2026-02-11T14:00:00+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "SHOP",
+    "table": "CUSTOMERS"
+   },
+   "row_count": 1000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": 524288,
+   "clustering": [
+    "CUSTOMER_ID",
+    "CREATED_AT"
+   ],
+   "comment": null,
+   "created_at": "2026-01-05T09:30:00+00:00",
+   "kind": "table",
+   "last_altered": "2026-02-11T14:00:00+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "SHOP",
+    "table": "ORDERS"
+   },
+   "row_count": 10000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": "2026-01-05T09:30:00+00:00",
+   "kind": "view",
+   "last_altered": "2026-02-11T14:00:00+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": "DEMO_DB",
+    "column": null,
+    "schema": "SHOP",
+    "table": "V_OPEN_ORDERS"
+   },
+   "row_count": null,
+   "withdrawn_at": null
+  }
+ ]
+}

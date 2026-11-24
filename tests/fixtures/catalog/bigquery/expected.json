@@ -1,0 +1,560 @@
+{
+ "columns": [
+  {
+   "comment": null,
+   "default": null,
+   "family": "struct",
+   "native_type": "STRUCT<ip STRING, agent STRING>",
+   "nullable": true,
+   "ordinal": 4,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "context",
+    "schema": "ops",
+    "table": "events"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INT64",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "event_id",
+    "schema": "ops",
+    "table": "events"
+   }
+  },
+  {
+   "comment": "raw event body",
+   "default": null,
+   "family": "json",
+   "native_type": "JSON",
+   "nullable": true,
+   "ordinal": 3,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "payload",
+    "schema": "ops",
+    "table": "events"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "STRING",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "session_id",
+    "schema": "ops",
+    "table": "events"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "STRING",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "session_id",
+    "schema": "ops",
+    "table": "sessions"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "timestamp",
+   "native_type": "TIMESTAMP",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "started_at",
+    "schema": "ops",
+    "table": "sessions"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INT64",
+   "nullable": false,
+   "ordinal": 2,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "line_no",
+    "schema": "shop",
+    "table": "order-items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INT64",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "order_id",
+    "schema": "shop",
+    "table": "order-items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INT64",
+   "nullable": true,
+   "ordinal": 3,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "product_id",
+    "schema": "shop",
+    "table": "order-items"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "timestamp",
+   "native_type": "TIMESTAMP",
+   "nullable": true,
+   "ordinal": 4,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "created_at",
+    "schema": "shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": "surrogate key",
+   "default": null,
+   "family": "integer",
+   "native_type": "INT64",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "customer_id",
+    "schema": "shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": "login address",
+   "default": null,
+   "family": "string",
+   "native_type": "STRING",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "email",
+    "schema": "shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "STRING",
+   "nullable": true,
+   "ordinal": 3,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "segment",
+    "schema": "shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "array",
+   "native_type": "ARRAY<STRING>",
+   "nullable": true,
+   "ordinal": 5,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "tags",
+    "schema": "shop",
+    "table": "customers"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INT64",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "customer_id",
+    "schema": "shop",
+    "table": "orders"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "boolean",
+   "native_type": "BOOL",
+   "nullable": true,
+   "ordinal": 5,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "deleted",
+    "schema": "shop",
+    "table": "orders"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INT64",
+   "nullable": false,
+   "ordinal": 1,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "order_id",
+    "schema": "shop",
+    "table": "orders"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "STRING",
+   "nullable": true,
+   "ordinal": 3,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "status",
+    "schema": "shop",
+    "table": "orders"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "decimal",
+   "native_type": "NUMERIC(10, 2)",
+   "nullable": true,
+   "ordinal": 4,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "total",
+    "schema": "shop",
+    "table": "orders"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "integer",
+   "native_type": "INT64",
+   "nullable": true,
+   "ordinal": 1,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "order_id",
+    "schema": "shop",
+    "table": "v_open_orders"
+   }
+  },
+  {
+   "comment": null,
+   "default": null,
+   "family": "string",
+   "native_type": "STRING",
+   "nullable": true,
+   "ordinal": 2,
+   "ref": {
+    "catalog": "demo-project",
+    "column": "status",
+    "schema": "shop",
+    "table": "v_open_orders"
+   }
+  }
+ ],
+ "constraints": [
+  {
+   "columns": [
+    "session_id"
+   ],
+   "enforced": false,
+   "kind": "foreign_key",
+   "ref_columns": [
+    "session_id"
+   ],
+   "ref_table": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "ops",
+    "table": "sessions"
+   },
+   "table": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "ops",
+    "table": "events"
+   }
+  },
+  {
+   "columns": [
+    "event_id"
+   ],
+   "enforced": false,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "ops",
+    "table": "events"
+   }
+  },
+  {
+   "columns": [
+    "session_id"
+   ],
+   "enforced": false,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "ops",
+    "table": "sessions"
+   }
+  },
+  {
+   "columns": [
+    "order_id"
+   ],
+   "enforced": false,
+   "kind": "foreign_key",
+   "ref_columns": [
+    "order_id"
+   ],
+   "ref_table": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "shop",
+    "table": "orders"
+   },
+   "table": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "shop",
+    "table": "order-items"
+   }
+  },
+  {
+   "columns": [
+    "order_id",
+    "line_no"
+   ],
+   "enforced": false,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "shop",
+    "table": "order-items"
+   }
+  },
+  {
+   "columns": [
+    "customer_id"
+   ],
+   "enforced": false,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "shop",
+    "table": "customers"
+   }
+  },
+  {
+   "columns": [
+    "customer_id"
+   ],
+   "enforced": false,
+   "kind": "foreign_key",
+   "ref_columns": [
+    "customer_id"
+   ],
+   "ref_table": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "shop",
+    "table": "customers"
+   },
+   "table": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "shop",
+    "table": "orders"
+   }
+  },
+  {
+   "columns": [
+    "order_id"
+   ],
+   "enforced": false,
+   "kind": "primary_key",
+   "ref_columns": null,
+   "ref_table": null,
+   "table": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "shop",
+    "table": "orders"
+   }
+  }
+ ],
+ "schemas": [
+  {
+   "catalog": "demo-project",
+   "comment": null,
+   "name": "ops",
+   "table_count": null
+  },
+  {
+   "catalog": "demo-project",
+   "comment": null,
+   "name": "shop",
+   "table_count": null
+  }
+ ],
+ "tables": [
+  {
+   "bytes": 7340032,
+   "clustering": null,
+   "comment": null,
+   "created_at": "2026-01-05T09:30:00+00:00",
+   "kind": "table",
+   "last_altered": "2026-02-11T14:00:00+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "ops",
+    "table": "events"
+   },
+   "row_count": 500000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": 1310720,
+   "clustering": null,
+   "comment": null,
+   "created_at": "2026-01-05T09:30:00+00:00",
+   "kind": "table",
+   "last_altered": "2026-02-11T14:00:00+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "ops",
+    "table": "sessions"
+   },
+   "row_count": 90000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": 1048576,
+   "clustering": null,
+   "comment": null,
+   "created_at": "2026-01-05T09:30:00+00:00",
+   "kind": "table",
+   "last_altered": "2026-02-11T14:00:00+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "shop",
+    "table": "order-items"
+   },
+   "row_count": 25000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": 81920,
+   "clustering": null,
+   "comment": "people who buy",
+   "created_at": "2026-01-05T09:30:00+00:00",
+   "kind": "table",
+   "last_altered": "2026-02-11T14:00:00+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "shop",
+    "table": "customers"
+   },
+   "row_count": 1000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": 524288,
+   "clustering": null,
+   "comment": "one row per \"order\"",
+   "created_at": "2026-01-05T09:30:00+00:00",
+   "kind": "table",
+   "last_altered": "2026-02-11T14:00:00+00:00",
+   "partitioning": null,
+   "ref": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "shop",
+    "table": "orders"
+   },
+   "row_count": 10000,
+   "withdrawn_at": null
+  },
+  {
+   "bytes": null,
+   "clustering": null,
+   "comment": null,
+   "created_at": "2026-01-05T09:30:00+00:00",
+   "kind": "view",
+   "last_altered": null,
+   "partitioning": null,
+   "ref": {
+    "catalog": "demo-project",
+    "column": null,
+    "schema": "shop",
+    "table": "v_open_orders"
+   },
+   "row_count": null,
+   "withdrawn_at": null
+  }
+ ]
+}

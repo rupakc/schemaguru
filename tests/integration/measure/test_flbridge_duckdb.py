@@ -1,11 +1,9 @@
 """The real FactLang behind ``FactLangBackend`` on the shop DuckDB.
 
-FactLang ``main`` ships the IR, the dialect renderers, ``DBAPIConnector`` and
-``judge.run.payload_for`` but not yet ``Checker.measure``/``estimate`` (spec 18 R1/R5). Until it
-does, the ``fl_checker`` fixture installs a stand-in ``factlang.Checker`` built ONLY from those real
-FactLang parts (render -> connector -> payload_for), so every plan SchemaGuru builds is rendered by
-FactLang's own DuckDB profile and every payload has FactLang's real wire-format aliases. Once the
-real ``Checker.measure`` is installed the fixture steps aside and these tests run against it.
+Every plan SchemaGuru builds is measured by FactLang's own ``Checker`` (rendered by its DuckDB
+profile, executed through its ``DBAPIConnector``), so payload aliases, evidence shapes and sample
+specs are FactLang's real ones. A test needing a capability the installed FactLang lacks skips
+with "factlang capability <name> not yet available".
 """
 
 from __future__ import annotations
@@ -41,59 +39,10 @@ pytestmark = pytest.mark.factlang
 NOW = datetime(2026, 11, 24, tzinfo=timezone.utc)
 
 
-class _Measurement:
-    def __init__(self, plan: Any, payload: Any, evidence: Any, error: Any) -> None:
-        self.plan, self.payload, self.evidence, self.error = plan, payload, evidence, error
-
-
-class _FLError:
-    def __init__(self, exc: Exception) -> None:
-        text = str(exc)
-        self.code = text.split(" ", 1)[0] if text.startswith("FL") else "FL700"
-        self.message = text
-
-
-class _StandInChecker:
-    """``Checker.measure``/``estimate`` per spec 9.3, from real FactLang parts only."""
-
-    def __init__(self, connector: Any, *, catalog: Any = None, **_: Any) -> None:
-        self.connector = connector
-
-    def measure(self, plans: list[Any]) -> list[_Measurement]:
-        import factlang.sql as fls
-        from factlang.judge.outcome import Evidence
-        from factlang.judge.run import payload_for
-
-        profile = fls.get_profile(self.connector.dialect)
-        out = []
-        for p in plans:
-            try:
-                probe = fls.render(p, profile)
-                res = self.connector.execute(probe, timeout_s=None)
-                ev = Evidence(
-                    sql=probe.sql_template,
-                    params=tuple(probe.params),
-                    dialect=probe.dialect,
-                    tier=probe.tier,
-                    bytes_processed=res.bytes_processed,
-                )
-                out.append(_Measurement(p, payload_for(p.arity, res.rows), ev, None))
-            except Exception as e:  # Checker.measure never raises for a failing plan
-                out.append(_Measurement(p, None, None, _FLError(e)))
-        return out
-
-    def estimate(self, plans: list[Any]) -> list[Any]:  # no dry-run on DuckDB: never a guess
-        return [type("CostEstimate", (), {"bytes": None, "method": "unknown"})() for _ in plans]
-
-
 @pytest.fixture
-def fl_checker(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The real ``factlang.Checker`` when it can measure, else the stand-in above."""
-    import factlang
-
-    if "measure" not in flbridge.capabilities():
-        monkeypatch.setattr(factlang, "Checker", _StandInChecker, raising=False)
-    assert "measure" in flbridge.capabilities()
+def fl_checker() -> None:
+    """The real ``factlang.Checker``; skipped when the installed FactLang cannot measure."""
+    need("measure")
 
 
 def need(*names: str) -> None:
@@ -138,10 +87,10 @@ def test_plans_translate_every_request() -> None:
         Uniqueness(ObjectRef(None, "shop", "order_items"), ("order_id", "line_no")), ir
     )
     assert [c.text for c in ck.columns] == ["order_id", "line_no"]
-    # a 64-bit seed is folded into the dialect's seed range, alike on every call (FL506)
-    big = SampleChoice("bernoulli", Decimal("0.1"), 2**64 - 1, ())
-    folded = {flbridge._IR((0, 100)).sample(big).seed for _ in range(3)}
-    assert len(folded) == 1 and 0 <= folded.pop() <= 100
+    # a seed outside the dialect's range is refused, never folded (the fact records the seed)
+    big = SampleChoice("bernoulli", Decimal("0.1"), 2**40, ())
+    with pytest.raises(ValueError, match="seed"):
+        flbridge._IR((0, 100)).sample(big)
 
 
 def test_shop_join_numbers_exact(
@@ -202,6 +151,12 @@ def test_big_t_sampled_estimate_within_interval(
         assert est["low"] <= float(true_rate) <= est["high"]
         (dk,) = store.facts_for([ObjectRef(None, "shop", "big_t", "k")], ["DISTINCT"])
         assert dk.value["estimate"]["lower_bound"] is True and dk.value["distinct_keys"] <= 1000
+        # one seed end to end: the fact's method string names the seed FactLang's sample ran
+        assert nr.method.startswith("sampled:") and nr.evidence is not None
+        sample = nr.evidence.sample
+        assert sample is not None and sample.get("seed") is not None
+        assert nr.method.rsplit(":", 1)[1] == str(sample["seed"])
+        assert nr.method == f"sampled:{sample['method']}:{nr.method.split(':')[2]}:{sample['seed']}"
 
 
 class _Ev:

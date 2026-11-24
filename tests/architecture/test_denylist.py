@@ -21,32 +21,56 @@ def parse_denylist(raw: str) -> list[str]:
 
 
 def term_pattern(entry: str) -> re.Pattern[str]:
-    """A whole-word, case-insensitive pattern for one denylist term.
+    """Every case-insensitive occurrence of one denylist term (overlapping), edges unchecked.
 
-    Word edges are letters and digits only (``_``, ``-``, ``.``, ``/`` separate words, so
-    ``acme_notes`` still names ``acme``); whitespace inside a term matches any run of whitespace,
-    ``_`` or ``-``. So ``zorb quax`` matches ``Zorb  Quax`` and ``zorb_quax`` but never the
-    ``zorb quax`` inside ``metazorb quax``.
+    Whitespace inside a term matches any run of whitespace, ``_`` or ``-``. A term is text, not
+    a regex. :func:`contains_term` decides which occurrences are whole words.
     """
     words = [re.escape(w) for w in entry.split()]
     body = r"[\s_-]+".join(words)
-    return re.compile(rf"(?<![^\W_]){body}(?![^\W_])", re.IGNORECASE)
+    return re.compile(rf"(?=({body}))", re.IGNORECASE)
+
+
+def _edge(text: str, i: int) -> bool:
+    """Is there a word edge between ``text[i - 1]`` and ``text[i]``?
+
+    Yes at either end of the text, next to anything not a letter or digit (``_``, ``-``, ``.``,
+    ``/`` and spaces separate words), at a lower -> upper case change (``AcmeClient``) and between
+    a letter and a digit (``acme2``)."""
+    if i <= 0 or i >= len(text):
+        return True
+    a, b = text[i - 1], text[i]
+    if not (a.isalnum() and b.isalnum()):
+        return True
+    if a.islower() and b.isupper():
+        return True
+    return a.isalpha() != b.isalpha()
+
+
+def contains_term(entry: str, text: str) -> bool:
+    """Whole-word, case-insensitive: ``zorb quax`` matches ``Zorb  Quax``, ``zorb_quax`` and
+    ``MyZorb Quax2``; never the ``zorb quax`` inside ``metazorb quax``."""
+    for m in term_pattern(entry).finditer(text):
+        start, end = m.start(1), m.end(1)
+        if _edge(text, start) and _edge(text, end):
+            return True
+    return False
 
 
 def find_violations(files: list[Path], entries: list[str], root: Path) -> list[str]:
     """Whole-word, case-insensitive scan of text files; binary files are skipped."""
     found: list[str] = []
-    patterns = [term_pattern(e) for e in entries if e.strip()]
+    terms = [e for e in entries if e.strip()]
     for path in files:
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
         rel = path.relative_to(root).as_posix()
-        for pattern in patterns:
-            if pattern.search(text):
+        for term in terms:
+            if contains_term(term, text):
                 found.append(f"{rel}: contains a denylisted term")
-            if pattern.search(rel):
+            if contains_term(term, rel):
                 found.append(f"{rel}: path contains a denylisted term")
     return found
 
@@ -96,7 +120,25 @@ def test_terms_match_whole_words_only(tmp_path: Path) -> None:
     assert find_violations([named], [term], tmp_path) == [
         "zorb_quax_notes.txt: path contains a denylisted term"
     ]
-    assert term_pattern("a.b").search("axb") is None  # a term is text, not a regex
+    assert not contains_term("a.b", "axb")  # a term is text, not a regex
+
+
+def test_camel_case_and_digit_edges() -> None:
+    """One-word terms inside identifiers: a lower -> upper change and a letter <-> digit change
+    are word edges (``ZorbClient``, ``zorb2``); a plain lower-case run is not (negative control)."""
+    term = "zorb"  # invented
+    for hit in (
+        "ZorbClient",
+        "new ZorbClient()",
+        "MyZorbClient",
+        "zorb2",
+        "v2zorb",
+        "ZORB_API",
+        "zorbHub",
+    ):
+        assert contains_term(term, hit), hit
+    for clean in ("zorbclient", "Metazorb", "zorbs", "ZORBA", "subzorbed", "Azorb"):
+        assert not contains_term(term, clean), clean
 
 
 @pytest.mark.skipif(

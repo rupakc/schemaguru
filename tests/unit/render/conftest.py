@@ -25,7 +25,7 @@ def fake_factlang(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
     seen: dict[str, object] = {}
 
-    def parse_filter(text: str) -> tuple[object, list[object]]:
+    def parse_filter(text: str, **_: object) -> tuple[object, list[object]]:
         if "(((" in text:
             return None, [types.SimpleNamespace(severity="ERROR", message="bad")]
         return text, []

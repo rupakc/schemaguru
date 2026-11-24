@@ -43,10 +43,15 @@ from schemaguru.model.structure import Table
 QUANTUM = Decimal("0.000001")
 
 
+SEED_MAX = 2**31 - 1  # inside every FactLang dialect's sample_seed_range
+
+
 def seed_for(table: ObjectRef, snapshot_id: str) -> int:
-    """Deterministic per (table, snapshot): the first 8 bytes of sha256 as an int."""
+    """Deterministic per (table, snapshot), in ``[0, SEED_MAX]``: sha256 folded into the range
+    every FactLang dialect accepts (Snowflake/Databricks: 31 bits; DuckDB 1.5 cannot parse a
+    64-bit seed). The fact, its evidence and the executed sample all carry this one seed."""
     digest = hashlib.sha256(f"{table.table_ref().canonical()}|{snapshot_id}".encode()).digest()
-    return int.from_bytes(digest[:8], "big")
+    return int.from_bytes(digest[:8], "big") % (SEED_MAX + 1)
 
 
 def is_large(table: Table, cfg: SamplingConfig) -> bool:

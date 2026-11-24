@@ -10,15 +10,56 @@ advisory text for the agent.
 from __future__ import annotations
 
 import importlib
-from collections.abc import Mapping
+import re
+from collections.abc import Iterable, Mapping
 from typing import Any
 
+from schemaguru._util.sqltext import scan
 from schemaguru.diagnostics import Diagnostic, DiagnosticBag, Severity
 from schemaguru.graph.search import Path
 from schemaguru.measure import flbridge
 from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays.schema import check_filter_syntax
 from schemaguru.render.table_block import path_aliases, qname
+
+_PLAIN = re.compile(r"[a-z_][a-z0-9_]*")
+_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+
+
+def quote_catalog_names(text: str, columns: Iterable[str]) -> str:
+    """``text`` (FactLang filter source) with each bare identifier that names a catalog column
+    needing quotes (mixed/upper case, special characters) written quoted, exactly as the catalog
+    returns it: ``isDeleted IS NULL`` -> ``"isDeleted" IS NULL``. An unquoted name would be
+    case-folded by the warehouse (Postgres: ``isdeleted``). Literals, already-quoted names and
+    qualified parts (after a ``.``) are left alone; a case-insensitive match must be unique."""
+    by_fold: dict[str, list[str]] = {}
+    for name in columns:
+        by_fold.setdefault(name.lower(), []).append(name)
+    chars = scan(text)
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        ch, lit = chars[i]
+        m = None if lit else _IDENT.match(text, i)
+        if m is None or (i > 0 and (text[i - 1] == "." or _IDENT.match(text[i - 1]))):
+            out.append(ch)
+            i += 1
+            continue
+        word = m.group(0)
+        end = m.end()
+        if any(lit for _, lit in chars[i:end]):  # touches a literal: never rewritten
+            out.append(ch)
+            i += 1
+            continue
+        names = [n for n in by_fold.get(word.lower(), []) if n == word] or by_fold.get(
+            word.lower(), []
+        )
+        if len(names) == 1 and not _PLAIN.fullmatch(names[0]):
+            out.append('"' + names[0].replace('"', '""') + '"')
+        else:
+            out.append(word)
+        i = end
+    return "".join(out)
 
 
 def _capable(name: str) -> bool:
@@ -48,6 +89,7 @@ def render_join_snippet(
     soft_delete: Mapping[ObjectRef, str],
     *,
     bag: DiagnosticBag | None = None,
+    catalog: Any | None = None,
 ) -> str | None:
     """A dialect-correct ``FROM ... JOIN ... ON ...`` for ``path`` via ``fl.sql.render_join``.
 
@@ -107,7 +149,16 @@ def render_join_snippet(
                     f"(the installed FactLang lacks fl.parse_filter): {text}"
                 )
                 continue
-            expr, diags = parse(text)
+            fl_table = _table(refs, ref)
+            if catalog is not None:  # FactLang checks the columns; quoted names keep their case
+                try:
+                    cols = catalog.columns(fl_table) or {}
+                except Exception:  # unknown table: FactLang reports what it could not check
+                    cols = {}
+                text = quote_catalog_names(text, cols)
+                expr, diags = parse(text, table=fl_table, catalog=catalog)
+            else:
+                expr, diags = parse(text, table=fl_table)
             if expr is not None and not [d for d in diags if _is_error(d)]:
                 filters[_table(refs, ref)] = expr
             else:

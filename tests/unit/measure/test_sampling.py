@@ -143,10 +143,14 @@ def test_never_limit_and_fraction_at_least_one_bucket() -> None:
 
 
 def test_seed_for_is_sha256_prefix() -> None:
+    from schemaguru.measure.sampling import SEED_MAX
+
     expected = int.from_bytes(
         hashlib.sha256(f"{ORD.canonical()}|snap-1".encode()).digest()[:8], "big"
-    )
+    ) % (SEED_MAX + 1)
     assert seed_for(ORD, "snap-1") == expected
+    # inside every FactLang dialect's seed range, so it is never folded on the way to FactLang
+    assert all(0 <= seed_for(ORD, f"s{i}") <= 2**31 - 1 for i in range(200))
     assert seed_for(ORD, "snap-1") != seed_for(ORD, "snap-2")
     assert seed_for(ORD, "snap-1") != seed_for(CUS, "snap-1")
 

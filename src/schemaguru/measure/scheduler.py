@@ -376,7 +376,11 @@ class Scheduler:
         sest = self._estimate(sampled, table)
         if sest.bytes is None and est.bytes is not None:
             factor = choice.fraction if choice.method == "system" else Decimal(1)
-            sest = CostEstimate(sampled, int(Decimal(est.bytes) * factor), "heuristic")
+            sest = CostEstimate(
+                sampled,
+                int(Decimal(est.bytes) * factor),
+                "row_estimate" if est.method == "row_estimate" else "heuristic",
+            )
         return sampled, sest
 
     def _estimate(self, req: Request, table: Table) -> CostEstimate:
@@ -387,32 +391,41 @@ class Scheduler:
         if est.bytes is not None:
             return est
         heuristic = self._catalog_bytes(req, table)
-        if heuristic is None:
-            return CostEstimate(req, None, "unknown")
-        return CostEstimate(req, heuristic, "heuristic")
-
-    def _table_bytes(self, table: Table) -> int | None:
-        """Catalog bytes; else ``rows x columns x 8`` when the catalog has a row count but no
-        size (DuckDB: no dry-run, no table bytes), so a small local table is not charged the
-        pessimistic unknown-cost price; else None (unknown)."""
-        if table.bytes is not None:
-            return table.bytes
-        if table.row_count is None:
-            return None
-        ncols = len(self.store.columns(table.ref)) or 1
-        return table.row_count * ncols * _BYTES_PER_VALUE
+        if heuristic is not None:
+            return CostEstimate(req, heuristic, "heuristic")
+        rows = self._row_estimate(req, table)
+        if rows is not None:
+            return CostEstimate(req, rows, "row_estimate")
+        return CostEstimate(req, None, "unknown")
 
     def _catalog_bytes(self, req: Request, table: Table) -> int | None:
         if not isinstance(req, KeyOverlapReq):
-            return self._table_bytes(table)
+            return table.bytes
         total = 0
         for side in (req.join.left, req.join.right):
             t = self.store.table(side[0].table_ref())
-            b = None if t is None else self._table_bytes(t)
-            if b is None:
+            if t is None or t.bytes is None:
                 return None
-            total += b
+            total += t.bytes
         return total
+
+    def _row_estimate(self, req: Request, table: Table) -> int | None:
+        """``rows x columns read x 8`` from catalog row counts (spec 8.3), for warehouses with
+        neither a dry-run nor table bytes (DuckDB). Only the columns the probe reads count;
+        a bare row count reads one. None when a row count is missing."""
+        if isinstance(req, KeyOverlapReq):
+            total = 0
+            for side in (req.join.left, req.join.right):
+                t = self.store.table(side[0].table_ref())
+                if t is None or t.row_count is None:
+                    return None
+                total += t.row_count * len(side) * _BYTES_PER_VALUE
+            return total
+        if table.row_count is None:
+            return None
+        # TopValues, Freshness, PatternRate read one column; a bare RowCount is counted as one
+        ncols = (len(req.columns) or 1) if isinstance(req, ProfileColumns | Uniqueness) else 1
+        return table.row_count * ncols * _BYTES_PER_VALUE
 
     def _sampling_table(self, req: Request, table: Table) -> Table:
         """For a join the larger side decides whether to sample."""

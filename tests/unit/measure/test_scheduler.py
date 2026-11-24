@@ -9,6 +9,7 @@ import pytest
 from schemaguru.catalog import DBAPIExecutor, crawl
 from schemaguru.catalog.readers.duckdb import DuckDBReader
 from schemaguru.config import Budget, Config, SamplingConfig
+from schemaguru.measure.backend import CostEstimate
 from schemaguru.measure.requests import (
     KeyOverlapReq,
     PatternRate,
@@ -455,23 +456,63 @@ def test_fake_backend_refuses_block_or_row_samples_for_value_membership_and_over
     assert ok[0].error is None
 
 
-def test_unknown_cost_falls_back_to_a_row_count_heuristic(
-    conn: Any, shop_store: SQLiteStore
-) -> None:
-    """No dry-run and no catalog bytes (DuckDB): ``rows x columns x 8`` prices the probe, so a
-    small table is not charged the pessimistic unknown-cost price (which would admit only 10
-    probes per default budget); with no row count either it stays unknown."""
+def test_unknown_cost_falls_back_to_a_row_estimate(conn: Any, shop_store: SQLiteStore) -> None:
+    """No dry-run and no catalog bytes (DuckDB): ``rows x columns READ x 8`` prices the probe
+    (spec 8.3); with no row count either it stays unknown."""
     from dataclasses import replace
 
-    from schemaguru.measure.requests import RowCount
+    from schemaguru.measure.requests import ProfileColumns, RowCount, TopValues
 
     sched = Scheduler(shop_store, FakeBackend(conn, cost=lambda r: None), Config())
     orders = shop_store.table(ORD)
     assert orders is not None and orders.bytes is None and orders.row_count
-    ncols = len(shop_store.columns(ORD))
-    est = sched._estimate(RowCount(ORD), orders)
-    assert est.method == "heuristic" and est.bytes == orders.row_count * ncols * 8
+    n = orders.row_count
+    assert sched._estimate(RowCount(ORD), orders) == CostEstimate(
+        RowCount(ORD), n * 8, "row_estimate"
+    )
+    two = ProfileColumns(ORD, ("status", "deleted"))
+    assert sched._estimate(two, orders).bytes == n * 2 * 8  # only the columns read
+    top = TopValues(col("orders", "status"), 20)
+    assert sched._estimate(top, orders).bytes == n * 8
+    ko = KeyOverlapReq(O_C)
+    customers = shop_store.table(CUS)
+    assert customers is not None and customers.row_count
+    assert sched._estimate(ko, orders).bytes == (n + customers.row_count) * 8
     unknown = sched._estimate(RowCount(ORD), replace(orders, row_count=None))
     assert unknown.bytes is None and unknown.method == "unknown"
-    report = sched.run([ORD])
-    assert report.unknown_cost_probes == 0
+    assert sched.run([ORD]).unknown_cost_probes == 0
+
+
+def test_row_estimate_charges_but_never_refuses_a_large_table(
+    conn: Any, shop_store: SQLiteStore
+) -> None:
+    """A 10M-row x 20-column table priced from rows: every probe runs (no SG301) and is charged;
+    catalog bytes over the per-probe budget still refuse (negative control)."""
+    from dataclasses import replace
+
+    from schemaguru.model.structure import Column
+
+    orders = shop_store.table(ORD)
+    assert orders is not None
+    cols = list(shop_store.columns(ORD))
+    extra = [
+        Column(
+            ObjectRef(None, "shop", "orders", f"pad_{i}"), len(cols) + i + 1, "INTEGER", "integer"
+        )
+        for i in range(20 - len(cols))
+    ]
+    shop_store.upsert_columns(ORD, cols + extra)
+    assert len(shop_store.columns(ORD)) == 20
+    shop_store.upsert_tables([replace(orders, row_count=10_000_000, bytes=None)])
+    budget = Budget(max_bytes_per_probe=100 << 20, max_bytes_total=None)  # 100 MiB per probe
+    # the 20-column profile is priced at 10M x 20 x 8 = 1.6 GB, 16x the per-probe budget
+    cfg = Config(budget=budget, sampling=SamplingConfig(measurement="off"))
+    fake = FakeBackend(conn, cost=lambda r: None, fail=lambda r: False)
+    report = Scheduler(shop_store, fake, cfg).run([ORD])
+    assert not [e for e in report.errors if e.code == "SG301"], report.errors
+    assert ORD in report.measured_tables and fake.measured
+    assert shop_store.ledger_total("measure", "bytes", None) > 100 << 20  # charged
+    # negative control: the same size as catalog bytes is refused as over the per-probe budget
+    shop_store.upsert_tables([replace(orders, row_count=10_000_000, bytes=1_600_000_000)])
+    refused = Scheduler(shop_store, FakeBackend(conn, cost=lambda r: None), cfg).run([ORD])
+    assert any(e.code == "SG301" for e in refused.errors)

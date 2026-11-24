@@ -30,6 +30,7 @@ from schemaguru.measure.requests import (
     TopValues,
     Uniqueness,
 )
+from schemaguru.measure.sampling import SEED_MAX
 from schemaguru.model.evidence import Evidence
 from schemaguru.model.refs import ObjectRef
 from schemaguru.pii import ValuePolicy, scrub_tree, sql_template
@@ -97,15 +98,15 @@ def _num(v: Any) -> Any:
     return v
 
 
-_SAFE_SEEDS = (0, 2**31 - 1)  # inside every FactLang profile's sample_seed_range
+_SAFE_SEEDS = (0, SEED_MAX)  # inside every FactLang profile's sample_seed_range
 
 
 class _IR:
     """Lazy handles on the FactLang IR names.
 
-    ``seed_range`` is the dialect profile's ``sample_seed_range``: SchemaGuru's seeds are 64-bit
-    unsigned (``sampling.seed_for``) and FactLang refuses a seed outside the range (FL506), so a
-    seed is folded into it, deterministically (both sides of a join fold alike).
+    ``seed_range`` is the dialect profile's ``sample_seed_range``. ``sampling.seed_for`` already
+    yields seeds inside every profile's range; one outside is refused (the request errors),
+    never folded, so the stored fact's method string names the seed FactLang ran.
     """
 
     def __init__(self, seed_range: tuple[int, int] = _SAFE_SEEDS) -> None:
@@ -138,8 +139,11 @@ class _IR:
             return None
         cols = tuple(self.ident(k) for k in (key if key is not None else s.key))
         lo, hi = self.seed_range
-        seed = s.seed if lo <= s.seed <= hi else lo + s.seed % (hi - lo + 1)
-        return self.ir.SampleSpec(s.method, s.fraction, seed, cols if s.method == "keyhash" else ())
+        if not lo <= s.seed <= hi:  # never folded here: the fact records the seed that ran
+            raise ValueError(f"sample seed {s.seed} is outside the dialect's range [{lo}, {hi}]")
+        return self.ir.SampleSpec(
+            s.method, s.fraction, s.seed, cols if s.method == "keyhash" else ()
+        )
 
     def metrics(self, *names: str) -> tuple[Any, ...]:
         return tuple(getattr(self.Metric, n) for n in names)

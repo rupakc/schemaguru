@@ -23,6 +23,7 @@ from schemaguru.config import Config
 from schemaguru.diagnostics import Diagnostic, DiagnosticBag, Severity
 from schemaguru.graph.search import Automaton, Graph, Path, Refusal, find_paths
 from schemaguru.knowledge.resolve import resolve
+from schemaguru.measure.catalog_bridge import StoreCatalog
 from schemaguru.model.detail import DetailLevel
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
 from schemaguru.model.refs import ObjectRef
@@ -371,7 +372,9 @@ class ViewRenderer:
                         soft[t], _ = predicate_text(pred, self._mode(t))
                     elif why is not None:
                         omitted.append(f"-- live-rows filter for {qname(t)} {why}, omitted")
-                snippet = render_join_snippet(p, self.dialect, soft, bag=bag)
+                snippet = render_join_snippet(
+                    p, self.dialect, soft, bag=bag, catalog=StoreCatalog(self.store)
+                )
                 if snippet is not None and omitted:
                     snippet = "\n".join([snippet, *omitted])
             out.append(render_path(p, snippet=snippet))

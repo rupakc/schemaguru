@@ -87,6 +87,9 @@ class BudgetGuard:
         return self.spent_bytes + sum(c for c, _ in self._reserved.values() if c is not None)
 
     def admit(self, estimate: CostEstimate) -> Admission:
+        if estimate.method == "row_estimate" and estimate.bytes is not None:
+            with self._mu:
+                return self._admit(estimate.request, estimate.bytes, refuse_over_probe=False)
         return self.admit_key(estimate.request, estimate.bytes)
 
     def admit_key(self, key: Hashable, known: int | None) -> Admission:
@@ -98,8 +101,16 @@ class BudgetGuard:
         with self._mu:
             return self._admit(key, known)
 
-    def _admit(self, key: Hashable, known: int | None) -> Admission:
+    def _admit(
+        self, key: Hashable, known: int | None, *, refuse_over_probe: bool = True
+    ) -> Admission:
+        """``refuse_over_probe=False`` (a row-count estimate, spec 8.3): the estimate is charged,
+        capped at what an unknown-cost probe would be charged, and never refuses the probe as
+        over the per-probe budget; only catalog bytes or a warehouse estimate can."""
         b = self._budget
+        if not refuse_over_probe and known is not None:
+            cap = self._charge_unknown()
+            known = known if cap is None else min(known, cap)
         now = self._clock()
         self._refill(now)
         if b.max_probes is not None and self.probes >= b.max_probes:
@@ -107,7 +118,8 @@ class BudgetGuard:
         if b.max_seconds is not None and now - self._start > b.max_seconds:
             return "over_total"
         if (
-            known is not None
+            refuse_over_probe
+            and known is not None
             and b.max_bytes_per_probe is not None
             and known > b.max_bytes_per_probe
         ):
@@ -115,7 +127,12 @@ class BudgetGuard:
         committed = self._committed()
         if b.max_bytes_total is not None and committed >= b.max_bytes_total:
             return "over_total"  # nothing left (a zero total allows nothing)
-        if known is not None and b.max_bytes_total is not None and known > b.max_bytes_total:
+        if (
+            refuse_over_probe
+            and known is not None
+            and b.max_bytes_total is not None
+            and known > b.max_bytes_total
+        ):
             return "over_probe"  # could never fit: not run, and not left blocking the queue
         charge = known if known is not None else self._charge_unknown()
         if (

@@ -199,12 +199,44 @@ def test_every_recorded_reader_query_passes_factlangs_guard() -> None:
                 refused.setdefault(path.parent.name, []).append(str(e))
             seen += 1
     assert seen >= 20
-    # Known FactLang false positive (reported upstream, FactLang is not changed from here): its
-    # FL703 guard refuses the keyword FETCH, so the Oracle reader's read-only keyset page
-    # ``... FETCH FIRST ? ROWS ONLY`` cannot run through run_metadata. Pinned exactly: any other
-    # refusal fails, and this one must still be the only cause (re-open when FactLang admits it).
-    assert set(refused) <= {"oracle"}, refused
-    assert all("FETCH" in m for m in refused.get("oracle", [])), refused
+    # FactLang b4307e5 admits row-limiting FETCH FIRST|NEXT <n> ROW|ROWS ONLY (the Oracle
+    # reader's keyset page): every recorded query of every reader now passes
+    assert refused == {}, refused
+    oracle = json.loads((root / "oracle" / "queries.json").read_text(encoding="utf-8"))["queries"]
+    assert any("fetch first ? rows only" in q["sql"] for q in oracle)
+
+
+@pytest.mark.factlang
+def test_oracle_top_k_runs_through_run_metadata_and_cursor_fetch_is_refused() -> None:
+    """The Oracle reader's ``... ORDER BY ... FETCH FIRST ? ROWS ONLY`` shape runs through
+    FactLang's ``run_metadata`` (DuckDB speaks it too); a cursor ``FETCH`` stays refused."""
+    if not _has_run_metadata():
+        pytest.skip("factlang capability run_metadata not yet available")
+    duckdb = pytest.importorskip("duckdb")
+    import factlang.connectors as flc
+
+    conn = duckdb.connect(":memory:")
+    try:
+        conn.execute("CREATE SCHEMA app")
+        for name in ("a", "b", "c"):
+            conn.execute(f"CREATE TABLE app.{name} (i INTEGER)")
+        ex = FactLangExecutor(flc.DBAPIConnector(conn, "duckdb"))
+        rows = ex.run(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = ? "
+            "ORDER BY table_name FETCH FIRST ? ROWS ONLY",
+            ["app", 2],
+        )
+        assert rows == [{"table_name": "a"}, {"table_name": "b"}]
+        for bad in (
+            "SELECT a FROM t FETCH NEXT FROM c",  # a T-SQL cursor fetch
+            "SELECT a FROM t FETCH ABSOLUTE 1 FROM c",
+            "SELECT a FROM t FETCH FIRST 5 PERCENT ROWS ONLY",
+        ):
+            with pytest.raises(CatalogError) as e:
+                ex.run(bad)
+            assert e.value.code == "SG104" and "FETCH" in str(e.value), bad
+    finally:
+        conn.close()
 
 
 def test_metadata_guard_backslash_escape_cannot_hide_a_statement() -> None:

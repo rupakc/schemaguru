@@ -41,11 +41,13 @@ class MeasureResult:
 
 @dataclass(frozen=True)
 class CostEstimate:
-    """``bytes=None`` is unknown, never a guess; ``heuristic``: SchemaGuru's catalog bytes."""
+    """``bytes=None`` is unknown, never a guess; ``heuristic``: SchemaGuru's catalog bytes;
+    ``row_estimate``: catalog rows x the columns the probe reads x 8 (spec 8.3). A row estimate
+    is charged to the budget but never refuses a probe as over the per-probe budget."""
 
     request: Request
     bytes: int | None
-    method: Literal["dry_run", "heuristic", "unknown"]
+    method: Literal["dry_run", "heuristic", "row_estimate", "unknown"]
 
 
 class MeasureBackend(Protocol):

@@ -195,3 +195,61 @@ def test_only_checked_live_rows_filters_reach_sql(tmp_path: Path, fake_factlang:
     assert "customers" not in "".join(ln for ln in paths.splitlines() if "omitted" in ln)
     passed = {str(v) for v in fake_factlang["filters"].values()}  # type: ignore[union-attr]
     assert "amount > 0" not in passed and "line_no > 0" not in passed
+
+
+def test_quote_catalog_names() -> None:
+    cols = ["id", "isDeleted", "STATUS", "plain_col"]
+    q = fragments.quote_catalog_names
+    assert q("isDeleted IS NULL OR NOT isDeleted", cols) == '"isDeleted" IS NULL OR NOT "isDeleted"'
+    assert q("isdeleted = TRUE", cols) == '"isDeleted" = TRUE'  # unique case-insensitive match
+    assert q("status = 'isDeleted'", cols) == "\"STATUS\" = 'isDeleted'"  # literals untouched
+    assert (
+        q('"isDeleted" IS NULL AND plain_col > 0', cols) == '"isDeleted" IS NULL AND plain_col > 0'
+    )
+    assert q("t.isDeleted IS NULL", cols) == "t.isDeleted IS NULL"  # qualified part: left alone
+    assert q("isDeletedX IS NULL", cols) == "isDeletedX IS NULL"  # whole identifiers only
+    assert q("a IS NULL", ["A", "a"]) == "a IS NULL"  # exact name wins, and it is plain
+
+
+@pytest.mark.factlang
+@pytest.mark.parametrize("dialect", ["postgres", "snowflake"])
+def test_live_rows_filter_on_a_mixed_case_column(tmp_path: Path, dialect: str) -> None:
+    """``isDeleted`` (mixed case, as the catalog returns it) is checked against the catalog by
+    FactLang and rendered quoted; unquoted, Postgres would fold it to ``isdeleted``."""
+    if not {"render_join", "parse_filter"} <= flbridge.capabilities():
+        pytest.skip("factlang capability render_join/parse_filter not yet available")
+    from schemaguru.graph import Edge
+    from schemaguru.measure.catalog_bridge import StoreCatalog
+    from schemaguru.model.joins import JoinRef
+    from schemaguru.model.refs import ObjectRef
+    from schemaguru.model.structure import Column, Schema, Table
+
+    o, c = ObjectRef(None, "app", "Orders"), ObjectRef(None, "app", "customers")
+    with SQLiteStore(tmp_path / "s.db") as s:
+        s.upsert_schemas([Schema(None, "app")])
+        s.upsert_tables([Table(o, "table"), Table(c, "table")])
+        s.upsert_columns(o, [
+            Column(ObjectRef(None, "app", "Orders", "customer_id"), 1, "INTEGER", "integer"),
+            Column(ObjectRef(None, "app", "Orders", "isDeleted"), 2, "BOOLEAN", "boolean"),
+        ])  # fmt: skip
+        s.upsert_columns(c, [
+            Column(ObjectRef(None, "app", "customers", "customer_id"), 1, "INTEGER", "integer")
+        ])  # fmt: skip
+        join = JoinRef(
+            (ObjectRef(None, "app", "Orders", "customer_id"),),
+            (ObjectRef(None, "app", "customers", "customer_id"),),
+        )
+        path = GPath((Hop(Edge(join, {}, None, measured=False), False),), 1.0, None, True)
+        bag = DiagnosticBag()
+        soft = {o: "isDeleted IS NULL OR NOT isDeleted"}
+        text = fragments.render_join_snippet(path, dialect, soft, bag=bag, catalog=StoreCatalog(s))
+        assert text is not None, list(bag)
+        assert '."isDeleted" IS NULL' in text and ".isDeleted" not in text, text
+        # a column the catalog does not have: FactLang's check refuses the filter, never silently
+        bad = {o: "is_gone IS NULL"}
+        text2 = fragments.render_join_snippet(path, dialect, bad, bag=bag, catalog=StoreCatalog(s))
+        assert (
+            text2 is not None
+            and "unparseable, omitted" in text2
+            and "is_gone" not in text2.split("\n")[0]
+        )

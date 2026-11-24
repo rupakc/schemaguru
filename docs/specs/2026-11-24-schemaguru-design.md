@@ -486,7 +486,10 @@ score = query frequency (from feedback) + declared-FK participation + log(row_co
 `Budget(max_bytes_per_probe, max_bytes_total, max_probes, max_seconds)`. Before
 running, each probe is priced with `Checker.estimate` (dry-run bytes where the
 connector supports it; otherwise "unknown", and SchemaGuru may add a heuristic from
-catalog table bytes, labelled `method="heuristic"`). A probe over its
+catalog table bytes, labelled `method="heuristic"`; with neither, a row estimate =
+catalog rows × the columns the probe reads × 8, `method="row_estimate"`, charged to the
+budget (capped at the unknown-cost charge) but never refusing a probe as over its
+per-probe limit — only catalog bytes or a warehouse estimate can; ruling 2026-11-24). A probe over its
 per-probe limit is not run → fact `ERROR` with reason `over_budget`. When the total
 budget is exhausted the scheduler stops and reports the remaining queue. Every byte
 spent is written to `budget_ledger`. Default budget: `max_bytes_total = 10 GiB` per

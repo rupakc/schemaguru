@@ -28,6 +28,7 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG303 | a measurement probe failed (fact ERROR for that subject only) |
 | SG304 | the installed FactLang does not provide a needed measurement capability |
 | SG305 | a table asked to be measured is not in the store (crawl it first) |
+| SG306 | a background measurement drain failed and is retried with backoff (one diagnostic per distinct error) |
 | SG401 | an LLM draft reply was invalid twice (schema or unknown names); fact ERROR |
 | SG402 | draft token budget exhausted; the remaining tables were not drafted |
 | SG403 | the LLM provider call failed; that call's tables get an ERROR draft fact |

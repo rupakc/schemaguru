@@ -424,6 +424,37 @@ def test_load_overlays_lints_per_glob_matching_nothing(
     g.close()
 
 
+def test_drainer_errors_surface_once_per_distinct_error(
+    tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts]
+) -> None:
+    """A failing background run is a Guru.diagnostics entry (SG306), once per distinct error,
+    credentials scrubbed; it used to sit unseen in BackgroundDrainer.last_error."""
+    conn = shop_duckdb[0].cursor()
+    cfg = Config(measure_on_demand="background")
+    g = make_guru(tmp_path, shop_duckdb[0], config=cfg, drain_interval_s=0.01)
+    g.crawl()
+    errors = iter(["boom at snowflake://u:p4ss@acct/db"] * 3 + ["other failure"] * 50)
+
+    def failing(*a: Any, **k: Any) -> Any:
+        raise RuntimeError(next(errors, "other failure"))
+
+    g._scheduler.run = failing  # type: ignore[method-assign]
+    assert not [d for d in g.diagnostics if d.code == "SG306"]  # negative control
+    g.context("orders per customer")  # first touch wakes the drainer
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        found = [d for d in g.diagnostics if d.code == "SG306"]
+        if len(found) >= 2 and g.drainer is not None and g.drainer.wait_s > 0.04:
+            break
+        time.sleep(0.02)
+    g.close()
+    conn.close()
+    found = [d for d in g.diagnostics if d.code == "SG306"]
+    assert len(found) == 2, found  # two distinct errors, each once despite the repeats
+    assert all("p4ss" not in d.message for d in found)
+    assert any("other failure" in d.message for d in found)
+
+
 def test_one_retrieval_per_render(guru: Guru) -> None:
     calls: list[int] = []
     real = guru.retriever.search

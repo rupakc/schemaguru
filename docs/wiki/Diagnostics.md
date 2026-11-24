@@ -97,6 +97,7 @@ holds the same list, and a test keeps that file equal to the codes the source em
 | `SG303` | a measurement probe failed (fact ERROR for that subject only) |
 | `SG304` | the installed FactLang does not provide a needed measurement capability |
 | `SG305` | a table asked to be measured is not in the store (crawl it first) |
+| `SG306` | a background measurement drain failed and is retried with backoff (one diagnostic per distinct error, credentials scrubbed) |
 
 ### SG4xx: Drafting and LLM
 

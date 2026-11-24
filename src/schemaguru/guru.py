@@ -49,6 +49,7 @@ from typing import Any, TypeVar, overload
 
 from schemaguru import plugins
 from schemaguru._util.hashing import stable_hash
+from schemaguru._util.redact import scrub_text
 from schemaguru._util.timeutil import require_aware, utcnow
 from schemaguru.catalog.crawl import CrawlReport
 from schemaguru.catalog.crawl import crawl as _crawl
@@ -931,7 +932,21 @@ class Guru:
                 return
             self.drainer = BackgroundDrainer(self._scheduler, self._drain_interval_s)
             self.drainer.guard = self._period_guard()
+            self.drainer.on_error = self._drain_failed
             self.drainer.start()
+
+    def _drain_failed(self, e: BaseException) -> None:
+        """A background drain failed: one SG306 diagnostic per distinct error (the drainer
+        retries with backoff, so the same error would otherwise repeat unseen)."""
+        self._note(
+            Diagnostic(
+                "SG306",
+                Severity.WARNING,
+                f"background measurement failed and will be retried: {type(e).__name__}: "
+                f"{scrub_text(str(e))}",
+                hint="check the warehouse connection; the queue is kept",
+            )
+        )
 
     def fingerprint_views(self, questions: Iterable[str]) -> dict[str, str]:
         """``{question: fingerprint}`` for a host's CI to detect prompt drift (spec 13.4)."""

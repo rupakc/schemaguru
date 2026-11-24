@@ -14,6 +14,7 @@ with ``Config(measure_on_demand="background")``.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import threading
 import time
@@ -559,6 +560,8 @@ class BackgroundDrainer:
         self.guard = BudgetGuard(scheduler.config.budget, scheduler.store, clock=clock)
         self.last_report: MeasureReport | None = None
         self.last_error: BaseException | None = None
+        # called with each failure of a drain (the host turns it into a diagnostic)
+        self.on_error: Callable[[BaseException], None] | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -586,6 +589,10 @@ class BackgroundDrainer:
             except Exception as e:  # keep draining; the error is kept for the host to read
                 self.last_error = e
                 self.wait_s = min(self.wait_s * 2, self.interval_s * self.MAX_BACKOFF)
+                hook = self.on_error
+                if hook is not None:
+                    with contextlib.suppress(Exception):  # a host hook never stops the drainer
+                        hook(e)
             self._stop.wait(self.wait_s)
 
     def stop(self, timeout: float | None = 10.0) -> None:

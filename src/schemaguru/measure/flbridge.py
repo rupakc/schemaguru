@@ -310,6 +310,8 @@ class FactLangBackend:
             plans += ps
         try:
             ms = list(self._checker.measure(plans)) if plans else []
+            if len(ms) != len(plans):
+                raise RuntimeError(f"{len(ms)} measurements for {len(plans)} plans")
         except Exception as e:  # FactLang promises not to raise; isolate it if it does
             d = Diagnostic("SG303", Severity.ERROR, f"FactLang measure failed: {e}")
             return [o or MeasureResult(r, None, None, d) for o, r in zip(out, reqs, strict=True)]

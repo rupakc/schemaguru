@@ -149,3 +149,17 @@ def test_candidates_never_write(shop_store: SQLiteStore) -> None:
     join_candidates(shop_store, ObjectRef(None, "shop", "orders"))
     assert len(list(shop_store.iter_facts())) == before
     assert join_candidates(shop_store, ObjectRef(None, "shop", "nope")) == []
+
+
+def test_float_keys_are_numeric(tmp_path: Path) -> None:
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA m")
+    conn.execute("CREATE TABLE m.products(product_id DOUBLE PRIMARY KEY)")
+    conn.execute("CREATE TABLE m.lines(line_id INTEGER PRIMARY KEY, product_id INTEGER)")
+    with SQLiteStore(tmp_path / "f.db") as st:
+        crawl(DuckDBReader(DBAPIExecutor(conn)), st)
+        got = join_candidates(st, ObjectRef(None, "m", "lines"))
+    conn.close()
+    j = JoinRef((ObjectRef(None, "m", "lines", "product_id"),),
+                (ObjectRef(None, "m", "products", "product_id"),))  # fmt: skip
+    assert (j, "heuristic") in got  # integer vs float: no cast needed

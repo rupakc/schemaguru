@@ -223,3 +223,19 @@ def test_bridge_batches_and_assembles() -> None:
     assert ko.payload is None and ko.error is not None and ko.error.code == "SG301"
     (est,) = b.estimate([ProfileColumns(t, ("a", "b"))])
     assert est.bytes == 14 and est.method == "dry_run"
+
+
+def test_bridge_short_measurement_list_is_an_error() -> None:
+    need("composite_join", "sample")
+
+    class Short(_FakeChecker):
+        def measure(self, plans: list[Any]) -> list[_M]:
+            return super().measure(plans)[:-1]
+
+    b = object.__new__(flbridge.FactLangBackend)
+    b._caps = frozenset({"measure", "sample", "composite_join"})
+    b._checker = Short()
+    b._ir = flbridge._IR()
+    t = ObjectRef(None, "shop", "orders")
+    res = b.measure([ProfileColumns(t, ("a", "b")), TopValues(col("orders", "status"), 20)])
+    assert all(r.payload is None and r.error is not None and r.error.code == "SG303" for r in res)

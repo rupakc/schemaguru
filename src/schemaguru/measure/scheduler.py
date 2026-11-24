@@ -68,6 +68,9 @@ class MeasureReport:
     sampled_tables: list[ObjectRef] = field(default_factory=list)
     # fact-kind names this run produced facts for (what the run actually checked, spec 15)
     checks_run: set[str] = field(default_factory=set)
+    # unknown is not 0 (spec 25.1): ``bytes`` is a lower bound while either count is non-zero
+    unknown_cost_probes: int = 0  # admitted without a known cost estimate
+    unknown_spend_probes: int = 0  # ran, and neither the warehouse nor an estimate gave bytes
 
 
 def _diag(code: str, message: str, location: str | None = None) -> Diagnostic:
@@ -140,14 +143,28 @@ class Scheduler:
 
     # --- running ----------------------------------------------------------------------
     def run(
-        self, refs: Sequence[ObjectRef] | None = None, *, drain_queue: bool = False
+        self,
+        refs: Sequence[ObjectRef] | None = None,
+        *,
+        drain_queue: bool = False,
+        guard: BudgetGuard | None = None,
     ) -> MeasureReport:
-        with self._lock:
-            return self._run(refs, drain_queue)
+        """Measure ``refs`` (default: every live table, or only the queue with ``drain_queue``).
 
-    def _run(self, refs: Sequence[ObjectRef] | None, drain_queue: bool) -> MeasureReport:
+        ``guard`` shares one byte budget across runs (the background drainer); by default each
+        run gets a fresh ``Budget``. On the total budget, and on any unexpected exception, the
+        tables not yet measured are pushed back onto the queue (then the exception propagates).
+        """
+        with self._lock:
+            return self._run(refs, drain_queue, guard)
+
+    def _run(
+        self, refs: Sequence[ObjectRef] | None, drain_queue: bool, shared: BudgetGuard | None
+    ) -> MeasureReport:
         report = MeasureReport()
-        guard = BudgetGuard(self.config.budget, self.store)
+        guard = shared if shared is not None else BudgetGuard(self.config.budget, self.store)
+        guard.new_run()
+        spent0, ucost0, uspend0 = guard.spent_bytes, guard.unknown_cost, guard.unknown_spend
         snapshot = self._snapshot_id or self.store.latest_snapshot() or "live"
         targets: list[ObjectRef] = [r.table_ref() for r in refs] if refs is not None else []
         reasons: dict[ObjectRef, str] = {}
@@ -158,22 +175,33 @@ class Scheduler:
         elif refs is None:
             targets = [t.ref for t in self.store.iter_tables()]
         targets = list(dict.fromkeys(targets))
-        for i, ref in enumerate(targets):
-            try:
-                self._run_table(ref, guard, snapshot, report)
-            except _Stop:
-                report.over_budget = targets[i:]
-                report.errors.append(
-                    _diag(
-                        "SG302",
-                        f"total measurement budget exhausted; {len(report.over_budget)} table(s) "
-                        "left in the queue",
+
+        def requeue(left: Sequence[ObjectRef], why: str) -> None:
+            for t in left:
+                self.store.queue_push(t, reasons.get(t, why), 0.0)
+
+        try:
+            for i, ref in enumerate(targets):
+                try:
+                    self._run_table(ref, guard, snapshot, report)
+                except _Stop:
+                    report.over_budget = targets[i:]
+                    report.errors.append(
+                        _diag(
+                            "SG302",
+                            f"total measurement budget exhausted; {len(report.over_budget)} "
+                            "table(s) left in the queue",
+                        )
                     )
-                )
-                for left in report.over_budget:
-                    self.store.queue_push(left, reasons.get(left, "over_budget"), 0.0)
-                break
-        report.bytes = guard.spent_bytes
+                    requeue(report.over_budget, "over_budget")
+                    break
+                except BaseException:
+                    requeue(targets[i:], "interrupted")  # nothing popped is ever lost
+                    raise
+        finally:
+            report.bytes = guard.spent_bytes - spent0
+            report.unknown_cost_probes = guard.unknown_cost - ucost0
+            report.unknown_spend_probes = guard.unknown_spend - uspend0
         return report
 
     def _run_table(
@@ -397,11 +425,16 @@ class BackgroundDrainer:
     Used only when the user opted in with ``Config(measure_on_demand="background")``.
     """
 
+    MAX_BACKOFF = 64  # the wait after repeated SG302 is at most interval_s * MAX_BACKOFF
+
     def __init__(self, scheduler: Scheduler, interval_s: float = 5.0) -> None:
         if scheduler.config.measure_on_demand != "background":
             raise ValueError("BackgroundDrainer needs Config(measure_on_demand='background')")
         self.scheduler = scheduler
         self.interval_s = interval_s
+        self.wait_s = interval_s
+        # one byte budget for the drainer's whole life: never max_bytes_total per loop
+        self.guard = BudgetGuard(scheduler.config.budget, scheduler.store)
         self.last_report: MeasureReport | None = None
         self.last_error: BaseException | None = None
         self._stop = threading.Event()
@@ -414,13 +447,24 @@ class BackgroundDrainer:
         self._thread = threading.Thread(target=self._loop, name="schemaguru-measure", daemon=True)
         self._thread.start()
 
+    def run_once(self) -> MeasureReport:
+        """One drain of the queue on the shared budget; backs off after SG302."""
+        report = self.scheduler.run(drain_queue=True, guard=self.guard)
+        self.last_report = report
+        if any(d.code == "SG302" for d in report.errors):
+            self.wait_s = min(self.wait_s * 2, self.interval_s * self.MAX_BACKOFF)
+        else:
+            self.wait_s = self.interval_s
+        return report
+
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
-                self.last_report = self.scheduler.run(drain_queue=True)
+                self.run_once()
             except Exception as e:  # keep draining; the error is kept for the host to read
                 self.last_error = e
-            self._stop.wait(self.interval_s)
+                self.wait_s = min(self.wait_s * 2, self.interval_s * self.MAX_BACKOFF)
+            self._stop.wait(self.wait_s)
 
     def stop(self, timeout: float | None = 10.0) -> None:
         self._stop.set()

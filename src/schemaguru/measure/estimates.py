@@ -10,13 +10,16 @@ from decimal import ROUND_HALF_EVEN, Decimal
 @dataclass(frozen=True)
 class EstimatedValue:
     """A number measured on a sample. ``lower_bound`` marks distinct counts and maxima from a
-    block/Bernoulli sample: the true value is at least ``value`` (``high`` is then ``None``)."""
+    block/Bernoulli sample: the true value is at least ``value`` (``high`` is then ``None``).
+    ``approximate`` marks block (SYSTEM) samples: clustered rows, so the interval is widened by a
+    design effect and is only approximate (spec 8.6)."""
 
     value: float | int | None
     low: float | None
     high: float | None
     method: str
     lower_bound: bool
+    approximate: bool = False
 
 
 def wilson(

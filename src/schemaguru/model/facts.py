@@ -51,8 +51,12 @@ def _value_identity(kind: KindSpec, value: Mapping[str, Any]) -> dict[str, Any]:
     return {f: value[f] for f in kind.identity_fields}
 
 
-def method_class(method: str | None) -> str:
-    """``"sampled"`` for a ``sampled:...`` method, else ``"exact"`` (spec 8.5, 8.6)."""
+def method_class(method: str | None, status: Status | None = None) -> str:
+    """``"error"`` for a failed probe, ``"sampled"`` for a ``sampled:...`` method, else
+    ``"exact"`` (spec 8.5, 8.6). Part of a MEASURED fact's id, so a failure never replaces the
+    last good measurement and a sample never replaces an exact one."""
+    if status is Status.ERROR:
+        return "error"
     return "sampled" if (method or "").startswith("sampled:") else "exact"
 
 
@@ -121,7 +125,7 @@ class Fact:
         if provenance is Provenance.MEASURED:
             # Exact and sampled measurements of one subject coexist: a newer sample must never
             # overwrite an older exact number in the store (spec 8.5: never compare methods).
-            ident.append(method_class(method))
+            ident.append(method_class(method, status))
         fid = stable_hash(ident)
         return cls(
             fid, spec, subject, value, provenance, status, method, evidence, source,

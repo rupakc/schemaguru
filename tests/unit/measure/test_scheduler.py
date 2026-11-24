@@ -294,9 +294,94 @@ def test_measure_codes_registered() -> None:
 def test_stop_in_enum_phase_lists_table_once(shop_store: SQLiteStore, conn: Any) -> None:
     # orders' enum phase runs TopValues(status), then TopValues(deleted) exhausts the budget
     def cost(r: Request) -> int:
-        return 10**6 if isinstance(r, TopValues) and r.column.column == "deleted" else 1
+        if isinstance(r, TopValues):
+            return 60_000 if r.column.column == "deleted" else 50_000
+        return 1
 
     cfg = Config(budget=Budget(max_bytes_total=10**5, max_bytes_per_probe=None))
     report = Scheduler(shop_store, FakeBackend(conn, cost=cost), cfg).run([ORD, PRD])
     assert report.measured_tables == [ORD] and report.over_budget == [ORD, PRD]
     assert one(shop_store, "VALUES", col("orders", "status")).status is Status.OBSERVED
+
+
+def test_one_phase_cannot_exceed_total(shop_store: SQLiteStore, conn: Any) -> None:
+    # every probe of orders costs 400; the whole phase would be admitted before measuring
+    cfg = Config(budget=Budget(max_bytes_total=1_000, max_bytes_per_probe=None))
+    fake = FakeBackend(conn, cost=lambda r: 400)
+    report = Scheduler(shop_store, fake, cfg).run([ORD])
+    assert len(all_requests(fake)) == 2  # 2 x 400 fit in 1000, the third would not
+    assert report.bytes <= 1_000 and report.over_budget == [ORD]
+    assert shop_store.ledger_total("measure", "bytes", None) <= 1_000
+
+
+def test_single_probe_over_total_is_sg301_and_leaves_queue(shop_store: SQLiteStore,
+                                                           conn: Any) -> None:  # fmt: skip
+    cfg = Config(budget=Budget(max_bytes_total=100, max_bytes_per_probe=None))
+    fake = FakeBackend(conn, cost=lambda r: 10**6 if isinstance(r, KeyOverlapReq) else 1)
+    shop_store.queue_push(ORD, "first_touch", 1.0)
+    report = Scheduler(shop_store, fake, cfg).run(drain_queue=True)
+    assert "SG302" not in {d.code for d in report.errors}
+    assert "SG301" in {d.code for d in report.errors}
+    assert report.over_budget == [] and shop_store.queue_pop(10) == []
+    assert one(shop_store, "JOIN", O_C).value["reason"] == "over_budget"
+
+
+def test_crash_requeues_unmeasured_tables(shop_store: SQLiteStore, conn: Any) -> None:
+    class Flaky:
+        """Delegates to the store; the second put_facts raises."""
+
+        def __init__(self, inner: SQLiteStore) -> None:
+            self.inner, self.calls = inner, 0
+
+        def put_facts(self, facts: Any) -> None:
+            self.calls += 1
+            if self.calls == 2:
+                raise OSError("disk full")
+            self.inner.put_facts(facts)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.inner, name)
+
+    for t in (PRD, CUS, ORD):
+        shop_store.queue_push(t, "first_touch", 1.0)
+    s = Scheduler(Flaky(shop_store), FakeBackend(conn), Config())  # type: ignore[arg-type]
+    with pytest.raises(OSError):
+        s.run(drain_queue=True)
+    left = {ref: reason for ref, reason in shop_store.queue_pop(100)}
+    assert set(left) == {CUS, ORD} and left[CUS] == "first_touch"  # PRD was written
+
+
+def test_unknown_cost_visible_in_report(shop_store: SQLiteStore, conn: Any) -> None:
+    report = Scheduler(shop_store, FakeBackend(conn, cost=lambda r: None), Config()).run([PRD])
+    assert report.unknown_cost_probes > 0 and report.unknown_spend_probes > 0
+    assert shop_store.ledger_total("measure.unknown_bytes", "queries", None) > 0
+
+
+def test_drainer_shares_budget_and_backs_off(shop_store: SQLiteStore, conn: Any) -> None:
+    cfg = Config(measure_on_demand="background",
+                 budget=Budget(max_bytes_total=1_000, max_bytes_per_probe=None))  # fmt: skip
+    fake = FakeBackend(conn, cost=lambda r: 300)
+    d = BackgroundDrainer(Scheduler(shop_store, fake, cfg), interval_s=1.0)
+    spent = 0
+    for _ in range(4):
+        shop_store.queue_push(PRD, "first_touch", 1.0)
+        shop_store.queue_push(CUS, "first_touch", 1.0)
+        r = d.run_once()
+        spent += r.bytes
+    assert spent <= 1_000  # one budget across iterations, not 1_000 per loop
+    assert shop_store.ledger_total("measure", "bytes", None) <= 1_000
+    assert d.wait_s > 1.0  # backing off after SG302
+    assert d.wait_s <= 1.0 * BackgroundDrainer.MAX_BACKOFF
+
+
+def test_large_key_distinct_comes_from_keyhash(shop_store: SQLiteStore, conn: Any) -> None:
+    cfg = Config(sampling=SamplingConfig(sample_threshold_rows=5000, exact_key_limit=500))
+    fake = FakeBackend(conn)
+    Scheduler(shop_store, fake, cfg).run([ORD])
+    (u,) = [r for r in all_requests(fake) if isinstance(r, Uniqueness)]
+    assert u.sample is not None and u.sample.method == "keyhash" and u.sample.key == ("order_id",)
+    d = one(shop_store, "DISTINCT", col("orders", "order_id"))
+    assert d.status is Status.ESTIMATED and d.value["estimate"]["method"] == "scaled"
+    assert d.value["distinct_keys"] == pytest.approx(10_000, rel=0.25)
+    pk = one(shop_store, "PRIMARY_KEY", ORD)
+    assert pk.value["row_count"] == pytest.approx(10_000, rel=0.25)

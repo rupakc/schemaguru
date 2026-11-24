@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from schemaguru.model.evidence import Evidence
-from schemaguru.model.facts import Fact, Provenance, Status
+from schemaguru.model.facts import Fact, Provenance, Status, method_class
 from schemaguru.model.joins import JoinRef
 from schemaguru.model.kinds import FactKind
 from schemaguru.model.refs import ObjectRef
@@ -193,3 +193,20 @@ def test_missing_identity_field_fails_loudly() -> None:
         FactKind.VALUES, ORD, {"case_sensitive": True, "split": None}, Provenance.MEASURED,
         Status.OBSERVED, method="exact",
     )  # fmt: skip
+
+
+def test_error_fact_never_replaces_exact_measurement() -> None:
+    good = _nr("exact")
+    err = Fact.make(
+        FactKind.NULL_RATE, ORD, {"rate": None, "reason": "probe_error"}, Provenance.MEASURED,
+        Status.ERROR, method="exact",
+    )  # fmt: skip
+    sampled_err = Fact.make(
+        FactKind.NULL_RATE, ORD, {"rate": None}, Provenance.MEASURED, Status.ERROR,
+        method="sampled:system:0.01:7",
+    )  # fmt: skip
+    assert err.id != good.id and err.id != _nr("sampled:system:0.01:7").id
+    assert sampled_err.id == err.id  # one "latest failure" per subject, whatever the method
+    assert method_class("exact", Status.ERROR) == "error"
+    assert method_class("sampled:x", Status.ESTIMATED) == "sampled"
+    assert method_class(None) == "exact"

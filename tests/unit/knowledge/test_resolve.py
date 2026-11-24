@@ -432,3 +432,36 @@ def test_values_union_of_exact_and_newer_sample() -> None:
     msg = eff.contradictions[0]
     assert "PAID (7 rows)" in msg and "z (2 rows) [sampled]" in msg
     assert "PAID (7 rows) [sampled]" not in msg
+
+
+def test_newest_error_is_a_warning_never_the_pivot() -> None:
+    col = ObjectRef(None, "shop", "orders", "deleted")
+    good = Fact.make(
+        FactKind.NULL_RATE, col, {"rate": 0.97}, Provenance.MEASURED, Status.OBSERVED,
+        method="exact", observed_at=_ago(2),
+    )  # fmt: skip
+    older = Fact.make(
+        FactKind.NULL_RATE, col, {"rate": 0.5}, Provenance.MEASURED, Status.ESTIMATED,
+        method="sampled:system:0.01:1", observed_at=_ago(5),
+    )  # fmt: skip
+    err = Fact.make(
+        FactKind.NULL_RATE, col, {"rate": None, "reason": "over_budget", "code": "SG301"},
+        Provenance.MEASURED, Status.ERROR, method="exact", observed_at=_ago(1),
+    )  # fmt: skip
+    eff = resolve([good, older, err], now=NOW, ttl_days=14)[_key(FactKind.NULL_RATE, col)]
+    assert eff.primary is not None and eff.primary.id == good.id
+    assert eff.observed is not None and eff.observed.id == good.id
+    assert any("over_budget" in m for m in eff.contradictions)
+    by_id = {f.id: f for f in eff.all}
+    assert by_id[good.id].status is Status.OBSERVED  # the error superseded nothing
+    assert by_id[older.id].status is Status.ESTIMATED  # sampled facts keep their status
+    # an error older than the good measurement no longer warns
+    old_err = Fact.make(
+        FactKind.NULL_RATE, col, {"rate": None, "reason": "probe_error"}, Provenance.MEASURED,
+        Status.ERROR, method="exact", observed_at=_ago(3),
+    )  # fmt: skip
+    eff = resolve([good, old_err], now=NOW, ttl_days=14)[_key(FactKind.NULL_RATE, col)]
+    assert eff.primary.id == good.id and eff.contradictions == ()  # type: ignore[union-attr]
+    # with only an error, it is all there is
+    eff = resolve([err], now=NOW, ttl_days=14)[_key(FactKind.NULL_RATE, col)]
+    assert eff.primary is not None and eff.primary.status is Status.ERROR

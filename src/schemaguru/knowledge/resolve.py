@@ -108,10 +108,16 @@ def _supersession(measured: Sequence[Fact]) -> tuple[list[Fact], list[Fact]]:
     (spec 8.6), so only an exact measurement supersedes older ones. Samples newer than the pivot
     keep warning alongside it. With no exact measurement nothing is superseded.
     """
-    pivot = next((i for i, m in enumerate(measured) if not _is_sample(m)), None)
+    ok = [m for m in measured if m.status is not Status.ERROR]
+    pivot = next((i for i, m in enumerate(ok) if not _is_sample(m)), None)
     if pivot is None:
         return list(measured), []
-    return list(measured[: pivot + 1]), list(measured[pivot + 1 :])
+    newest = _when(ok[pivot])
+    errors = [m for m in measured if m.status is Status.ERROR]
+    # a failed probe never pivots or supersedes; one older than the pivot no longer warns
+    warn = [*ok[: pivot + 1], *(e for e in errors if _when(e) > newest)]
+    gone = [*ok[pivot + 1 :], *(e for e in errors if _when(e) <= newest)]
+    return sorted(warn, key=_newest_first), sorted(gone, key=_newest_first)
 
 
 def _contradictions(
@@ -119,6 +125,11 @@ def _contradictions(
 ) -> list[str]:
     out: list[str] = []
     warn_ids = {m.id for m in measured}
+    for m in measured:
+        if m.status is Status.ERROR:
+            at = "" if m.observed_at is None else f" at {m.observed_at.isoformat()}"
+            reason = m.value.get("reason") or "probe_error"
+            out.append(f"latest measurement failed{at}: {reason}")
     for f in facts:
         if f.status is Status.CONTRADICTED:
             if f.provenance is Provenance.MEASURED:
@@ -259,7 +270,9 @@ def resolve(
 
         by_id = {f.id: f for f in fs}
         measured = [by_id[m.id] for m in measured]
-        primary = _pick(fs, order)
+        # a failed probe is a warning only: never the headline while anything else is known
+        measured = [m for m in measured if m.status is not Status.ERROR] or measured
+        primary = _pick([f for f in fs if f.status is not Status.ERROR], order) or _pick(fs, order)
         ordered = sorted(fs, key=lambda f: (order.index(f.provenance), *_newest_first(f)))
         result[key] = Effective(
             kind=kind,

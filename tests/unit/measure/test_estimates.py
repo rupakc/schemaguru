@@ -58,4 +58,5 @@ def test_estimated_value_is_plain_data() -> None:
         "high": 0.06,
         "method": "wilson95",
         "lower_bound": False,
+        "approximate": False,
     }

@@ -368,3 +368,54 @@ def test_freshness_and_pattern_and_rowcount() -> None:
 def test_no_rows_is_unmeasurable() -> None:
     f = _facts(RowCount(ORD), None)
     assert len(f) == 1 and f[0].status is Status.UNMEASURABLE
+
+
+KEYHASH_PK = SampleChoice("keyhash", Decimal("0.05"), 1, ("order_id",))
+
+
+def test_keyhash_uniqueness_scales_and_labels_counts() -> None:
+    req = Uniqueness(ORD, ("order_id",), sample=KEYHASH_PK)
+    p = {"row_count": 500, "non_null": 500, "distinct_keys": 500, "max_rows_per_key": 1,
+         "duplicate_keys": 0, "sampled_rows": 500}  # fmt: skip
+    facts = _facts(req, p)
+    pk = _by(facts, "PRIMARY_KEY")
+    assert pk.status is Status.ESTIMATED
+    assert pk.value["row_count"] == 10_000 and pk.value["distinct_keys"] == 10_000
+    assert pk.value["non_null"] == 10_000 and pk.value["duplicate_keys"] == 0
+    est = pk.value["estimates"]
+    assert est["distinct_keys"]["method"] == "scaled" and est["distinct_keys"]["value"] == 10_000
+    assert est["distinct_keys"]["lower_bound"] is False
+    assert est["max_rows_per_key"]["lower_bound"] is True
+    assert pk.value["estimate"] == est["distinct_keys"]
+    # keyhash on exactly a single-column key is the spec-8.6 distinct count of that key
+    d = _by(facts, "DISTINCT", "order_id")
+    assert d.status is Status.ESTIMATED and d.value["distinct_keys"] == 10_000
+    assert d.value["estimate"]["method"] == "scaled"
+
+
+def test_non_keyhash_uniqueness_does_not_pass_raw_counts_as_totals() -> None:
+    req = Uniqueness(ORD, ("order_id", "status"),
+                     sample=SampleChoice("keyhash", Decimal("0.05"), 1, ("order_id",)))  # fmt: skip
+    p = {"row_count": 500, "non_null": 499, "distinct_keys": 480, "max_rows_per_key": 2,
+         "duplicate_keys": 3, "sampled_rows": 500}  # fmt: skip
+    facts = _facts(req, p)
+    pk = _by(facts, "PRIMARY_KEY")
+    assert pk.value["row_count"] is None and pk.value["distinct_keys"] is None
+    assert pk.value["sample_counts"]["distinct_keys"] == 480
+    assert pk.value["estimates"]["distinct_keys"]["lower_bound"] is True
+    assert pk.value["complete"] is False and pk.value["unique"] is False
+    assert not any(f.kind.name == "DISTINCT" for f in facts)  # not keyhash on this key
+
+
+def test_system_sample_estimates_are_approximate() -> None:
+    req = ProfileColumns(ORD, ("deleted",), sample=SYS)
+    facts = _facts(req, {"row_count": 1000, "sampled_rows": 1000,
+                         "columns": {"deleted": {"non_null": 30, "distinct_keys": 1}}})  # fmt: skip
+    for f in facts:
+        assert f.value["approximate"] is True and f.value["estimate"]["approximate"] is True
+    bern = ProfileColumns(ORD, ("deleted",), sample=SampleChoice("bernoulli", Decimal("0.01"), 7))
+    facts = _facts(bern, {"row_count": 1000, "sampled_rows": 1000,
+                          "columns": {"deleted": {"non_null": 30,
+                                                  "distinct_keys": 1}}})  # fmt: skip
+    assert all(f.value["estimate"]["approximate"] is False for f in facts)
+    assert all("approximate" not in f.value for f in facts)

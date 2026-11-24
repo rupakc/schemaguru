@@ -112,6 +112,7 @@ class _Ctx:
             if self.sample is not None and self.sample.method == "system"
             else 1.0
         )
+        self.approximate = self.sample is not None and self.sample.method == "system"
 
     def fact(
         self,
@@ -122,10 +123,13 @@ class _Ctx:
     ) -> Fact:
         if status is None:
             status = Status.OBSERVED if self.sample is None else Status.ESTIMATED
+        payload = dict(value)
+        if status is Status.ESTIMATED and self.approximate:
+            payload["approximate"] = True  # block sample: clustered, interval widened
         return Fact.make(
             kind,
             subject,
-            dict(value),
+            payload,
             Provenance.MEASURED,
             status,
             method=self.method,
@@ -142,10 +146,20 @@ class _Ctx:
 
         return {"sampled_rows": n, "fraction": format_fraction(self.sample.fraction)}
 
+    def ev(
+        self,
+        value: float | int | None,
+        low: float | None,
+        high: float | None,
+        method: str,
+        lower_bound: bool,
+    ) -> EstimatedValue:
+        return EstimatedValue(value, low, high, method, lower_bound, self.approximate)
+
     def rate_estimate(self, successes: int, n: int, deff: float | None = None) -> EstimatedValue:
         ci = wilson(successes, n, design_effect=self.deff if deff is None else deff)
         lo, hi = (None, None) if ci is None else ci
-        return EstimatedValue(_ratio(successes, n), lo, hi, WILSON, False)
+        return self.ev(_ratio(successes, n), lo, hi, WILSON, False)
 
 
 def to_facts(
@@ -178,7 +192,7 @@ def to_facts(
     if isinstance(req, KeyOverlapReq):
         return [_join(ctx, req, p)]
     if isinstance(req, Uniqueness):
-        return [_uniqueness(ctx, req, p)]
+        return _uniqueness(ctx, req, p)
     if isinstance(req, Freshness):
         return [_freshness(ctx, req, p)]
     if isinstance(req, PatternRate):
@@ -299,8 +313,8 @@ def _sampled_distinct(ctx: _Ctx, distinct: int, key: tuple[str, ...]) -> Estimat
     assert s is not None
     if s.method == "keyhash" and s.key == key:
         scaled = scale_count(distinct, s.fraction)
-        return EstimatedValue(scaled, None, None, "scaled", False)
-    return EstimatedValue(distinct, distinct, None, "sample_lower_bound", True)
+        return ctx.ev(scaled, None, None, "scaled", False)
+    return ctx.ev(distinct, distinct, None, "sample_lower_bound", True)
 
 
 def _top_values(ctx: _Ctx, req: TopValues, p: Mapping[str, Any]) -> list[Fact]:
@@ -331,7 +345,7 @@ def _top_values(ctx: _Ctx, req: TopValues, p: Mapping[str, Any]) -> list[Fact]:
     if ctx.sample is not None:
         # seen in the sample; a rare value absent from it is not claimed absent (spec 8.6)
         n = _int(p.get("sampled_rows", non_null))
-        dv = EstimatedValue(distinct, distinct, None, "sample_lower_bound", True)
+        dv = ctx.ev(distinct, distinct, None, "sample_lower_bound", True)
         value.update(
             seen_in_sample=True, complete=False, estimate=dv.__dict__, **ctx.sample_info(n)
         )
@@ -415,13 +429,13 @@ def _join(ctx: _Ctx, req: KeyOverlapReq, p: Mapping[str, Any]) -> Fact:
         ).__dict__
     for k in ("max_left_per_key", "max_right_per_key"):
         if raw[k] is not None:
-            estimates[k] = EstimatedValue(raw[k], raw[k], None, "sample_lower_bound", True).__dict__
+            estimates[k] = ctx.ev(raw[k], raw[k], None, "sample_lower_bound", True).__dict__
     value["estimates"] = estimates
     value["estimate"] = estimates.get("match_rate")
     return ctx.fact(FactKind.JOIN, req.join, value)
 
 
-def _uniqueness(ctx: _Ctx, req: Uniqueness, p: Mapping[str, Any]) -> Fact:
+def _uniqueness(ctx: _Ctx, req: Uniqueness, p: Mapping[str, Any]) -> list[Fact]:
     rows = _int(p.get("row_count"))
     non_null = _int(p.get("non_null"))
     distinct = _int(p.get("distinct_keys"))
@@ -438,19 +452,67 @@ def _uniqueness(ctx: _Ctx, req: Uniqueness, p: Mapping[str, Any]) -> Fact:
     }
     if not rows:
         value.update(unique=None, reason="empty_table" if rows == 0 else "missing_metric")
-        return ctx.fact(FactKind.PRIMARY_KEY, req.table, value, Status.UNMEASURABLE)
+        return [ctx.fact(FactKind.PRIMARY_KEY, req.table, value, Status.UNMEASURABLE)]
     has_dup: bool | None = (dup > 0) if dup is not None else (mx > 1 if mx is not None else None)
-    if ctx.sample is None:
+    s = ctx.sample
+    if s is None:
         value["unique"] = None if has_dup is None else not has_dup
-        return ctx.fact(FactKind.PRIMARY_KEY, req.table, value)
+        return [ctx.fact(FactKind.PRIMARY_KEY, req.table, value)]
     # a key-hash sample keeps every row of a kept key: a duplicate seen is a real duplicate;
-    # no duplicate seen confirms nothing (spec 8.6)
+    # no duplicate seen confirms nothing (spec 8.6). A row missing a key part in the sample is a
+    # real incomplete row; none seen confirms nothing either.
     value.update(
         unique=False if has_dup else None,
         consistent_with_sample=has_dup is False,
+        complete=False if value["complete"] is False else None,
         **ctx.sample_info(_int(p.get("sampled_rows", rows))),
     )
-    return ctx.fact(FactKind.PRIMARY_KEY, req.table, value)
+    estimates: dict[str, Any] = {}
+    out: list[Fact] = []
+    if s.method == "keyhash" and s.key == req.columns:
+        # whole keys kept at `fraction`: key and row counts scale without bias
+        for k, raw in (
+            ("row_count", rows),
+            ("non_null", non_null),
+            ("distinct_keys", distinct),
+            ("duplicate_keys", dup),
+        ):
+            scaled = None if raw is None else scale_count(raw, s.fraction)
+            value[k] = scaled
+            if scaled is not None:
+                estimates[k] = ctx.ev(scaled, None, None, "scaled", False).__dict__
+        if len(req.columns) == 1 and "distinct_keys" in estimates:
+            t = req.table
+            col = ObjectRef(t.catalog, t.schema, t.table, req.columns[0])
+            out.append(
+                ctx.fact(
+                    FactKind.DISTINCT,
+                    col,
+                    {
+                        "distinct_keys": value["distinct_keys"],
+                        "estimate": estimates["distinct_keys"],
+                        **ctx.sample_info(_int(p.get("sampled_rows", rows))),
+                    },
+                )
+            )
+    else:
+        # not key-hash on this key: the raw sample counts are no estimate of the totals
+        value["sample_counts"] = {
+            "row_count": rows,
+            "non_null": non_null,
+            "distinct_keys": distinct,
+            "duplicate_keys": dup,
+        }
+        value.update(row_count=None, non_null=None, distinct_keys=None, duplicate_keys=None)
+        if distinct is not None:
+            estimates["distinct_keys"] = ctx.ev(
+                distinct, distinct, None, "sample_lower_bound", True
+            ).__dict__
+    if mx is not None:
+        estimates["max_rows_per_key"] = ctx.ev(mx, mx, None, "sample_lower_bound", True).__dict__
+    value["estimates"] = estimates
+    value["estimate"] = estimates.get("distinct_keys")
+    return [ctx.fact(FactKind.PRIMARY_KEY, req.table, value), *out]
 
 
 def _as_datetime(v: Any) -> tuple[datetime | None, bool]:

@@ -78,8 +78,11 @@ provenance, identity])` and is always computed, never supplied.
 ## 2026-11-24 - MEASURED fact ids carry the method class (exact | sampled)
 Why: a newer sampled measurement of one subject overwrote the older exact one (same id), and a
 sample may refute but never replace an exact number (spec 8.5, 8.6).
-How to apply: `Fact.make` appends `method_class(method)` (`"sampled"` iff the method starts with
-`sampled:`, else `"exact"`) to the id input for MEASURED facts only. A missing identity field
+How to apply: `Fact.make` appends `method_class(method, status)` (`"error"` for an ERROR fact,
+`"sampled"` iff the method starts with `sampled:`, else `"exact"`) to the id input for MEASURED
+facts only, so a failed probe never replaces the last good measurement. `knowledge.resolve`
+treats ERROR facts as warnings only: never the pivot, superseder, primary or observed while a
+non-error fact exists. A missing identity field
 now raises `ValueError` (present-but-`None` is fine): write `"split": None`, `"means": None`.
 
 ## 2026-11-24 - Measurement: plan, price, sample, admit, measure, convert (Task 6)
@@ -91,3 +94,11 @@ distinct <= `enum_max_distinct`. A large table's row count is a CATALOG fact fro
 MEASURED. A failed/over-budget *heuristic or LLM* join candidate leaves no JOIN fact (diagnostic
 only); a declared one gets an ERROR fact. Unit tests use `tests/unit/measure/fake_backend.py`
 (DuckDB SQL in tests only; `system` rendered as seeded bernoulli). Codes SG301-SG305.
+
+## 2026-11-24 - Measurement budget is committed, not just spent (Task 6 fix round 1)
+Why: the scheduler admits a whole phase before measuring, so checking only spent bytes let five
+10-byte probes through a 10-byte total; the drainer made a new budget every loop.
+How to apply: `BudgetGuard` counts admitted-but-unrecorded known costs; a probe costing more than
+the whole total is `over_probe` (SG301, not re-queued); unknown spend is ledgered as
+`measure.unknown_bytes`, never 0. `BackgroundDrainer` holds one guard for its life and backs off
+after SG302. Any exception in `Scheduler.run` re-queues the unmeasured tables before propagating.

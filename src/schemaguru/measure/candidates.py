@@ -10,8 +10,9 @@ unless ``same_catalog_only=False``:
    single-column primary key, else an ``id`` column, of a compatible type family;
 2. a column whose name equals another table's single-column primary key in the same schema.
 
-Compatible families: equal, or both numeric (``integer``/``decimal``). A string key against a
-numeric one is a candidate measured with ``cast_to="string"`` (the agent must cast too).
+Compatible families: equal, or both numeric (``integer``/``decimal``/``float``). A string key
+against a numeric one is a candidate measured with ``cast_to="string"`` (the agent must cast
+too).
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column
 from schemaguru.store.protocol import Store
 
-_NUMERIC = frozenset({"integer", "decimal"})
+_NUMERIC = frozenset({"integer", "decimal", "float"})
 _STRINGISH = frozenset({"string"})
 _STEM = (
     re.compile(r"^(?P<x>.+?)_(?:id|fk)$", re.IGNORECASE),

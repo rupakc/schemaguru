@@ -830,10 +830,12 @@ def test_no_originating_names_anywhere(tmp_path: Path) -> None:
     if file:
         raw += "\n" + Path(file).read_text(encoding="utf-8")
     terms = parse_denylist(raw)
-    assert find_violations(tracked_files(ROOT), terms, ROOT) == []
     planted = tmp_path / "planted.txt"
     planted.write_text("see the QuuxZorb_Analytics notes\n", encoding="utf-8")
     assert find_violations([planted], ["quuxzorb analytics"], tmp_path)  # the control
+    if not (ROOT / ".git").exists():  # an unpacked sdist: no git, nothing tracked to scan
+        pytest.skip("not a git checkout (sdist): the repository scan runs in CI")
+    assert find_violations(tracked_files(ROOT), terms, ROOT) == []
 
 
 def test_sampled_marked_everywhere(warehouse: tuple[Path, ShopFacts], tmp_path: Path) -> None:

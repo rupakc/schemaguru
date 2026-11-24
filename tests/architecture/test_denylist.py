@@ -151,5 +151,7 @@ def test_camel_case_and_digit_edges() -> None:
     not os.environ.get("SCHEMAGURU_DENYLIST"), reason="SCHEMAGURU_DENYLIST is not set"
 )
 def test_repo_has_no_denylisted_terms() -> None:
+    if not (ROOT / ".git").exists():  # an unpacked sdist: no git, nothing tracked to scan
+        pytest.skip("not a git checkout (sdist)")
     entries = parse_denylist(os.environ["SCHEMAGURU_DENYLIST"])
     assert find_violations(tracked_files(), entries, ROOT) == []

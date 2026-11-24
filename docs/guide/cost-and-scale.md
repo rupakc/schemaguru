@@ -7,7 +7,7 @@ scan is unaffordable and a schema dump does not fit in any prompt.
 
 | Activity | Reads | Cost control |
 |---|---|---|
-| Crawl | system catalog only | paged, incremental; queries counted, BigQuery metadata bytes reported (`Budget.crawl_bytes` is reported against, not yet enforced) |
+| Crawl | system catalog only | paged, incremental; queries counted, BigQuery metadata bytes admitted against `Budget.crawl_bytes` (stops resumably with `SG110`; readers reporting no bytes are uncounted) |
 | Measurement | data, through FactLang probes | priced before running; `max_bytes_per_probe` (1 GiB), `max_bytes_total` (10 GiB per run), `max_probes`, `max_seconds`; large tables sampled |
 | Agent questions | the store only | never spend by default (`measure_on_demand="queue"`) |
 | `check_fact` | data, one claim | off by default; when allowed, admitted through a per-period budget (`period_s`, 1 day) shared with the background drainer |

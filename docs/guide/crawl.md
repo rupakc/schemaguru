@@ -60,7 +60,7 @@ parameters for every value; the metadata SQL is the only SQL SchemaGuru writes.
 | ClickHouse | `system.tables`, `system.columns` (no foreign keys) | real engine, CI |
 | SQL Server / Synapse | `sys.*` views, `MS_Description` comments | real engine, CI |
 | Trino | `<catalog>.information_schema.*` (constraints usually absent) | real engine, CI |
-| BigQuery | `region-*.INFORMATION_SCHEMA.*` (billed: reported against `Budget.crawl_bytes`) | recorded metadata only |
+| BigQuery | `region-*.INFORMATION_SCHEMA.*` (billed: admitted against `Budget.crawl_bytes`) | recorded metadata only |
 | Snowflake | `<db>.INFORMATION_SCHEMA.*`, `SHOW … KEYS` | recorded metadata only |
 | Redshift | `SVV_*` views, `pg_constraint` | recorded metadata only |
 | Databricks | Unity Catalog `system.information_schema.*` | recorded metadata only |
@@ -88,5 +88,8 @@ guru.close()
 
 Every crawl reports the metadata queries it ran and, where the warehouse bills metadata
 (BigQuery), the bytes billed (`report.bytes_billed`; `bytes_billed_is_estimate` says when it
-is a lower bound). `Budget.crawl_bytes` is reserved for a cap, but in 0.1 the crawl only
-reports its cost; it does not stop on it.
+is a lower bound). `Budget.crawl_bytes` caps those bytes: before each listing query the bytes
+billed so far in this crawl are compared with it, and once it is reached the crawl stops
+between pages with warning `SG110`, keeps its checkpoint, and the next `crawl()` (or
+`schemaguru crawl`) resumes where it stopped. Readers that report no bytes (every warehouse
+but BigQuery today) are not counted, so the cap never stops them.

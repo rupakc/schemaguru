@@ -79,7 +79,7 @@ the scheduler is reconfigured between runs, cached views are dropped.
 | `max_bytes_total` | `10 << 30` (10 GiB) | per run; when spent the run stops (`SG302`) |
 | `max_probes` | `None` | probe count cap |
 | `max_seconds` | `None` | wall-clock cap |
-| `crawl_bytes` | `None` | cap on billed metadata bytes during a crawl |
+| `crawl_bytes` | `None` | cap on billed metadata bytes during a crawl (where the reader reports them, BigQuery); at the cap the crawl stops resumably with `SG110` |
 | `draft_budget_tokens` | `None` | token cap for a drafting run |
 | `period_s` | `86400.0` | a guard shared across runs (background drainer, agent checks) refills its byte total once per period; `None` = never |
 

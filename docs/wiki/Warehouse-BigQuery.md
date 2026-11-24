@@ -14,7 +14,7 @@ Region views `` `region-<r>`.INFORMATION_SCHEMA.SCHEMATA `` and `TABLE_STORAGE` 
 - `bigquery.tables.get` / `bigquery.tables.list` / `bigquery.datasets.get` on the datasets to read (role `BigQuery Metadata Viewer`). `TABLE_STORAGE` additionally needs `bigquery.tables.get` on the project.
 
 ## Cost
-INFORMATION_SCHEMA queries are billed on-demand, **minimum 10 MiB each**. The reader batches columns and constraints **per dataset** (one query per dataset per call) and exposes `bytes_billed`, which the crawl copies into `CrawlReport.bytes_billed` and the budget ledger. If the executor offers `last_bytes_billed` (the job's `total_bytes_billed`) the reader sums it; otherwise it counts the 10 MiB minimum per query and sets `bytes_billed_is_lower_bound`. Use `budget.crawl_bytes` to cap a crawl.
+INFORMATION_SCHEMA queries are billed on-demand, **minimum 10 MiB each**. The reader batches columns and constraints **per dataset** (one query per dataset per call) and exposes `bytes_billed`, which the crawl copies into `CrawlReport.bytes_billed` and the budget ledger. If the executor offers `last_bytes_billed` (the job's `total_bytes_billed`) the reader sums it; otherwise it counts the 10 MiB minimum per query and sets `bytes_billed_is_lower_bound`. Use `budget.crawl_bytes` to cap a crawl: it is checked before each listing query, and at the cap the crawl stops between pages with `SG110` and resumes from its checkpoint next time.
 
 ## Quirks
 - `region` must match the datasets' location (`us`, `eu`, `europe-west3`, ...); a region view only lists datasets in it. Pass `project=` and `region=` to the reader.

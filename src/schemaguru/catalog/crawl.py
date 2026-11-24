@@ -51,6 +51,16 @@ class CrawlReport:
     duration_s: float = 0.0
 
 
+class _OverCrawlBudget(Exception):
+    """Raised between units of work once ``Budget.crawl_bytes`` is spent (not a failure)."""
+
+
+def _billed(reader: CatalogReader) -> int | None:
+    """The reader's billed metadata bytes so far, or None when it reports none."""
+    value = getattr(reader, "bytes_billed", None)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def _h(ref: ObjectRef) -> int:
     d = hashlib.blake2b(ref.canonical().encode(), digest_size=8).digest()
     return int.from_bytes(d, "big", signed=True)
@@ -123,8 +133,12 @@ class _Crawl:
         incremental: bool,
         now: Callable[[], datetime],
         seen: _Seen,
+        crawl_bytes: int | None = None,
     ) -> None:
         self.reader, self.store, self.cfg, self.now, self.seen = reader, store, config, now, seen
+        # Budget.crawl_bytes: admitted against what the reader reports billed during THIS crawl
+        self.crawl_bytes = crawl_bytes
+        self.bytes0 = _billed(reader)
         self.filter = ScopeFilter(config.include, config.exclude)
         self.caps = reader.capabilities()
         self.errors: list[Diagnostic] = []
@@ -162,6 +176,17 @@ class _Crawl:
 
     # -- bookkeeping -------------------------------------------------------------------------
 
+    def spent_bytes(self) -> int | None:
+        now = _billed(self.reader)
+        return None if now is None else now - (self.bytes0 or 0)
+
+    def _admit(self) -> None:
+        """Before each listing query: stop once ``crawl_bytes`` is spent. A reader that reports
+        no bytes is never counted (its crawl is not capped)."""
+        spent = self.spent_bytes()
+        if self.crawl_bytes is not None and spent is not None and spent >= self.crawl_bytes:
+            raise _OverCrawlBudget(spent)
+
     def _count(self, n: int = 1) -> None:
         with self._qlock:
             self.queries += n
@@ -192,6 +217,7 @@ class _Crawl:
 
     def run(self, pool: ThreadPoolExecutor) -> int:
         catalogs: list[str | None] = []
+        self._admit()
         try:
             self._count()
             catalogs = list(self.reader.list_catalogs())
@@ -219,6 +245,7 @@ class _Crawl:
     ) -> None:
         token: str | None = None
         while True:
+            self._admit()
             try:
                 self._count()
                 page = self.reader.list_schemas(catalog, page_token=token)
@@ -281,6 +308,7 @@ class _Crawl:
     ) -> bool:
         loc = f"{schema.key()}"
         while True:
+            self._admit()
             try:
                 self._count()
                 page = self.reader.list_tables(
@@ -385,6 +413,7 @@ def crawl(
     resume: bool = True,
     incremental: bool = True,
     now: Callable[[], datetime] = utcnow,
+    crawl_bytes: int | None = None,
 ) -> CrawlReport:
     """Crawl ``reader`` into ``store``.
 
@@ -397,6 +426,12 @@ def crawl(
     withdrawn only when a complete listing of its schema (from the first page, this run) omits
     it, or its schema/catalog is gone or now out of scope. If the reader has a ``page_size`` /
     ``timeout_s`` attribute it is set from ``config``.
+
+    ``crawl_bytes`` (``Budget.crawl_bytes``) caps the metadata bytes the warehouse bills during
+    this crawl, as the reader reports them (``reader.bytes_billed``; BigQuery). Before each
+    listing query the bytes billed so far are compared with the cap; once it is reached the
+    crawl stops between pages with a ``SG110`` warning and keeps its checkpoint, so the next
+    ``crawl()`` resumes where it stopped. A reader that reports no bytes is not counted.
     """
     cfg = config or CrawlConfig()
     t0 = time.monotonic()
@@ -406,27 +441,42 @@ def crawl(
         reader.timeout_s = cfg.timeout_s
     with tempfile.TemporaryDirectory(prefix="schemaguru-crawl-") as tmp:
         seen = _Seen(Path(tmp))
+        stopped = False
         try:
-            run = _Crawl(reader, store, cfg, resume, incremental, now, seen)
+            run = _Crawl(reader, store, cfg, resume, incremental, now, seen, crawl_bytes)
             with ThreadPoolExecutor(max_workers=max(1, cfg.workers)) as pool:
-                withdrawn = run.run(pool)
+                try:
+                    withdrawn = run.run(pool)
+                except _OverCrawlBudget:
+                    stopped, withdrawn = True, 0  # an incomplete listing withdraws nothing
         finally:
             seen.close()
+    bytes_billed = run.spent_bytes()
+    if stopped:
+        run.errors.append(
+            Diagnostic(
+                "SG110",
+                Severity.WARNING,
+                f"the crawl stopped at Budget.crawl_bytes ({crawl_bytes} bytes; {bytes_billed} "
+                "billed); its checkpoint is kept, so the next crawl resumes where it stopped",
+                hint="raise budget.crawl_bytes, or narrow crawl.include",
+            )
+        )
     if not run.errors:
         store.crawl_state_set(LAST_KEY, {"started_at": to_iso(run.started), "scope": run.scope})
-    store.crawl_state_set(
-        STATE_KEY,
-        {
-            "status": "complete",
-            "started_at": to_iso(run.started),
-            "finished_at": to_iso(now()),
-            "tables_seen": run.tables_seen,
-            "errors": len(run.errors),
-        },
-    )
+    if not stopped:  # a stopped crawl stays "running": crawl(resume=True) continues it
+        store.crawl_state_set(
+            STATE_KEY,
+            {
+                "status": "complete",
+                "started_at": to_iso(run.started),
+                "finished_at": to_iso(now()),
+                "tables_seen": run.tables_seen,
+                "errors": len(run.errors),
+            },
+        )
     store.ledger_add("crawl", run.queries, "queries", "catalog crawl")
-    bytes_billed = getattr(reader, "bytes_billed", None)
-    if isinstance(bytes_billed, int):
+    if bytes_billed is not None:
         store.ledger_add("crawl", bytes_billed, "bytes", "catalog crawl")
     return CrawlReport(
         tables_seen=run.tables_seen,
@@ -434,7 +484,7 @@ def crawl(
         withdrawn=withdrawn,
         errors=run.errors,
         queries=run.queries,
-        bytes_billed=bytes_billed if isinstance(bytes_billed, int) else None,
+        bytes_billed=bytes_billed,
         bytes_billed_is_estimate=getattr(reader, "bytes_billed_is_lower_bound", False) is True,
         duration_s=time.monotonic() - t0,
     )

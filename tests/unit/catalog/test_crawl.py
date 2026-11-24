@@ -313,3 +313,65 @@ def test_resume_whose_cursor_schema_vanished_recrawls(store: SQLiteStore) -> Non
     report = crawl(reader, store, config=CrawlConfig(page_size=5), now=lambda: NOW)
     assert report.tables_written == 10 and not report.errors
     assert {t.ref.schema for t in store.iter_tables()} == {"s0000"}
+
+
+# --- final fix wave: Budget.crawl_bytes is enforced (where the reader reports bytes) ----------
+
+
+class BilledReader(FakeReader):
+    """A reader that reports billed metadata bytes like the BigQuery reader (100 per query)."""
+
+    PER_QUERY = 100
+
+    def __init__(self, *a: object, **k: object) -> None:
+        super().__init__(*a, **k)  # type: ignore[arg-type]
+        self.bytes_billed = 0
+
+    def list_tables(self, *a: object, **k: object) -> object:
+        self.bytes_billed += self.PER_QUERY
+        return super().list_tables(*a, **k)  # type: ignore[arg-type]
+
+    def columns(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, list[Column]]:
+        self.bytes_billed += self.PER_QUERY
+        return super().columns(tables)
+
+
+def test_crawl_bytes_stops_resumably_with_a_diagnostic(store: SQLiteStore) -> None:
+    cfg = CrawlConfig(page_size=100, column_batch=100, workers=1)
+    reader = BilledReader(1000, tables_per_schema=1000, page_size=100)
+    report = crawl(reader, store, config=cfg, crawl_bytes=500, now=lambda: NOW)
+    assert [d.code for d in report.errors] == ["SG110"]
+    assert "crawl_bytes" in report.errors[0].message
+    assert report.bytes_billed is not None and 500 <= report.bytes_billed < 700  # one page over
+    assert 0 < len(live(store)) < 1000 and report.withdrawn == 0
+    state = store.crawl_state_get("crawl")
+    assert state is not None and state["status"] == "running"  # resumable
+    # the next crawl (a new allowance) resumes from the checkpoint and finishes
+    done = crawl(reader, store, config=cfg, crawl_bytes=10_000, now=lambda: NOW)
+    assert not done.errors and len(live(store)) == 1000
+    assert done.tables_written == 1000 - report.tables_written
+    assert store.crawl_state_get("crawl")["status"] == "complete"  # type: ignore[index]
+
+
+def test_crawl_bytes_none_or_unreported_is_uncounted(store: SQLiteStore) -> None:
+    """Negative controls: no cap crawls everything; a reader reporting no bytes is uncounted."""
+    cfg = CrawlConfig(page_size=100, workers=1)
+    full = crawl(BilledReader(300, tables_per_schema=300, page_size=100), store, config=cfg)
+    assert not full.errors and full.bytes_billed == 600
+    other = SQLiteStore(":memory:")
+    plain = crawl(FakeReader(300, tables_per_schema=300, page_size=100), other, config=cfg,
+                  crawl_bytes=1)  # fmt: skip
+    assert not plain.errors and len(live(other)) == 300 and plain.bytes_billed is None
+    other.close()
+
+
+def test_guru_crawl_applies_budget_crawl_bytes(tmp_path: Path) -> None:
+    from schemaguru.config import Budget, Config
+    from schemaguru.guru import Guru
+
+    reader = BilledReader(1000, tables_per_schema=1000, page_size=100)
+    cfg = Config(budget=Budget(crawl_bytes=300), crawl=CrawlConfig(page_size=100, workers=1))
+    g = Guru(reader=reader, store=str(tmp_path / "g.db"), config=cfg)
+    report = g.crawl()
+    assert [d.code for d in report.errors] == ["SG110"]
+    g.close()

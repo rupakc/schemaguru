@@ -477,7 +477,13 @@ class Guru:
         if exclude is not None:
             cfg = replace(cfg, exclude=tuple(exclude))
         try:
-            return _crawl(reader, self.store, config=cfg, now=self._now)
+            return _crawl(
+                reader,
+                self.store,
+                config=cfg,
+                now=self._now,
+                crawl_bytes=self._config.budget.crawl_bytes,
+            )
         finally:
             self._invalidate()
 

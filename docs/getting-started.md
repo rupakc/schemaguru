@@ -39,8 +39,10 @@ FactLang's `connect()` (FactLang 0.1.0); without it the URL fails with `SG106`.
 * **The store.** Knowledge lives in one SQLite file, by default
   `./.schemaguru/<name>.db` (`name="default"`). Pass `store=` to put it elsewhere.
 * **First use crawls.** When the store holds no table yet, `connect` crawls the catalog —
-  metadata only (table and column names, types, keys, comments, catalog statistics),
-  counted against the crawl budget. `crawl=False` skips it; `crawl=True` always crawls.
+  metadata only (table and column names, types, keys, comments, catalog statistics). Where
+  the warehouse bills metadata queries and the reader reports the bytes (BigQuery), they are
+  admitted against `Budget.crawl_bytes` (default: no cap): at the cap the crawl stops with
+  `SG110` and the next crawl resumes. Readers that report no bytes are not counted. `crawl=False` skips it; `crawl=True` always crawls.
 * **Paths.** `duckdb:///warehouse.duckdb` is relative to the working directory; an absolute
   POSIX path takes four slashes, `duckdb:////data/warehouse.duckdb`.
 * **DuckDB file names.** DuckDB names a database's catalog after its file, so a file

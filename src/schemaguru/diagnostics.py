@@ -34,6 +34,8 @@ CODES: Mapping[str, str] = MappingProxyType(
         "skipped",
         "SG109": "a value cannot be inlined for a host without bind parameters (a backslash, NUL, "
         "non-scalar or non-finite value, or a ' on BigQuery/Databricks); the probe is refused",
+        "SG110": "the crawl stopped at Budget.crawl_bytes (billed metadata bytes, where the reader "
+        "reports them); its checkpoint is kept and the next crawl resumes",
         "SG201": "overlay 'version' is missing or unsupported",
         "SG202": "overlay has an unknown key (a close match is suggested)",
         "SG203": "overlay reference does not resolve to anything in the store",

@@ -197,7 +197,14 @@ def refresh(
     prev_facts = store.snapshot_facts(prev_id) if prev_id else []
 
     try:
-        crawl_report = crawl(reader, store, config=config.crawl, incremental=True, now=now)
+        crawl_report = crawl(
+            reader,
+            store,
+            config=config.crawl,
+            incremental=True,
+            now=now,
+            crawl_bytes=config.budget.crawl_bytes,
+        )
     except Exception as e:
         crawl_report = CrawlReport(0, 0, 0, [_error("SG102", f"crawl failed: {e}")])
     withdrawn = _withdrawn_since_snapshot(store, prev_facts)

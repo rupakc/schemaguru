@@ -193,9 +193,11 @@ def test_bad_inputs_never_raise(store: SQLiteStore, tmp_path: Path) -> None:
 def test_directory_load(store: SQLiteStore, tmp_path: Path) -> None:
     d = tmp_path / "schemaguru"
     (d / "drafts").mkdir(parents=True)
-    (d / "a.yaml").write_text("version: 1\ntables:\n  shop.orders:\n    description: a\n")
+    (d / "a.yaml").write_text(
+        "version: 1\ntables:\n  shop.orders:\n    description: a\n", encoding="utf-8"
+    )
     (d / "drafts" / "x.yaml").write_text(
-        "version: 1\ntables:\n  shop.orders:\n    description: x\n"
+        "version: 1\ntables:\n  shop.orders:\n    description: x\n", encoding="utf-8"
     )
     facts, *_ = load_overlays([d], store, today=TODAY)
     assert [f.value["text"] for f in facts] == ["a"]

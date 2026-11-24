@@ -45,7 +45,7 @@ def test_dbt_relationship_cardinality_is_unknown(store: SQLiteStore) -> None:
 
 
 def _manifest(tmp_path: Path, tests: dict[str, Any]) -> Path:
-    base = json.loads(MANIFEST.read_text())
+    base = json.loads(MANIFEST.read_text(encoding="utf-8"))
     base["nodes"] = {k: v for k, v in base["nodes"].items() if not k.startswith("test.")}
     for name, (tname, col) in tests.items():
         base["nodes"][f"test.shop.{name}"] = {
@@ -53,7 +53,7 @@ def _manifest(tmp_path: Path, tests: dict[str, Any]) -> Path:
             "test_metadata": {"name": tname, "kwargs": {"column_name": col}},
         }  # fmt: skip
     p = tmp_path / "m.json"
-    p.write_text(json.dumps(base))
+    p.write_text(json.dumps(base), encoding="utf-8")
     return p
 
 
@@ -94,14 +94,14 @@ def test_dbt_malformed_manifest_never_raises(
     store: SQLiteStore, tmp_path: Path, manifest: Any
 ) -> None:
     p = tmp_path / "m.json"
-    p.write_text(json.dumps(manifest))
+    p.write_text(json.dumps(manifest), encoding="utf-8")
     import_dbt(p, store, diagnostics=DiagnosticBag())
 
 
 def test_dbt_unreadable_manifest(store: SQLiteStore, tmp_path: Path) -> None:
     bag = DiagnosticBag()
     bad = tmp_path / "m.json"
-    bad.write_text("{nope")
+    bad.write_text("{nope", encoding="utf-8")
     assert import_dbt(bad, store, diagnostics=bag) == []
     assert import_dbt(tmp_path / "none.json", store, diagnostics=bag) == []
     assert [d.code for d in bag] == ["SG209", "SG209"]

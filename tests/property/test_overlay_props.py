@@ -145,7 +145,7 @@ def test_import_dbt_never_raises(manifest: object) -> None:
 
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
-        (tmp / "m.json").write_text(json.dumps(manifest))
+        (tmp / "m.json").write_text(json.dumps(manifest), encoding="utf-8")
         s = _store(tmp)
         try:
             import_dbt(tmp / "m.json", s, diagnostics=DiagnosticBag())

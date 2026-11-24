@@ -1,0 +1,1 @@
+SchemaGuru is MIT-licensed open source · [Repository](https://github.com/rupakc/schemaguru) · [Issues](https://github.com/rupakc/schemaguru/issues) · This wiki is generated from [`docs/wiki/`](https://github.com/rupakc/schemaguru/tree/main/docs/wiki); edit it there, not here.

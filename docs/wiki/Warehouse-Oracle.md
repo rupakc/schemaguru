@@ -1,6 +1,10 @@
-# Oracle
+# Warehouse: Oracle
 
-Reader: `oracle`. Schema = owner; refs carry no catalog. Requires Oracle Database 12.1 or later (`FETCH FIRST`, `ALL_USERS.ORACLE_MAINTAINED`).
+> The `oracle` reader crawls the schemas (owners) visible to the user from the `ALL_*` dictionary views (Oracle 12.1 or later).
+> Names are kept upper-case as stored; row counts are optimizer estimates and unknown until statistics are gathered.
+> Built from documented view shapes and tested against recorded fixtures; not yet validated against a live database.
+
+Reader: `oracle`. Schema = owner; refs carry no catalog. Requires Oracle Database 12.1 or later (`FETCH FIRST`, `ALL_USERS.ORACLE_MAINTAINED`). Extra: `pip install "schemaguru[oracle]"` (`oracledb`).
 
 ## Metadata sources
 `ALL_USERS`, `ALL_TABLES`, `ALL_VIEWS`, `ALL_MVIEWS`, `ALL_TAB_COMMENTS`, `ALL_PART_TABLES`, `ALL_TAB_COLUMNS`, `ALL_COL_COMMENTS`, `ALL_CONSTRAINTS`, `ALL_CONS_COLUMNS`.
@@ -19,3 +23,9 @@ Dictionary queries only; no extra licensing beyond the base database.
 - `ENABLED` / `DISABLED` constraint status is reported as `enforced`.
 - Bind style: `oracledb` numeric (`:1`); the executor converts `?`.
 - Live test: `SCHEMAGURU_LIVE_ORACLE=1` with `SCHEMAGURU_ORA_{DSN,USER,PASSWORD,SCHEMA}`.
+
+## See also
+- [[Catalog-and-Crawl]]
+- [[Concepts]] (names are never case-folded)
+- [[Scale-and-Cost]]
+- [[Extending-CatalogReader]]

@@ -1,5 +1,9 @@
 # Warehouse: Trino
 
+> The `trino` reader crawls every connector catalog from `<catalog>.information_schema` (Trino is federated: each catalog is a SchemaGuru catalog).
+> Trino exposes no constraints, row counts or sizes in metadata, so those stay unknown and joins come only from measured candidates.
+> Validated against a real Trino server in CI (service container).
+
 Dialect name: `trino` (extra: `pip install schemaguru[trino]`, driver `trino`).
 
 ## Metadata sources
@@ -31,3 +35,9 @@ Schemas, tables, views, column types, nullability, defaults, table comments and 
 - Type text is Trino's (`varchar(100)`, `timestamp(3) with time zone`, `array(varchar)`,
   `row(...)`, `map(...)`).
 - Tables are ordered and paged by name.
+
+## See also
+- [[Catalog-and-Crawl]]
+- [[Measurement]] (join candidates without declared keys)
+- [[Scale-and-Cost]]
+- [[Extending-CatalogReader]]

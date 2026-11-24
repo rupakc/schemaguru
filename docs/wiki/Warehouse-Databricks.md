@@ -1,6 +1,10 @@
-# Databricks (Unity Catalog)
+# Warehouse: Databricks (Unity Catalog)
 
-Reader: `databricks`. Three-level namespace: catalog.schema.table.
+> The `databricks` reader crawls every Unity Catalog catalog the principal can see from `system.information_schema` (three-level names: catalog.schema.table).
+> Queries run on a SQL warehouse and are metadata-only; Unity Catalog exposes no row counts or sizes, so those stay unknown.
+> Built from documented view shapes and tested against recorded fixtures; not yet validated against a live workspace.
+
+Reader: `databricks`. Three-level namespace: catalog.schema.table. Extra: `pip install "schemaguru[databricks]"` (`databricks-sql-connector`).
 
 ## Metadata sources
 `system.information_schema.{catalogs, schemata, tables, columns, table_constraints, key_column_usage, referential_constraints}`. One `system.information_schema` serves every catalog the principal can see, so one connection reads all of them. The `system` catalog and `information_schema` schemas are skipped.
@@ -18,3 +22,9 @@ Each query runs on the SQL warehouse (DBUs); they are metadata-only and short. N
 - PK/FK constraints are informational (`enforced=False`); foreign-key targets are resolved through `referential_constraints` and the key's `position_in_unique_constraint`.
 - Names are lower-case as stored; flexible names (hyphens) are kept verbatim.
 - Live test: `SCHEMAGURU_LIVE_DATABRICKS=1` with `SCHEMAGURU_DBX_{HOST,HTTP_PATH,TOKEN,CATALOG,SCHEMA}`.
+
+## See also
+- [[Catalog-and-Crawl]]
+- [[Scale-and-Cost]]
+- [[Concepts]]
+- [[Extending-CatalogReader]]

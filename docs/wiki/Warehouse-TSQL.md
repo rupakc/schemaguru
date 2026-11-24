@@ -1,5 +1,9 @@
 # Warehouse: SQL Server / Azure SQL / Synapse
 
+> The `tsql` reader crawls the connection's database from the `sys.*` catalog views, with comments from the `MS_Description` extended property.
+> Row counts come from `sys.partitions` without scanning data; Synapse's `NOT ENFORCED` keys are reported as not enforced.
+> Validated against a real SQL Server 2022 in CI (service container).
+
 Dialect name: `tsql` (extra: `pip install schemaguru[mssql]`, driver `pyodbc`; install the
 Microsoft ODBC Driver 18 for SQL Server).
 
@@ -34,3 +38,9 @@ counts for tables, defaults, primary keys, unique constraints and foreign keys.
   correctly.
 - A column or table name is returned exactly as stored; use `[ ]` quoting in SQL, the SchemaGuru
   canonical form uses double quotes.
+
+## See also
+- [[Catalog-and-Crawl]]
+- [[Feedback-and-Guard]] (why `[...]` in agent SQL can be refused)
+- [[Concepts]]
+- [[Extending-CatalogReader]]

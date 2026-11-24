@@ -1,6 +1,10 @@
-# Snowflake
+# Warehouse: Snowflake
 
-Reader: `snowflake`. Catalog = database, schema = schema. Identifiers are stored exactly as Snowflake returns them: upper-case unless created quoted (`"Order Items"`).
+> The `snowflake` reader crawls a database's schemas from `INFORMATION_SCHEMA` and takes keys from `SHOW ... KEYS` (catalog = database).
+> Its queries are metadata-only but run on a virtual warehouse, so they cost a little compute; identifiers are kept upper-case as Snowflake stores them.
+> Built from documented view shapes and tested against recorded fixtures; not yet validated against a live account.
+
+Reader: `snowflake`. Catalog = database, schema = schema. Identifiers are stored exactly as Snowflake returns them: upper-case unless created quoted (`"Order Items"`). Extra: `pip install "schemaguru[snowflake]"` (`snowflake-connector-python`).
 
 ## Metadata sources
 `<db>.INFORMATION_SCHEMA.SCHEMATA / TABLES / COLUMNS` (row count, bytes, `LAST_ALTERED`, clustering key, comments) and `SHOW PRIMARY KEYS`, `SHOW UNIQUE KEYS`, `SHOW IMPORTED KEYS` `IN SCHEMA "<db>"."<schema>"` for constraints.
@@ -18,3 +22,9 @@ A role with `USAGE` on the database and schemas and any privilege (`SELECT`, `RE
 - A clustering key that is an expression (`LINEAR(TO_DATE(TS))`) is left unknown; plain column lists become `clustering`.
 - `INFORMATION_SCHEMA.TABLES` shows only the current database (give the reader `database=` or set one on the session). Views report no row count.
 - Live test: `SCHEMAGURU_LIVE_SNOWFLAKE=1` with `SCHEMAGURU_SF_{ACCOUNT,USER,PASSWORD,WAREHOUSE,DATABASE,SCHEMA}`.
+
+## See also
+- [[Catalog-and-Crawl]]
+- [[Scale-and-Cost]]
+- [[Concepts]] (names are never case-folded)
+- [[Extending-CatalogReader]]

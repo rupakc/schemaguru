@@ -1,5 +1,9 @@
 # Warehouse: ClickHouse
 
+> The `clickhouse` reader crawls databases, tables and columns from ClickHouse's `system.*` tables (a database is a schema).
+> ClickHouse has no foreign keys and its primary key is a sort index, so no constraints are reported and none are inferred.
+> Validated against a real ClickHouse server in CI (service container).
+
 Dialect name: `clickhouse` (extra: `pip install schemaguru[clickhouse]`, driver
 `clickhouse-connect`).
 
@@ -32,3 +36,9 @@ modification time (`last_altered`, incremental listing supported).
   join.
 - Parameters are interpolated client-side by the driver (the DB-API `format` style); the reader
   still binds every value and builds no SQL from them.
+
+## See also
+- [[Catalog-and-Crawl]]
+- [[Measurement]] (keys are measured, not assumed)
+- [[Join-Graph]]
+- [[Extending-CatalogReader]]

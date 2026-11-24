@@ -1,5 +1,9 @@
 # Warehouse: MySQL / MariaDB
 
+> The `mysql` reader crawls MySQL and MariaDB schemas (databases) from `information_schema`, including comments, row estimates and enforced keys.
+> Statistics may be cached for up to a day on MySQL 8, so row counts and change times can lag; incremental listing is supported.
+> Validated against a real MySQL 8.4 server in CI (service container).
+
 Dialect name: `mysql` (extra: `pip install schemaguru[mysql]`, driver `pymysql`).
 
 ## Metadata sources
@@ -38,3 +42,9 @@ keys, unique keys and foreign keys (`enforced=True`; InnoDB enforces them). Incr
 - View column nullability is reported as unknown (`None`).
 - Tables are ordered and paged by binary name, so tables whose names differ only in case page
   correctly.
+
+## See also
+- [[Catalog-and-Crawl]]
+- [[Refresh-and-Drift]] (incremental refresh)
+- [[Scale-and-Cost]]
+- [[Extending-CatalogReader]]

@@ -42,7 +42,8 @@ class MetadataExecutor(Protocol):
 def check_metadata_sql(sql: str) -> None:
     """Refuse anything but one read-only metadata statement (SG104); mirrors FactLang's guard.
 
-    Judged under both backslash interpretations: a violation under either is a refusal.
+    Judged under several quote conventions (backslash, $tag$, triple quotes): a violation under
+    any one is a refusal. The shared scanner is conservative; shipped readers' SQL must pass.
     """
     for o in _METADATA_VARIANTS:
         _check_metadata(sql, o)

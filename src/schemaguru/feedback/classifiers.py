@@ -139,15 +139,25 @@ _IDENT = re.compile(r"[A-Za-z_][\w$]{0,127}\Z")
 
 
 def _valid_column(sql: str, column: str) -> bool:
-    """A column name is stored only if it is a plain identifier that the SQL itself uses as one
-    (a Postgres error can quote a double-quoted VALUE, which is user data, not a name)."""
+    """A column name is stored only if it is a plain identifier that the SQL itself uses as one:
+    unquoted, or quoted but not directly after a comparison operator (``= "jane"`` is a value
+    in Postgres-style error text, i.e. user data, not a name)."""
     if not _IDENT.match(column):
         return False
     want = column.casefold()
-    return any(
-        t.kind in ("ident", "qident") and t.text.strip('"`').casefold() == want
-        for t in tokenize(_view(sql))
-    )
+    toks = tokenize(_view(sql))
+    for i, t in enumerate(toks):
+        if t.kind not in ("ident", "qident") or t.text.strip('"`').casefold() != want:
+            continue
+        if t.kind == "ident":
+            return True
+        prev = toks[i - 1] if i else None
+        if prev is None or not (
+            (prev.kind == "punct" and prev.text in "=<>!")
+            or (prev.kind == "ident" and prev.text.upper() in ("LIKE", "ILIKE"))
+        ):
+            return True
+    return False
 
 
 def _attribute(sql: str, name: Sequence[str]) -> tuple[ObjectRef | None, str] | None:

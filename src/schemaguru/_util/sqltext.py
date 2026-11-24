@@ -1,16 +1,20 @@
 """Conservative SQL text helpers (layer 0): quote/comment-aware lexing, no parsing.
 
 Dialects disagree on comments (``--``, ``#``, ``//``, nested ``/* */``, MySQL's ``--`` needing a
-following space), on quotes (``$tag$``, triple quotes) and on backslash escapes. A lexer that
-guesses wrong can be made to hide a statement inside a "literal". Callers that make a safety
-decision therefore lex once per variant in :data:`GUARD_VARIANTS` and refuse if ANY variant shows
-a violation.
+following space, a lone ``\\r`` ending a line comment), on quotes (``$tag$``, triple quotes,
+``[ident]``) and on backslash escapes. A lexer that guesses wrong can be made to hide a statement
+inside a "literal". Safety callers use :func:`agreed_lex`: the baseline segmentation is accepted
+only if it equals the segmentation under EVERY single-option variant. If no single option changes
+the segmentation, none of its triggers occurs in code (a trigger that is already inside a string
+or comment cannot matter), so no combination of options can change it either; combinations are
+therefore covered without enumerating them.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
+from functools import lru_cache
 from typing import NamedTuple
 
 
@@ -25,20 +29,21 @@ class Opts:
     nested: bool = False  # nesting /* /* */ */
     dd_space: bool = False  # '--' is a comment only when followed by whitespace
     backslash: bool = False  # backslash escapes the next character inside a literal
+    cr: bool = False  # a lone '\r' ends a line comment
+    bracket: bool = False  # [ident] quoting
 
 
-_ALL = Opts(hash=True, slash=True, dollar=True, triple=True, nested=True, backslash=True)
-GUARD_VARIANTS: tuple[Opts, ...] = (
-    Opts(),
-    Opts(hash=True),
-    Opts(slash=True),
-    Opts(dollar=True),
-    Opts(triple=True),
-    Opts(nested=True),
-    Opts(dd_space=True),
-    Opts(backslash=True),
-    _ALL,
-    replace(_ALL, dd_space=True),
+# (variant, text that must occur for the variant to be able to differ from the baseline)
+_VARIANTS: tuple[tuple[Opts, tuple[str, ...]], ...] = (
+    (Opts(hash=True), ("#",)),
+    (Opts(slash=True), ("//",)),
+    (Opts(dd_space=True), ("--",)),
+    (Opts(cr=True), ("\r",)),
+    (Opts(dollar=True), ("$",)),
+    (Opts(triple=True), ("'''", '"""')),
+    (Opts(nested=True), ("/*",)),
+    (Opts(backslash=True), ("\\",)),
+    (Opts(bracket=True), ("[",)),
 )
 
 _DOLLAR = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
@@ -51,13 +56,48 @@ class Lexed(NamedTuple):
     bang: bool  # a '/*!' conditional comment was seen
 
 
+@lru_cache(maxsize=64)
+def _special(o: Opts) -> re.Pattern[str]:
+    chars = set(o.quotes)
+    if o.comments:
+        chars |= {"-", "/"}
+        if o.hash:
+            chars.add("#")
+    if o.dollar:
+        chars.add("$")
+    if o.bracket:
+        chars.add("[")
+    return re.compile("[" + re.escape("".join(sorted(chars))) + "]")
+
+
+def _line_end(sql: str, i: int, cr: bool) -> int:
+    n = len(sql)
+    j = sql.find("\n", i)
+    j = n if j < 0 else j
+    if cr:
+        k = sql.find("\r", i, j)
+        while k >= 0 and sql[k + 1 : k + 2] == "\n":
+            k = sql.find("\r", k + 1, j)
+        if k >= 0:
+            j = k
+    return j
+
+
 def lex(sql: str, o: Opts) -> Lexed:
     out: list[str] = []
     n = len(sql)
     i = 0
     terminated = True
     bang = False
+    special = _special(o)
     while i < n:
+        m0 = special.search(sql, i)
+        if m0 is None:
+            out.append("c" * (n - i))
+            break
+        if m0.start() > i:
+            out.append("c" * (m0.start() - i))
+            i = m0.start()
         ch = sql[i]
         if o.comments and (
             (
@@ -68,8 +108,7 @@ def lex(sql: str, o: Opts) -> Lexed:
             or (ch == "#" and o.hash)
             or (ch == "/" and o.slash and sql.startswith("//", i))
         ):
-            j = sql.find("\n", i)
-            j = n if j < 0 else j
+            j = _line_end(sql, i, o.cr)
             out.append("m" * (j - i))
             i = j
         elif o.comments and ch == "/" and sql.startswith("/*", i):
@@ -77,14 +116,20 @@ def lex(sql: str, o: Opts) -> Lexed:
                 bang = True
             depth, j = 1, i + 2
             while j < n and depth:
-                if o.nested and sql.startswith("/*", j):
-                    depth += 1
-                    j += 2
-                elif sql.startswith("*/", j):
-                    depth -= 1
-                    j += 2
+                if o.nested:
+                    k = min(
+                        (x for x in (sql.find("/*", j), sql.find("*/", j)) if x >= 0), default=-1
+                    )
                 else:
-                    j += 1
+                    k = sql.find("*/", j)
+                if k < 0:
+                    j = n
+                    break
+                if sql.startswith("/*", k) and o.nested:
+                    depth += 1
+                else:
+                    depth -= 1
+                j = k + 2
             if depth:
                 terminated = False
             out.append("m" * (j - i))
@@ -104,6 +149,26 @@ def lex(sql: str, o: Opts) -> Lexed:
             else:
                 out.append("D" * len(tag) + "q" * (k - m.end()) + "D" * len(tag))
                 i = k + len(tag)
+        elif ch == "[" and o.bracket:
+            j = i + 1
+            closed = False
+            while True:
+                k = sql.find("]", j)
+                if k < 0:
+                    break
+                if sql.startswith("]]", k):
+                    j = k + 2
+                    continue
+                closed = True
+                j = k
+                break
+            if closed:
+                out.append("d" + "i" * (j - i - 1) + "d")
+                i = j + 1
+            else:
+                terminated = False
+                out.append("d" + "i" * (n - i - 1))
+                i = n
         elif ch in o.quotes:
             if o.triple and ch in "'\"" and sql.startswith(ch * 3, i):
                 j = i + 3
@@ -121,18 +186,31 @@ def lex(sql: str, o: Opts) -> Lexed:
             kind = "i" if ch in '"`' else "q"
             j = i + 1
             closed = False
-            while j < n:
-                c = sql[j]
-                if o.backslash and c == "\\" and j + 1 < n:
-                    j += 2
-                elif c == ch:
-                    if j + 1 < n and sql[j + 1] == ch:
+            if o.backslash:
+                while j < n:
+                    c = sql[j]
+                    if c == "\\" and j + 1 < n:
                         j += 2
+                    elif c == ch:
+                        if j + 1 < n and sql[j + 1] == ch:
+                            j += 2
+                        else:
+                            closed = True
+                            break
                     else:
-                        closed = True
+                        j += 1
+            else:
+                while True:
+                    k = sql.find(ch, j)
+                    if k < 0:
+                        j = n
                         break
-                else:
-                    j += 1
+                    if sql.startswith(ch, k + 1):
+                        j = k + 2
+                        continue
+                    closed = True
+                    j = k
+                    break
             j = min(j, n)
             out.append("d" + kind * (j - i - 1))
             if closed:
@@ -145,6 +223,20 @@ def lex(sql: str, o: Opts) -> Lexed:
             out.append("c")
             i += 1
     return Lexed("".join(out), terminated, bang)
+
+
+def agreed_lex(sql: str) -> tuple[Lexed, bool]:
+    """Baseline segmentation and whether every single-option variant agrees with it.
+
+    A variant whose trigger text does not occur in ``sql`` cannot differ, so it is skipped.
+    """
+    base = lex(sql, Opts())
+    agreed = True
+    for o, triggers in _VARIANTS:
+        if any(t in sql for t in triggers) and lex(sql, o) != base:
+            agreed = False
+            break
+    return base, agreed
 
 
 def scan(sql: str, o: Opts | None = None, *, backslash: bool = False) -> list[tuple[str, bool]]:
@@ -160,10 +252,12 @@ class Blanked(NamedTuple):
     bang: bool
 
 
-def blank(sql: str, o: Opts | None = None, *, keep_idents: bool = True) -> Blanked:
+def blank(
+    sql: str, o: Opts | None = None, *, keep_idents: bool = True, lexed: Lexed | None = None
+) -> Blanked:
     """Same-length view: comments and string content become spaces (newlines kept) so offsets
     match ``sql``; ``"``/backtick identifier content is kept unless ``keep_idents`` is False."""
-    lx = lex(sql, o if o is not None else Opts())
+    lx = lexed if lexed is not None else lex(sql, o if o is not None else Opts())
     out: list[str] = []
     for c, t in zip(sql, lx.kinds, strict=True):
         if t == "c" or t == "d" or (t == "i" and keep_idents):

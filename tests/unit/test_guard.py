@@ -67,8 +67,8 @@ def test_guard_never_query_table() -> None:
     v = check_sql('SELECT * FROM "shop"."payments"', never_query=nq)
     assert not v.ok and v.reasons[0].startswith("SG802")
     assert check_sql("SELECT * FROM shop.orders", never_query=nq).ok
-    # a literal mentioning the table is not a reference
-    assert check_sql("SELECT 'FROM shop.payments' FROM shop.orders", never_query=nq).ok
+    # a literal naming the table is refused: dynamic SQL is built from strings
+    assert not check_sql("SELECT 'FROM shop.payments' FROM shop.orders", never_query=nq).ok
     # quoted names are case-folded for ban decisions
     assert not check_sql('SELECT * FROM shop."PAYMENTS"', never_query=nq).ok
     assert not check_sql('SELECT * FROM "PAYMENTS"', never_query=nq).ok
@@ -126,3 +126,74 @@ def test_guard_never_query_negative_control() -> None:
     assert check_sql(
         "SELECT * FROM proj.analytics.orders o JOIN customers c ON 1=1", never_query=NQ
     ).ok
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 1 -- x\r; DROP TABLE t",
+        "SELECT 1 --\r; DROP TABLE t",
+        "SELECT /* /* */ \" */ length($$'$$) # 1; DROP TABLE t; --' --\"",
+        "SELECT 1 AS [']; DROP TABLE t; --']",
+        'SELECT * FROM U&"\\0073ecret"',
+        "SELECT * FROM U&'\\0073ecret'",
+        "SELECT * FROM `analytics.\\x73ecret`",
+        "SELECT query_to_xml('select * from analytics.sec'||'ret', true, true, '')",
+        "SELECT table_to_xml('analytics.secret'::regclass, true, true, '')",
+        "SELECT * FROM query_table('secret')",
+        "SELECT * FROM IDENTIFIER($tbl)",
+        "SELECT * FROM dblink('x', 'select 1') AS t(a int)",
+        "SELECT * FROM openquery(srv, 'select 1')",
+    ],
+)
+def test_guard_round2_bypasses_rejected(sql: str) -> None:
+    v = check_sql(sql, never_query=NQ)
+    assert not v.ok and v.reasons
+    assert not check_sql(sql).ok or "secret" in sql or "analytics" in sql  # generic-only control
+
+
+def test_guard_ambiguous_reason() -> None:
+    v = check_sql("SELECT 1 -- x\r; DROP TABLE t")
+    assert v.reasons == ("SG801: ambiguous across SQL dialects",)
+
+
+def test_guard_crlf_comment_still_passes() -> None:
+    assert check_sql("SELECT 1 -- note\r\nFROM t\r\n").ok
+
+
+REALISTIC = [
+    "WITH recent AS (SELECT id, created_at FROM orders WHERE created_at > '2026-01-01') "
+    "SELECT * FROM recent",
+    "SELECT id, SUM(total) OVER (PARTITION BY customer_id ORDER BY created_at) FROM orders",
+    "SELECT CASE WHEN total > 100 THEN 'big' ELSE 'small' END AS size FROM orders",
+    "SELECT payload, '$.items[0].sku' AS path FROM events",
+    "SELECT * FROM events WHERE name ~ r'#\\d+'",
+    "SELECT * FROM users WHERE note LIKE '%--%'",
+    "SELECT * FROM users WHERE note LIKE '%#%'",
+    "SELECT * FROM users WHERE note LIKE '%//%'",
+    "SELECT * FROM users WHERE note LIKE '50!%' ESCAPE '!'",
+    "SELECT /* the daily revenue */ SUM(total) FROM orders -- trailing note\n",
+    "SELECT * FROM orders WHERE id = $1",
+    "SELECT * FROM secret_santa_events",
+    "SELECT secret_count FROM sessions",
+]
+
+
+@pytest.mark.parametrize("sql", REALISTIC)
+def test_guard_realistic_queries_pass(sql: str) -> None:
+    v = check_sql(sql, never_query=[ObjectRef(None, "analytics", "secret")])
+    assert v.ok, v.reasons
+
+
+def test_guard_performance_at_cap() -> None:
+    import time
+
+    unit = "SELECT a, b FROM t1 WHERE c = 'x''y' /* c */ -- n\n"
+    sql = (unit * (100_000 // len(unit)))[:99_000]
+    nq = [ObjectRef(None, "s", f"banned_{i}") for i in range(50)]
+    best = 9.0
+    for _ in range(3):
+        t0 = time.perf_counter()
+        check_sql(sql, never_query=nq)
+        best = min(best, time.perf_counter() - t0)
+    assert best < 0.5

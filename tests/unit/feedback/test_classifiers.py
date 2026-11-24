@@ -113,3 +113,12 @@ def test_unknown_column_refuses_quoted_values_and_odd_names() -> None:
     assert run("SELECT ghost FROM customers", 'column "ghost" does not exist') == [
         FeedbackRecord(cust, "ghost", "unknown_column")
     ]
+
+
+def test_double_quoted_comparison_value_is_not_a_column() -> None:
+    sql = 'SELECT * FROM customers WHERE name = "jane"'
+    assert run(sql, 'column "jane" does not exist') == []
+    ok = 'SELECT "jane" FROM customers'  # quoted, but not in value position
+    assert run(ok, 'column "jane" does not exist') == [
+        FeedbackRecord(ObjectRef(None, None, "customers"), "jane", "unknown_column")
+    ]

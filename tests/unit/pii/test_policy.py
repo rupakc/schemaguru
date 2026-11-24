@@ -64,3 +64,33 @@ def test_bare_name_glob_does_not_widen_raw() -> None:
     # a glob with a dot never matches the bare table name
     assert mode("shop.customers", SamplingConfig(per_glob={"x.customers": "raw"})) == "masked"
     assert mode("shop.customers", SamplingConfig(per_glob={"customers": "raw"})) == "raw"
+
+
+def test_unrelated_globs_never_widen_access() -> None:
+    cfg = SamplingConfig(per_glob={"shop.??": "none", "shop.*s": "raw"})
+    assert mode("shop.os", cfg) == "none"
+    cfg = SamplingConfig(per_glob={"shop.??": "raw", "shop.*s": "none"})
+    assert mode("shop.os", cfg) == "none"
+
+
+def test_glob_containment_is_real() -> None:
+    from schemaguru.pii.policy import _contains
+
+    assert _contains("shop.cust*", "shop.*")
+    assert not _contains("shop.*", "shop.cust*")
+    assert _contains("shop.??", "shop.*")
+    assert not _contains("shop.??", "shop.*s")
+    assert not _contains("shop.*s", "shop.??")
+    assert _contains("shop.o*s*", "shop.o*")
+    assert _contains("shop.[ab]*", "shop.*")
+    assert not _contains("shop.*", "shop.[ab]*")
+    assert _contains("my-tbl", "my-*")
+    assert _contains("a*b", "a*")
+    assert not _contains("*a", "a*")
+
+
+def test_class_and_nested_narrowing() -> None:
+    cfg = SamplingConfig(per_glob={"shop.*": "raw", "shop.[co]*": "masked", "shop.orders": "none"})
+    assert mode("shop.orders", cfg) == "none"
+    assert mode("shop.customers", cfg) == "masked"
+    assert mode("shop.items", cfg) == "raw"

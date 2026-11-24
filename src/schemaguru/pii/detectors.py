@@ -216,6 +216,11 @@ def _secret(v: str) -> bool:
     return shannon(v) >= 4.0
 
 
+def secret_like(value: str) -> bool:
+    """Whole-value secret shape (JWT or high-entropy token); see the ``secret`` detector."""
+    return _secret(value.strip())
+
+
 def _address(v: str) -> bool:
     if len(v) > 120 or len(v) < 5:
         return False

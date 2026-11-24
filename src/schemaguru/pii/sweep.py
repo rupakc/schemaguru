@@ -29,22 +29,35 @@ _KV = re.compile(
     r"(?P<sep>[ \t]{0,3}[:=][ \t]{0,3}|[ \t]{1,3})(?P<val>\S{8,})",
     re.I,
 )
-_KEY_ONLY_SPACE = ("bearer", "authorization")
 _PROVIDER_KEY = re.compile(r"\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}")
+
+
+_KNOWN_PREFIX = re.compile(r"(?:sk|pk|rk)_(?:live|test)_|gh[pousr]_|AKIA[0-9A-Z]|xox[abprs]-|eyJ")
+
+
+def _token_like(value: str) -> bool:
+    """A value that looks like a credential, not an identifier or a word.
+
+    Known provider prefix, or 16+ chars mixing letters and digits, or a high-entropy secret
+    (the whole-value secret detector). ``customer_id``, ``required_header`` and ``SKU-1234``
+    are not.
+    """
+    v = value.strip("\"'`.,;)]}")
+    if _KNOWN_PREFIX.match(v):
+        return True
+    if len(v) >= 16 and any(c.isdigit() for c in v) and any(c.isalpha() for c in v):
+        return True
+    return d.secret_like(v)
 
 
 def _kv_ok(text: str) -> bool:
     m = _KV.fullmatch(text)
     if m is None or m["val"].startswith("<"):
         return False
-    if "=" not in m["sep"] and ":" not in m["sep"]:
-        # a plain space is only a secret delimiter for bearer/authorization or a token-like value
-        v = m["val"]
-        if m["key"].lower() not in _KEY_ONLY_SPACE and not (
-            len(v) >= 16 and any(c.isdigit() for c in v) and any(c.isalpha() for c in v)
-        ):
-            return False
-    return True
+    v = m["val"].strip("\"'`.,;)]}")
+    if m["key"].lower() in ("password", "passwd") and any(c.isdigit() for c in v):
+        return any(c.isalpha() for c in v)  # a password with digits and letters, any length
+    return _token_like(m["val"])
 
 
 def _kv_sub(text: str) -> str:

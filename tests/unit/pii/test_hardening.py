@@ -210,3 +210,41 @@ def test_previous_behaviours_survive() -> None:
         "https://example.com/x/1",
     ]:
         assert mask_value(v) == (v, None), v
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "primary key: customer_id",
+        "foreign key: order_id references orders(id)",
+        "partition key: event_date",
+        "sort key = created_at",
+        "key=customer_id",
+        "token: refreshing",
+        "secret: required",
+        "authorization: required_header",
+        "Lookup key: SKU-1234",
+        "password: required_field_here",
+        "uses bearer authentication",
+        "token=refresh_required",
+    ],
+)
+def test_kv_rule_leaves_schema_prose(prose: str) -> None:
+    assert sweep(prose) == (prose, 0)
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "api_key=Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5aa",
+        "key=sk_test_Zx9Qm2Lp8Rt4Vb7Nc1",
+        "Bearer Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5aa",
+        "token: ghp_Zx9Qm2Lp8Rt4Vb7Nc1Kd6",
+        "secret=AKIAZx9Qm2Lp8Rt4Vb7",
+        "password: hunter2hunter2",
+        "api-key: wJalrXUtnFEMIK7MDENGbPxRfiCY",
+    ],
+)
+def test_kv_rule_still_masks_credentials(secret: str) -> None:
+    out, n = sweep(secret)
+    assert n >= 1 and "<secret>" in out and "Zx9" not in out and "hunter2" not in out, out

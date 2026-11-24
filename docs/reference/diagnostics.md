@@ -34,6 +34,7 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG503 | filter text was checked for syntax only: FactLang lacks parse_filter |
 | SG504 | a context view exceeds its token budget: the always-on blocks do not fit |
 | SG505 | info: how many values or text spans the value policy masked in a view |
+| SG506 | a filter names a column matching several catalog columns that differ only in case: left unquoted |
 | SG601 | a malformed join fact was skipped; only that graph edge is lost |
 | SG602 | a waypoint rule is malformed; the searches it governs are refused |
 | SG603 | a waypoint rule has more than 16 requirements; its searches are refused |

@@ -22,44 +22,55 @@ from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays.schema import check_filter_syntax
 from schemaguru.render.table_block import path_aliases, qname
 
-_PLAIN = re.compile(r"[a-z_][a-z0-9_]*")
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+# FactLang's filter keywords, matched as it lexes them (upper case): never a column reference
+FILTER_KEYWORDS = frozenset(
+    {"AND", "OR", "NOT", "IN", "IS", "NULL", "BETWEEN", "TRUE", "FALSE", "DATE", "TIMESTAMP"}
+)
 
 
-def quote_catalog_names(text: str, columns: Iterable[str]) -> str:
-    """``text`` (FactLang filter source) with each bare identifier that names a catalog column
-    needing quotes (mixed/upper case, special characters) written quoted, exactly as the catalog
-    returns it: ``isDeleted IS NULL`` -> ``"isDeleted" IS NULL``. An unquoted name would be
-    case-folded by the warehouse (Postgres: ``isdeleted``). Literals, already-quoted names and
-    qualified parts (after a ``.``) are left alone; a case-insensitive match must be unique."""
+def quote_catalog_names(text: str, columns: Iterable[str]) -> tuple[str, list[str]]:
+    """``text`` (FactLang filter source) with every bare column reference that has a UNIQUE
+    catalog match written quoted in the catalog's exact case, on every dialect, plus the
+    identifiers left unquoted because their match was ambiguous.
+
+    Unquoted, a name is case-folded by the warehouse (Postgres to lower, Snowflake/Oracle to
+    upper), so ``is_deleted`` would become ``IS_DELETED`` on Snowflake: invalid, or another
+    column. An exact-case match wins; else a unique case-insensitive one; several that differ
+    only in case (``IsDeleted``/``ISDELETED``) are ambiguous and left alone. FactLang keywords
+    (as it lexes them, upper case) are never quoted, literals and quoted names never touched, and
+    in ``t.isDeleted`` only the column part (after the ``.``) is a candidate."""
     by_fold: dict[str, list[str]] = {}
     for name in columns:
         by_fold.setdefault(name.lower(), []).append(name)
     chars = scan(text)
     out: list[str] = []
+    ambiguous: list[str] = []
     i = 0
     while i < len(text):
         ch, lit = chars[i]
         m = None if lit else _IDENT.match(text, i)
-        if m is None or (i > 0 and (text[i - 1] == "." or _IDENT.match(text[i - 1]))):
+        if m is None or (i > 0 and _IDENT.match(text[i - 1]) is not None):
             out.append(ch)
             i += 1
             continue
-        word = m.group(0)
-        end = m.end()
-        if any(lit for _, lit in chars[i:end]):  # touches a literal: never rewritten
-            out.append(ch)
-            i += 1
+        word, end = m.group(0), m.end()
+        qualifier = end < len(text) and text[end] == "."  # ``t`` in ``t.col``: not a column
+        if qualifier or word in FILTER_KEYWORDS or any(lit for _, lit in chars[i:end]):
+            out.append(word)
+            i = end
             continue
-        names = [n for n in by_fold.get(word.lower(), []) if n == word] or by_fold.get(
-            word.lower(), []
-        )
-        if len(names) == 1 and not _PLAIN.fullmatch(names[0]):
+        matches = by_fold.get(word.lower(), [])
+        exact = [n for n in matches if n == word]
+        names = exact or matches
+        if len(names) == 1:
             out.append('"' + names[0].replace('"', '""') + '"')
         else:
+            if len(names) > 1:
+                ambiguous.append(word)
             out.append(word)
         i = end
-    return "".join(out)
+    return "".join(out), ambiguous
 
 
 def _capable(name: str) -> bool:
@@ -155,7 +166,18 @@ def render_join_snippet(
                     cols = catalog.columns(fl_table) or {}
                 except Exception:  # unknown table: FactLang reports what it could not check
                     cols = {}
-                text = quote_catalog_names(text, cols)
+                text, ambiguous = quote_catalog_names(text, cols)
+                if ambiguous and bag is not None:
+                    bag.add(
+                        Diagnostic(
+                            "SG506",
+                            Severity.WARNING,
+                            f"live-rows filter for {qname(ref)} names "
+                            f"{', '.join(sorted(set(ambiguous)))}, which matches several catalog "
+                            "columns differing only in case: left unquoted; quote it in the "
+                            "overlay",
+                        )
+                    )
                 expr, diags = parse(text, table=fl_table, catalog=catalog)
             else:
                 expr, diags = parse(text, table=fl_table)

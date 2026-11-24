@@ -199,16 +199,67 @@ def test_only_checked_live_rows_filters_reach_sql(tmp_path: Path, fake_factlang:
 
 def test_quote_catalog_names() -> None:
     cols = ["id", "isDeleted", "STATUS", "plain_col"]
-    q = fragments.quote_catalog_names
-    assert q("isDeleted IS NULL OR NOT isDeleted", cols) == '"isDeleted" IS NULL OR NOT "isDeleted"'
-    assert q("isdeleted = TRUE", cols) == '"isDeleted" = TRUE'  # unique case-insensitive match
-    assert q("status = 'isDeleted'", cols) == "\"STATUS\" = 'isDeleted'"  # literals untouched
-    assert (
-        q('"isDeleted" IS NULL AND plain_col > 0', cols) == '"isDeleted" IS NULL AND plain_col > 0'
+
+    def q(text: str, columns: list[str] = cols) -> str:
+        out, ambiguous = fragments.quote_catalog_names(text, columns)
+        assert ambiguous == []
+        return out
+
+    assert q("isDeleted IS NULL OR NOT isDeleted") == '"isDeleted" IS NULL OR NOT "isDeleted"'
+    assert q("isdeleted = TRUE") == '"isDeleted" = TRUE'  # unique case-insensitive match
+    assert q("status = 'isDeleted'") == "\"STATUS\" = 'isDeleted'"  # literals untouched
+    # every unique match is quoted, lower case too: Snowflake/Oracle fold a bare name upward
+    assert q("plain_col > 0") == '"plain_col" > 0'
+    already = '"isDeleted" IS NULL'
+    assert q(already) == already
+    assert q("t.isDeleted IS NULL") == 't."isDeleted" IS NULL'  # qualified: the column part
+    assert q("isDeletedX IS NULL") == "isDeletedX IS NULL"  # whole identifiers only, no match
+
+
+def test_quote_snowflake_lower_case_column() -> None:
+    """A column stored lower case (created quoted, e.g. by dbt) on Snowflake: bare it would fold
+    to ``IS_DELETED``; it is written quoted in its exact case."""
+    out, amb = fragments.quote_catalog_names("is_deleted IS NULL", ["ID", "is_deleted"])
+    assert out == '"is_deleted" IS NULL' and amb == []
+
+
+def test_quote_twin_columns_exact_case_wins_else_ambiguous() -> None:
+    twins = ["is_deleted", "IS_DELETED"]
+    assert fragments.quote_catalog_names("is_deleted = TRUE", twins) == ('"is_deleted" = TRUE', [])
+    assert fragments.quote_catalog_names("IS_DELETED = TRUE", twins) == ('"IS_DELETED" = TRUE', [])
+    # neither exact: ambiguous, left unquoted and reported
+    assert fragments.quote_catalog_names("Is_Deleted = TRUE", twins) == (
+        "Is_Deleted = TRUE",
+        ["Is_Deleted"],
     )
-    assert q("t.isDeleted IS NULL", cols) == "t.isDeleted IS NULL"  # qualified part: left alone
-    assert q("isDeletedX IS NULL", cols) == "isDeletedX IS NULL"  # whole identifiers only
-    assert q("a IS NULL", ["A", "a"]) == "a IS NULL"  # exact name wins, and it is plain
+
+
+def test_quote_never_captures_keywords() -> None:
+    cols = ["DATE", "NULL", "created_at", "TRUE"]
+    out, amb = fragments.quote_catalog_names(
+        "created_at > DATE '2024-01-01' AND created_at IS NOT NULL OR flag = TRUE", cols
+    )
+    assert out == '"created_at" > DATE \'2024-01-01\' AND "created_at" IS NOT NULL OR flag = TRUE'
+    assert amb == []
+
+
+def test_filter_keywords_match_factlang() -> None:
+    parser = pytest.importorskip("factlang.syntax.parser")
+    assert (
+        getattr(parser, "_FILTER_KEYWORDS", fragments.FILTER_KEYWORDS) == fragments.FILTER_KEYWORDS
+    )
+
+
+def test_ambiguous_filter_column_is_reported(store: SQLiteStore, fake_factlang: dict) -> None:  # type: ignore[type-arg]
+    class Cat:
+        def columns(self, ref: object) -> dict[str, str]:
+            return {"IsDeleted": "boolean", "ISDELETED": "boolean", "customer_id": "integer"}
+
+    bag = DiagnosticBag()
+    soft = {t("orders"): "isdeleted IS NULL"}
+    assert fragments.render_join_snippet(a_path(store), "snowflake", soft, bag=bag, catalog=Cat())
+    (d,) = [d for d in bag if d.code == "SG506"]
+    assert d.severity is Severity.WARNING and "isdeleted" in d.message
 
 
 @pytest.mark.factlang

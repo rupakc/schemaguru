@@ -60,7 +60,7 @@ parameters for every value; the metadata SQL is the only SQL SchemaGuru writes.
 | ClickHouse | `system.tables`, `system.columns` (no foreign keys) | real engine, CI |
 | SQL Server / Synapse | `sys.*` views, `MS_Description` comments | real engine, CI |
 | Trino | `<catalog>.information_schema.*` (constraints usually absent) | real engine, CI |
-| BigQuery | `region-*.INFORMATION_SCHEMA.*` (billed: counted against `Budget.crawl_bytes`) | recorded metadata only |
+| BigQuery | `region-*.INFORMATION_SCHEMA.*` (billed: reported against `Budget.crawl_bytes`) | recorded metadata only |
 | Snowflake | `<db>.INFORMATION_SCHEMA.*`, `SHOW … KEYS` | recorded metadata only |
 | Redshift | `SVV_*` views, `pg_constraint` | recorded metadata only |
 | Databricks | Unity Catalog `system.information_schema.*` | recorded metadata only |

@@ -17,6 +17,11 @@ warehouse driver, LLM provider and agent framework is an optional extra (see the
 [install matrix](index.md#install)). Until FactLang 0.1.0 is on PyPI, install it from git
 first: `pip install "factlang @ git+https://github.com/rupakc/factlang@main"`.
 
+`schemaguru doctor` checks the installation. When the installed FactLang lacks a capability
+SchemaGuru uses (measurement, cost estimates, sampling, composite joins, metadata SQL), its
+`factlang` row is a `WARN` naming the missing ones; WARN rows do not fail the command (exit 0),
+only a FAIL does (exit 3).
+
 ## Connect
 
 ```python

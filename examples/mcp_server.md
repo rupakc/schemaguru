@@ -1,7 +1,8 @@
 # SchemaGuru as an MCP server
 
 `schemaguru mcp` serves the agent tools (`schema_context`, `search_tables`, `describe_table`,
-`find_join_path`, `column_values`, `explain_term`, and `check_fact` when FactLang offers it)
+`find_join_path`, `column_values`, `explain_term`, and `check_fact` when FactLang offers it and
+`agent_checks: allow`)
 plus one resource per table, `schema://tables/{ref}`, over **stdio**. Any MCP client can use
 it: desktop assistants, IDE agents, or your own client built on the `mcp` SDK.
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import typing
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -153,6 +154,7 @@ T = TypeVar("T")
 
 def _build(cls: type[T], d: Mapping[str, Any], path: str) -> T:
     fields = {f.name: f for f in dataclasses.fields(cls)}  # type: ignore[arg-type]
+    hints = typing.get_type_hints(cls)
     kwargs: dict[str, Any] = {}
     for key, value in d.items():
         if key not in fields:
@@ -162,11 +164,58 @@ def _build(cls: type[T], d: Mapping[str, Any], path: str) -> T:
             if not isinstance(value, Mapping):
                 raise ConfigError(f"{path}{key}: expected a mapping")
             kwargs[key] = _build(sub, value, f"{path}{key}.")
-        elif key in _TUPLE_FIELDS and isinstance(value, list | tuple):
-            kwargs[key] = tuple(value)
         else:
-            kwargs[key] = value
+            kwargs[key] = _coerce(f"{path}{key}", value, hints.get(key))
     return cls(**kwargs)
+
+
+def _coerce(name: str, value: Any, hint: Any) -> Any:
+    """``value`` as the field's declared type; text (from the environment) is parsed.
+
+    Tuple fields take a list or a comma-separated string; int/float/bool fields take text
+    (``"7"``, ``"0.5"``, ``"true"``) and reject anything else with ``ConfigError``. An optional
+    field reads ``none``/``null``/empty text as ``None``. Other types pass through unchanged.
+    """
+    args = typing.get_args(hint)
+    optional = type(None) in args
+    if optional and (
+        value is None or (isinstance(value, str) and value.strip().lower() in ("", "none", "null"))
+    ):
+        return None
+    base = next((a for a in args if a is not type(None)), hint) if optional else hint
+    if base is tuple or typing.get_origin(base) is tuple:
+        if isinstance(value, str):
+            return tuple(p.strip() for p in value.split(",") if p.strip())
+        if isinstance(value, list | tuple):
+            return tuple(value)
+        if value is None:
+            return ()
+        raise ConfigError(f"{name}: expected a list or comma-separated text, got {value!r}")
+    if base is bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.strip().lower() in ("true", "false", "yes", "no"):
+            return value.strip().lower() in ("true", "yes")
+        raise ConfigError(f"{name}: expected true or false, got {value!r}")
+    if base is int:
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value.strip().replace("_", ""))
+            except ValueError:
+                pass
+        raise ConfigError(f"{name}: expected an integer, got {value!r}")
+    if base is float:
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value.strip())
+            except ValueError:
+                pass
+        raise ConfigError(f"{name}: expected a number, got {value!r}")
+    return value
 
 
 _SECTIONS: dict[tuple[str, str], type] = {
@@ -176,4 +225,3 @@ _SECTIONS: dict[tuple[str, str], type] = {
     ("Config", "scope"): ScopeConfig,
     ("Config", "crawl"): CrawlConfig,
 }
-_TUPLE_FIELDS = {"include", "exclude"}

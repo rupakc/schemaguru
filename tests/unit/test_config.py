@@ -67,3 +67,40 @@ def test_budget_period() -> None:
     assert Budget().period_s == 86400.0
     assert Config.from_mapping({"budget": {"period_s": None}}).budget.period_s is None
     assert Config.from_mapping({"budget": {"period_s": 3600}}).budget.period_s == 3600
+
+
+def test_from_env_coerces_tuple_and_scalar_fields() -> None:
+    env = {
+        "SCHEMAGURU_CRAWL__INCLUDE": "shop.*, sales.*",
+        "SCHEMAGURU_CRAWL__EXCLUDE": "",
+        "SCHEMAGURU_CRAWL__TIMEOUT_S": "5",
+        "SCHEMAGURU_SCOPE__SEED_K": "9",
+        "SCHEMAGURU_BUDGET__MAX_PROBES": "none",
+        "SCHEMAGURU_GRAPH__INCLUDE_UNMEASURED": "yes",
+        "SCHEMAGURU_SAMPLING__STORE_RAW_SAMPLES": "false",
+    }
+    c = Config.from_env(environ=env)
+    assert c.crawl.include == ("shop.*", "sales.*")
+    assert c.crawl.exclude == ()
+    assert c.crawl.timeout_s == 5.0 and isinstance(c.crawl.timeout_s, float)
+    assert c.scope.seed_k == 9 and c.budget.max_probes is None
+    assert c.graph.include_unmeasured is True and c.sampling.store_raw_samples is False
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "SCHEMAGURU_SCOPE__SEED_K",
+        "SCHEMAGURU_CRAWL__TIMEOUT_S",
+        "SCHEMAGURU_GRAPH__INCLUDE_UNMEASURED",
+        "SCHEMAGURU_BUDGET__MAX_PROBES",
+    ],
+)
+def test_from_env_bad_value_is_config_error(key: str) -> None:
+    with pytest.raises(ConfigError, match="expected"):
+        Config.from_env(environ={key: "banana"})
+
+
+def test_from_mapping_tuple_rejects_a_scalar_number() -> None:
+    with pytest.raises(ConfigError):
+        Config.from_mapping({"crawl": {"include": 5}})

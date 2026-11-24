@@ -110,9 +110,28 @@ def test_crawl_include_exclude(run: Run, url: str, store: str) -> None:
     assert code == 0 and jloads(out)["tables_seen"] == 1
 
 
-def test_measure_without_a_backend_exits_3(run: Run, crawled: str, url: str) -> None:
+def test_measure_without_a_backend_exits_3(
+    run: Run, crawled: str, url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from schemaguru.measure import flbridge
+
+    real = flbridge.capabilities
+    monkeypatch.setattr(flbridge, "capabilities", lambda: real() - {"measure"})  # no Checker
     code, _, err = run("measure", "shop.orders", "--url", url, "--store", crawled)
     assert code == 3 and "SG304" in err
+
+
+@pytest.mark.factlang
+def test_measure_through_real_factlang(run: Run, crawled: str, url: str) -> None:
+    from schemaguru.measure import flbridge
+
+    if "measure" not in flbridge.capabilities():
+        pytest.skip("factlang capability measure not yet available")
+    code, out, err = run(
+        "measure", "shop.orders", "--url", url, "--store", crawled, "--format", "json"
+    )
+    assert code == 0, err
+    assert "shop.orders" in out
 
 
 def test_measure_with_a_backend(run: Run, crawled: str, url: str, fake_backend: Any) -> None:
@@ -322,10 +341,27 @@ def test_refresh_exit_code_is_the_reports(
     assert "exit code" in text
 
 
-def test_refresh_without_a_backend_exits_3(run: Run, crawled: str, url: str) -> None:
+def test_refresh_without_a_backend_exits_3(
+    run: Run, crawled: str, url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from schemaguru.measure import flbridge
+
+    real = flbridge.capabilities
+    monkeypatch.setattr(flbridge, "capabilities", lambda: real() - {"measure"})  # no Checker
     code, _, _ = run("refresh", "--url", url, "--store", crawled, "--format", "json")
     assert code == 3
     assert run("refresh", "--store", crawled)[0] == 2  # needs a warehouse
+
+
+@pytest.mark.factlang
+def test_refresh_through_real_factlang(run: Run, crawled: str, url: str) -> None:
+    from schemaguru.measure import flbridge
+
+    if "measure" not in flbridge.capabilities():
+        pytest.skip("factlang capability measure not yet available")
+    code, out, err = run("refresh", "--url", url, "--store", crawled, "--format", "json")
+    assert code in (0, 1), err  # measured: OK, or changes to review; never 3 (nothing measured)
+    assert jloads(out)["exit_code"] == code
 
 
 def test_report(run: Run, crawled: str) -> None:

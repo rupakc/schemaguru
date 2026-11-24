@@ -360,10 +360,9 @@ def _diagnostic(err: Any) -> Diagnostic:
 NO_BLOCK_SAMPLING = "no_block_sampling"  # == measure.scheduler.NO_BLOCK_SAMPLING
 
 
-def _profile(connector: Any) -> Any | None:
-    """FactLang's native dialect profile for ``connector``, or None (bridged/unknown)."""
+def _profile(dialect: Any) -> Any | None:
+    """FactLang's native profile for ``dialect``, or None (bridged/unknown)."""
     get_profile = _attr("factlang.sql", "get_profile")
-    dialect = getattr(connector, "dialect", None)
     if not callable(get_profile) or not isinstance(dialect, str):
         return None
     try:
@@ -405,19 +404,28 @@ class FactLangBackend:
         *,
         catalog: Any,
         sampling: SamplingConfig | None = None,
+        dialect: str | None = None,
         **checker_kwargs: Any,
     ) -> None:
         self._sampling = sampling if sampling is not None else SamplingConfig()
         self._catalog = catalog
-        profile = _profile(connector)
+        dialect = dialect or getattr(connector, "dialect", None)
+        profile = _profile(dialect)
         self._caps = capabilities() | _dialect_caps(profile)
         self._checker: Any = None
         self._ir: _IR | None = None
+        self._unavailable = "Checker.measure"
         if "measure" in self._caps:
             checker_cls = _attr("factlang", "Checker")
             assert checker_cls is not None
-            self._checker = checker_cls(connector, catalog=catalog, **checker_kwargs)
-            self._ir = _IR(_seed_range(profile))
+            if dialect is not None:  # FactLang's Checker takes the dialect from the connector
+                checker_kwargs.setdefault("dialect", dialect)
+            try:
+                self._checker = checker_cls(connector, catalog=catalog, **checker_kwargs)
+            except Exception as e:  # a connector FactLang cannot use: reported per request
+                self._unavailable = f"a Checker for this connector ({type(e).__name__}: {e})"
+            else:
+                self._ir = _IR(_seed_range(profile))
 
     def capabilities(self) -> frozenset[str]:
         return self._caps
@@ -428,7 +436,7 @@ class FactLangBackend:
 
     def measure(self, reqs: Sequence[Request]) -> list[MeasureResult]:
         if self._checker is None or self._ir is None:
-            return self._missing(reqs, "Checker.measure")
+            return self._missing(reqs, self._unavailable)
         if any(r.sample is not None for r in reqs) and "sample" not in self._caps:
             return self._missing(reqs, "sampled measurement (SampleSpec)")
         spans: list[tuple[int, int]] = []

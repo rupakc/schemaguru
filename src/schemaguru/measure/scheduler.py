@@ -54,6 +54,7 @@ DATE_TEXT_PATTERN = "____-__-__%"
 DATE_TEXT_MEANS = "ISO-8601 date text"
 # capability a backend reports when the dialect has no block (SYSTEM) sampling
 NO_BLOCK_SAMPLING = "no_block_sampling"
+_BYTES_PER_VALUE = 8  # the row-count heuristic's width of one stored value
 # candidate origins whose join is only a guess: an unmeasured guess leaves no fact
 _GUESSES = frozenset({"heuristic", "llm"})
 _QUEUE_ALL = 1_000_000
@@ -390,15 +391,27 @@ class Scheduler:
             return CostEstimate(req, None, "unknown")
         return CostEstimate(req, heuristic, "heuristic")
 
+    def _table_bytes(self, table: Table) -> int | None:
+        """Catalog bytes; else ``rows x columns x 8`` when the catalog has a row count but no
+        size (DuckDB: no dry-run, no table bytes), so a small local table is not charged the
+        pessimistic unknown-cost price; else None (unknown)."""
+        if table.bytes is not None:
+            return table.bytes
+        if table.row_count is None:
+            return None
+        ncols = len(self.store.columns(table.ref)) or 1
+        return table.row_count * ncols * _BYTES_PER_VALUE
+
     def _catalog_bytes(self, req: Request, table: Table) -> int | None:
         if not isinstance(req, KeyOverlapReq):
-            return table.bytes
+            return self._table_bytes(table)
         total = 0
         for side in (req.join.left, req.join.right):
             t = self.store.table(side[0].table_ref())
-            if t is None or t.bytes is None:
+            b = None if t is None else self._table_bytes(t)
+            if b is None:
                 return None
-            total += t.bytes
+            total += b
         return total
 
     def _sampling_table(self, req: Request, table: Table) -> Table:

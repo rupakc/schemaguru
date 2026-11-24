@@ -359,7 +359,12 @@ class Guru:
         if self.connector is None:
             return _NoBackend()
         sampling = (cfg or self._config).sampling
-        return FactLangBackend(self.connector, catalog=StoreCatalog(self.store), sampling=sampling)
+        return FactLangBackend(
+            self.connector,
+            catalog=StoreCatalog(self.store),
+            sampling=sampling,
+            dialect=self.dialect,
+        )
 
     def _make_scheduler(self, cfg: Config) -> _Scheduler:
         return _Scheduler(self.store, self.backend, cfg, now=self._now, on_write=self._invalidate)

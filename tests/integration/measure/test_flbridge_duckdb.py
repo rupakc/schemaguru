@@ -348,7 +348,18 @@ def test_real_evidence_params_are_scrubbed_and_json_safe(
     assert ev is not None and ev.params, ev
     text = json.dumps(ev.to_dict())
     assert "jane.doe@example.com" not in text
-    assert all(isinstance(p, dict) and {"name", "family", "value"} <= set(p) for p in ev.params)
+    # FactLang's Measurement evidence carries plain values; its Outcome/probe evidence carries
+    # ``Param`` objects (name, family, value): either way stored as plain, scrubbed JSON
+    assert all(
+        not hasattr(p, "family")
+        and (not isinstance(p, dict) or {"name", "family", "value"} <= set(p))
+        for p in ev.params
+    )
+    param_obj = type(
+        "Param", (), {"name": "p1", "family": "string", "value": "jane.doe@example.com"}
+    )
+    (scrubbed,) = flbridge._scrub_params((param_obj(),), "masked")
+    assert scrubbed["name"] == "p1" and "jane.doe" not in json.dumps(scrubbed)
 
 
 def test_guru_end_to_end_through_factlang(

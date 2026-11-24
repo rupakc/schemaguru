@@ -352,6 +352,11 @@ def test_crash_requeues_unmeasured_tables(shop_store: SQLiteStore, conn: Any) ->
 
 
 def test_unknown_cost_visible_in_report(shop_store: SQLiteStore, conn: Any) -> None:
+    from dataclasses import replace
+
+    prd = shop_store.table(PRD)
+    assert prd is not None  # no row count either: nothing to price from (see the next test)
+    shop_store.upsert_tables([replace(prd, row_count=None, bytes=None)])
     report = Scheduler(shop_store, FakeBackend(conn, cost=lambda r: None), Config()).run([PRD])
     assert report.unknown_cost_probes > 0 and report.unknown_spend_probes > 0
     assert shop_store.ledger_total("measure.unknown_bytes", "queries", None) > 0
@@ -448,3 +453,25 @@ def test_fake_backend_refuses_block_or_row_samples_for_value_membership_and_over
         [ProfileColumns(ORD, ("status",), sample=SampleChoice("system", Decimal("0.5"), 1))]
     )
     assert ok[0].error is None
+
+
+def test_unknown_cost_falls_back_to_a_row_count_heuristic(
+    conn: Any, shop_store: SQLiteStore
+) -> None:
+    """No dry-run and no catalog bytes (DuckDB): ``rows x columns x 8`` prices the probe, so a
+    small table is not charged the pessimistic unknown-cost price (which would admit only 10
+    probes per default budget); with no row count either it stays unknown."""
+    from dataclasses import replace
+
+    from schemaguru.measure.requests import RowCount
+
+    sched = Scheduler(shop_store, FakeBackend(conn, cost=lambda r: None), Config())
+    orders = shop_store.table(ORD)
+    assert orders is not None and orders.bytes is None and orders.row_count
+    ncols = len(shop_store.columns(ORD))
+    est = sched._estimate(RowCount(ORD), orders)
+    assert est.method == "heuristic" and est.bytes == orders.row_count * ncols * 8
+    unknown = sched._estimate(RowCount(ORD), replace(orders, row_count=None))
+    assert unknown.bytes is None and unknown.method == "unknown"
+    report = sched.run([ORD])
+    assert report.unknown_cost_probes == 0

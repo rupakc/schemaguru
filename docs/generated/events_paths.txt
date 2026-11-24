@@ -8,5 +8,4 @@ Join paths (join keys, advisory; support = the weakest hop's match or coverage):
     SQL: FROM "shop"."events" events INNER JOIN "shop"."accounts" accounts ON events."account_id" = accounts."account_id"
   shop.accounts → shop.orders · support 40%
     orders.account_id = accounts.account_id (N:1)
-    SQL: FROM "shop"."accounts" accounts INNER JOIN "shop"."orders" orders ON accounts."account_id" = orders."account_id"
-         -- live-rows filter for shop.orders not applied (the installed FactLang lacks fl.parse_filter): deleted IS NULL OR NOT deleted
+    SQL: FROM "shop"."accounts" accounts INNER JOIN "shop"."orders" orders ON (accounts."account_id" = orders."account_id" AND (orders.deleted IS NULL OR NOT (orders.deleted = TRUE)))

@@ -17,8 +17,13 @@ def register_reader(dialect: str, factory: ReaderFactory) -> None:
 
 
 def _load_builtin() -> None:
+    from schemaguru.catalog.readers import bigquery as _bigquery  # noqa: F401
+    from schemaguru.catalog.readers import databricks as _databricks  # noqa: F401
     from schemaguru.catalog.readers import duckdb as _duckdb  # noqa: F401
+    from schemaguru.catalog.readers import oracle as _oracle  # noqa: F401
     from schemaguru.catalog.readers import postgres as _postgres  # noqa: F401
+    from schemaguru.catalog.readers import redshift as _redshift  # noqa: F401
+    from schemaguru.catalog.readers import snowflake as _snowflake  # noqa: F401
 
 
 def dialects() -> list[str]:

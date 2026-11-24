@@ -108,6 +108,10 @@ def shop_guru(directory: Path) -> Iterator[ShopGuru]:
         guru.crawl()
         guru.measure(all=True)
         guru.load_overlays(OVERLAY)
+        # generated docs must not depend on optional FactLang capabilities: without a dialect
+        # the renderer never asks FactLang for SQL join snippets (fl.sql.render_join)
+        guru.dialect = None
+        before.dialect = None
         yield ShopGuru(guru, conn, facts, path, before)
     finally:
         guru.close()

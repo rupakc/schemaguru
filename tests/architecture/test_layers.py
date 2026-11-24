@@ -33,6 +33,7 @@ LAYERS: dict[str, int] = {
     "schemaguru.render": 6,
     "schemaguru.refresh": 6,
     "schemaguru.feedback": 6,
+    "schemaguru.guard": 6,
     "schemaguru.guru": 7,
     "schemaguru.agent": 7,
     "schemaguru.cli": 7,

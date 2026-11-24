@@ -13,6 +13,7 @@ import threading
 from collections.abc import Sequence
 from typing import Any, Protocol
 
+from schemaguru._util.sqltext import scan as _scan
 from schemaguru.catalog.protocol import CatalogError
 
 _ALLOWED_FIRST = frozenset({"SELECT", "WITH", "SHOW", "DESCRIBE", "DESC"})
@@ -30,33 +31,17 @@ class MetadataExecutor(Protocol):
     ) -> list[dict[str, Any]]: ...
 
 
-def _scan(sql: str) -> list[tuple[str, bool]]:
-    """Split into ``(char, in_literal)`` so guards and rewriting never touch quoted text."""
-    out: list[tuple[str, bool]] = []
-    quote: str | None = None
-    i, n = 0, len(sql)
-    while i < n:
-        ch = sql[i]
-        if quote is not None:
-            out.append((ch, True))
-            if ch == quote:
-                if i + 1 < n and sql[i + 1] == quote:
-                    out.append((sql[i + 1], True))
-                    i += 1
-                else:
-                    quote = None
-        elif ch in ("'", '"'):
-            quote = ch
-            out.append((ch, True))
-        else:
-            out.append((ch, False))
-        i += 1
-    return out
-
-
 def check_metadata_sql(sql: str) -> None:
-    """Refuse anything but one read-only metadata statement (SG104); mirrors FactLang's guard."""
-    chars = _scan(sql)
+    """Refuse anything but one read-only metadata statement (SG104); mirrors FactLang's guard.
+
+    Judged under both backslash interpretations: a violation under either is a refusal.
+    """
+    for backslash in (False, True):
+        _check_metadata(sql, backslash)
+
+
+def _check_metadata(sql: str, backslash: bool) -> None:
+    chars = _scan(sql, backslash=backslash)
     code = "".join(" " if lit else c for c, lit in chars)
     if ";" in code:
         raise CatalogError("SG104", "metadata SQL must be a single statement without ';'")

@@ -144,3 +144,9 @@ def test_factlang_run_metadata_real() -> None:
     if not _has_run_metadata():
         pytest.skip("factlang capability run_metadata not yet available")
     pytest.skip("wire a FactLang DuckDB connector here once connectors ship")
+
+
+def test_metadata_guard_backslash_escape_cannot_hide_a_statement() -> None:
+    with pytest.raises(CatalogError):
+        check_metadata_sql("SELECT 'a\\'' ; DROP TABLE x --")
+    check_metadata_sql("SELECT 'it''s'")

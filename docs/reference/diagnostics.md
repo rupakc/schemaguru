@@ -19,3 +19,5 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG209 | dbt manifest is unreadable |
 | SG701 | SQLite FTS5 is unavailable; search falls back to a slower LIKE scan |
 | SG702 | the store was written by a newer schema version than this library supports |
+| SG801 | guard refused the SQL: not a single read-only SELECT/WITH statement |
+| SG802 | guard refused the SQL: it reads a never-query table |

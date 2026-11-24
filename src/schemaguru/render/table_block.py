@@ -800,11 +800,13 @@ class _Analyser:
                     continue
                 cov = None if m is None else m.value.get("coverage")
                 src = ", ".join(qname(c) for c in join.left)
-                text = f"← {src}" + (
-                    f" (coverage {join_number(m, 'coverage')})"
-                    if m is not None and isinstance(cov, (int, float))
-                    else ""
-                )
+                text = f"← {src}"
+                if m is not None and isinstance(cov, (int, float)):
+                    # a measured number always says how it is known (spec 2 G6); a sampled
+                    # one says so inside join_number
+                    sampled = m.status is _S.ESTIMATED or method_class(m.method) == "sampled"
+                    how = "" if sampled else f", {phrase(m)}"
+                    text += f" (coverage {join_number(m, 'coverage')}{how})"
                 col = join.right[0].column
                 assert col is not None
                 inbound.setdefault(col, []).append(text)

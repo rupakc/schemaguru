@@ -27,7 +27,7 @@ Glossary:
 [shop.products] Product catalogue. (draft)
   200 rows (measured 2026-10-01, stale)
   Columns:
-    product_id  INTEGER  PK (declared, enforced); ← shop.order_items.product_id (coverage 100%)
+    product_id  INTEGER  PK (declared, enforced); ← shop.order_items.product_id (coverage 100%, measured 2026-11-20)
     name        VARCHAR
   Provenance: drafted text marked (draft) is unchecked · measured 2026-10-01
 
@@ -39,7 +39,7 @@ Glossary:
   Answers (draft): revenue; order volume; basket size
   10,000 rows (measured 2026-11-20)
   Columns:
-    order_id     INTEGER  PK (unique, measured 2026-11-20); ← shop.order_items.order_id (coverage 100%), ← shop.payments.order_id (coverage 5%)
+    order_id     INTEGER  PK (unique, measured 2026-11-20); ← shop.order_items.order_id (coverage 100%, measured 2026-11-20), ← shop.payments.order_id (coverage 5%, measured 2026-11-20)
     customer_id  INTEGER  → shop.customers.customer_id N:1, match 98.04% (measured 2026-11-20)
     account_id   INTEGER  → shop.accounts.account_id N:1, match 100%, coverage 40% (measured 2026-11-20)
     status       VARCHAR  values: 'paid','refunded','cancelled' (+ observed 'PAID'); Order lifecycle state. (draft)

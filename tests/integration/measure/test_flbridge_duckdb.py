@@ -343,7 +343,7 @@ def test_guru_end_to_end_through_factlang(
         orders = text[start : end if end != -1 else len(text)]
         assert "case drift: 'paid'/'PAID' differ only in case" in orders
         assert f"observed also 'PAID' ({facts.status_counts['PAID']:,} rows)" in orders
-        assert "← shop.payments.order_id (coverage 5%)" in orders
+        assert "← shop.payments.order_id (coverage 5%, measured " in orders
         # FactLang reports observed values as text; a boolean column's are booleans again
         deleted = next(ln for ln in orders.splitlines() if ln.strip().startswith("deleted "))
         assert f"values: TRUE ({facts.deleted_true})" in deleted and "'true'" not in deleted

@@ -105,7 +105,7 @@ capability yet). The view before accepting:
   Answers (draft): best-selling products; products never ordered
   200 rows (measured 2026-11-24)
   Columns:
-    product_id  INTEGER  PK (unique, measured 2026-11-24); ← shop.order_items.product_id (coverage 100%); distinct 200 (measured 2026-11-24)
+    product_id  INTEGER  PK (unique, measured 2026-11-24); ← shop.order_items.product_id (coverage 100%, measured 2026-11-24); distinct 200 (measured 2026-11-24)
     name        VARCHAR  distinct 200 (measured 2026-11-24); Display name of the product. (draft)
   Provenance: drafted text marked (draft) is unchecked · measured 2026-11-24
 ```
@@ -117,7 +117,7 @@ After `guru.accept(...)` of the table description only:
   Answers (draft): best-selling products; products never ordered
   200 rows (measured 2026-11-24)
   Columns:
-    product_id  INTEGER  PK (unique, measured 2026-11-24); ← shop.order_items.product_id (coverage 100%); distinct 200 (measured 2026-11-24)
+    product_id  INTEGER  PK (unique, measured 2026-11-24); ← shop.order_items.product_id (coverage 100%, measured 2026-11-24); distinct 200 (measured 2026-11-24)
     name        VARCHAR  distinct 200 (measured 2026-11-24); Display name of the product. (draft)
   Provenance: drafted text marked (draft) is unchecked · human overlay · measured 2026-11-24
 ```

@@ -6,7 +6,7 @@
   1,000 rows (measured 2026-11-20)
   live rows: (email <> '<email>') (human, unchecked)
   Columns:
-    customer_id  INTEGER  PK (unique, measured 2026-11-20); ← shop.orders.customer_id (coverage 100%)
+    customer_id  INTEGER  PK (unique, measured 2026-11-20); ← shop.orders.customer_id (coverage 100%, measured 2026-11-20)
     email        VARCHAR  PII email; values: <email> (1), <email> (1), <email> (1), <masked> (1) (measured 2026-11-20); distinct 1,000 (measured 2026-11-20)
     phone        VARCHAR  PII phone; values: <phone>,<email>; null 10% (measured 2026-11-20)
     segment      VARCHAR  values: 'retail' (334), 'wholesale' (333), 'vip' (333) (measured 2026-11-20); set by <email>

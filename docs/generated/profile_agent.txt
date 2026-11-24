@@ -18,7 +18,7 @@ Glossary:
   10,000 rows (measured 2026-11-24)
   live rows: (deleted IS NULL OR NOT deleted) (human, unchecked)
   Columns:
-    order_id     INTEGER  PK (unique, measured 2026-11-24); ← shop.order_items.order_id (coverage 100%), ← shop.payments.order_id (coverage 5%); distinct 10,000 (measured 2026-11-24)
+    order_id     INTEGER  PK (unique, measured 2026-11-24); ← shop.order_items.order_id (coverage 100%, measured 2026-11-24), ← shop.payments.order_id (coverage 5%, measured 2026-11-24); distinct 10,000 (measured 2026-11-24)
     customer_id  INTEGER  → shop.customers.customer_id N:1, match 98.04% (measured 2026-11-24); distinct 1,020 (measured 2026-11-24)
     account_id   INTEGER  → shop.accounts.account_id N:1, match 100%, coverage 40% (measured 2026-11-24); distinct 40 (measured 2026-11-24)
     status       VARCHAR  values: 'paid','refunded','cancelled' (+ observed 'PAID'); distinct 4 (measured 2026-11-24); Payment state of the order.

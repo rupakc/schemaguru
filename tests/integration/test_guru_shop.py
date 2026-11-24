@@ -55,7 +55,7 @@ def test_guru_shop_end_to_end(tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts]
     null_pct = round(100 * facts.deleted_null / (facts.deleted_null + facts.deleted_true))
     assert f"null {null_pct}%" in deleted and "FALSE" not in deleted
     # the thin-but-correct payments join, with its coverage
-    assert "← shop.payments.order_id (coverage 5%)" in orders
+    assert "← shop.payments.order_id (coverage 5%, measured " in orders
     assert view.tokens <= 4000
     assert "unmeasured" not in orders
 

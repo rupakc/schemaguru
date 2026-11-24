@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
 
+from schemaguru._util.hashing import canonical_json
 from schemaguru.model.facts import Fact
 from schemaguru.model.structure import Column, Constraint, Schema, Table
 from schemaguru.store.protocol import Store
@@ -20,8 +20,7 @@ FORMAT = "schemaguru-export"
 VERSION = 1
 
 
-def _dumps(obj: Any) -> str:
-    return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+_dumps = canonical_json
 
 
 def export_json(store: Store, path: str | os.PathLike[str]) -> None:

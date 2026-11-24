@@ -7,7 +7,8 @@ CREATE TABLE schemas (
 );
 
 CREATE TABLE tables (
-    ref          TEXT PRIMARY KEY,        -- ObjectRef.canonical(), exact
+    id           INTEGER PRIMARY KEY,     -- explicit, VACUUM-stable; the search index rowid
+    ref          TEXT NOT NULL UNIQUE,    -- ObjectRef.canonical(), exact
     ref_lower    TEXT NOT NULL,           -- for case-insensitive resolution
     data         TEXT NOT NULL,           -- Table.to_dict() without withdrawn_at
     withdrawn_at TEXT                     -- fixed-width UTC, NULL = live

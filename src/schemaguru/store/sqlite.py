@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from schemaguru._util.hashing import canonical_json
 from schemaguru._util.text import name_tokens
 from schemaguru._util.timeutil import to_iso, utcnow
 from schemaguru.diagnostics import CODES, Diagnostic, DiagnosticBag, Severity
@@ -41,8 +42,7 @@ def _fts5_available(conn: sqlite3.Connection) -> bool:
     return True
 
 
-def _dumps(obj: Any) -> str:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+_dumps = canonical_json
 
 
 def _subject_key(subject: ObjectRef | JoinRef) -> str:
@@ -171,20 +171,40 @@ class SQLiteStore:
             )
 
     def _setup_search(self) -> bool:
+        """Pick the search backend and make sure its index covers the stored tables."""
         if not _fts5_available(self._conn):
             self._warn_fallback()
-            return False
-        exists = self._conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE name='table_docs'"
-        ).fetchone()
-        if not exists:
-            if self.readonly:
-                return False
-            self._conn.execute(schema_sql.FTS_DDL)
-        return True
+            fts = False
+        else:
+            exists = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='table_docs'"
+            ).fetchone()
+            fts = bool(exists)
+            if not exists:
+                if self.readonly:
+                    self._warn_fallback("the store has no FTS5 index and is read-only")
+                else:
+                    self._conn.execute(schema_sql.FTS_DDL)
+                    fts = True
+        self._fts = fts
+        if not self.readonly:
+            self._rebuild_index_if_empty()
+        return fts
 
-    def _warn_fallback(self) -> None:
-        msg = f"{CODES['SG701']}; install a SQLite build with FTS5 for ranked search"
+    def _rebuild_index_if_empty(self) -> None:
+        """A store built under the other backend has tables but an empty index: reindex it."""
+        index = "table_docs" if self._fts else "docs"
+        with self._lock:
+            has_docs = self._conn.execute(f"SELECT 1 FROM {index} LIMIT 1").fetchone()
+            if has_docs or not self._conn.execute("SELECT 1 FROM tables LIMIT 1").fetchone():
+                return
+        with self.transaction():
+            for (key,) in self._conn.execute("SELECT ref FROM tables").fetchall():
+                self._reindex(key)
+
+    def _warn_fallback(self, why: str = "") -> None:
+        msg = f"{CODES['SG701']}" + (f" ({why})" if why else "")
+        msg += "; install a SQLite build with FTS5 for ranked search"
         self.diagnostics.add(Diagnostic("SG701", Severity.WARNING, msg, location=self.path))
         log.warning("SG701 %s", msg)
 
@@ -437,7 +457,7 @@ class SQLiteStore:
     def _reindex(self, key: str) -> None:
         """Rebuild the search document of one table (caller holds the write transaction)."""
         conn = self._conn
-        row = conn.execute("SELECT rowid, data FROM tables WHERE ref=?", (key,)).fetchone()
+        row = conn.execute("SELECT id, data FROM tables WHERE ref=?", (key,)).fetchone()
         if row is None:
             return
         rowid, data = row
@@ -452,12 +472,16 @@ class SQLiteStore:
             col_tokens.extend(name_tokens(c["ref"]["column"]))
             if c.get("comment"):
                 text.append(c["comment"])
+        # table-level and column-level meaning facts (column keys extend the table key by ".col")
         for (fdata,) in conn.execute(
-            "SELECT data FROM facts WHERE subject_key=? "
+            "SELECT data FROM facts WHERE subject_key >= ? AND subject_key < ? "
             f"AND kind IN ({_marks(len(_MEANING_KINDS))})",
-            (key, *_MEANING_KINDS),
+            (key, key + "/", *_MEANING_KINDS),
         ):
-            text.extend(_strings(json.loads(fdata)["value"]))
+            fact = json.loads(fdata)
+            subj = fact["subject"]
+            if "table" in subj and ObjectRef.from_dict(subj).table_ref().canonical() == key:
+                text.extend(_strings(fact["value"]))
         name = " ".join(name_tokens(ref.table))
         cols = " ".join(col_tokens)
         body = " ".join(x for x in text if x)
@@ -483,7 +507,7 @@ class SQLiteStore:
             match = " OR ".join(f'"{t}"*' if len(t) >= 3 else f'"{t}"' for t in tokens)
             rows = self._q(
                 "SELECT t.ref, -bm25(table_docs, " + _FTS_WEIGHTS + ") AS score "
-                "FROM table_docs JOIN tables t ON t.rowid = table_docs.rowid "
+                "FROM table_docs JOIN tables t ON t.id = table_docs.rowid "
                 "WHERE table_docs MATCH ? AND t.withdrawn_at IS NULL "
                 "ORDER BY score DESC, t.ref LIMIT ?",
                 (match, k),
@@ -518,13 +542,11 @@ class SQLiteStore:
             seq = cur.lastrowid
             sid = f"snap-{seq:06d}"
             self._conn.execute("UPDATE snapshots SET id=? WHERE seq=?", (sid, seq))
-            for fid, data in self._conn.execute("SELECT id, data FROM facts").fetchall():
-                d = json.loads(data)
-                d["snapshot_id"] = sid
-                self._conn.execute(
-                    "INSERT INTO snapshot_facts(snapshot_id, fact_id, data) VALUES (?,?,?)",
-                    (sid, fid, _dumps(d)),
-                )
+            self._conn.execute(
+                "INSERT INTO snapshot_facts(snapshot_id, fact_id, data) "
+                "SELECT ?, id, json_set(data, '$.snapshot_id', ?) FROM facts",
+                (sid, sid),
+            )
             return sid
 
     def snapshot_facts(self, snapshot_id: str) -> list[Fact]:

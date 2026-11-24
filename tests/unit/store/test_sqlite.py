@@ -300,3 +300,121 @@ def test_iter_tables_streams_in_pages(store: SQLiteStore) -> None:
     store.upsert_tables([tbl("zzz")])  # writes interleave with an open iterator
     assert first.ref.table == "t0000"
     assert sum(1 for _ in it) == 2500
+
+
+def _build_without_fts(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    with monkeypatch.context() as m:
+        m.setattr(sqlite_mod, "_fts5_available", lambda conn: False)
+        s = SQLiteStore(path)
+        s.upsert_tables([tbl("orders", "customer purchases"), tbl("payments")])
+        s.upsert_columns(tref("orders"), [col("orders", "id", 1)])
+        s.close()
+
+
+def test_store_built_without_fts_reindexed_when_fts_appears(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "x.db"
+    _build_without_fts(p, monkeypatch)
+    s = SQLiteStore(p)
+    try:
+        assert list(s.diagnostics) == []
+        assert [r.table for r, _ in s.search("orders", 5)] == ["orders"]
+    finally:
+        s.close()
+
+
+def test_store_built_with_fts_usable_without(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "y.db"
+    SQLiteStore(p).close()
+    s = SQLiteStore(p)
+    s.upsert_tables([tbl("orders")])
+    s.close()
+    with monkeypatch.context() as m:
+        m.setattr(sqlite_mod, "_fts5_available", lambda conn: False)
+        s = SQLiteStore(p)
+        try:
+            assert [r.table for r, _ in s.search("orders", 5)] == ["orders"]
+        finally:
+            s.close()
+
+
+def test_readonly_without_fts_index_warns_and_uses_docs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "z.db"
+    _build_without_fts(p, monkeypatch)
+    r = SQLiteStore(p, readonly=True)
+    try:
+        assert [d.code for d in r.diagnostics] == ["SG701"]
+        assert [x.table for x, _ in r.search("orders", 5)] == ["orders"]
+    finally:
+        r.close()
+
+
+def test_snapshot_many_facts(store: SQLiteStore) -> None:
+    facts = [
+        Fact.make(
+            FactKind.ROW_COUNT, tref(f"t{i}"), {"rows": i}, Provenance.CATALOG, Status.OBSERVED
+        )
+        for i in range(10_500)
+    ]
+    store.put_facts(facts)
+    sid = store.snapshot("big")
+    snap = store.snapshot_facts(sid)
+    assert len(snap) == 10_500
+    assert all(f.snapshot_id == sid for f in snap)
+    by_id = {f.id: f for f in facts}
+    assert all(by_id[f.id].value == f.value and by_id[f.id].subject == f.subject for f in snap)
+
+
+def test_search_survives_vacuum(store: SQLiteStore) -> None:
+    store.upsert_tables([tbl(f"filler{i}") for i in range(20)] + [tbl("orders")])
+    store.upsert_columns(tref("orders"), [col("orders", "id", 1)])
+    for i in range(10):
+        store._conn.execute("DELETE FROM tables WHERE ref=?", (f"shop.filler{i}",))
+    store._conn.execute("VACUUM")
+    assert [r.table for r, _ in store.search("orders", 3)] == ["orders"]
+
+
+def test_column_description_makes_table_searchable(store: SQLiteStore) -> None:
+    store.upsert_tables([tbl("orders"), tbl("misc")])
+    store.upsert_columns(tref("orders"), [col("orders", "status", 1)])
+    assert store.search("shipped", 5) == []
+    store.put_facts(
+        [
+            Fact.make(
+                FactKind.DESCRIPTION,
+                ObjectRef(None, "shop", "orders", "status"),
+                {"text": "whether the parcel was shipped"},
+                Provenance.HUMAN,
+                Status.OBSERVED,
+            )
+        ]
+    )
+    assert [r.table for r, _ in store.search("shipped", 5)] == ["orders"]
+
+
+def test_decimal_and_datetime_values_roundtrip(store: SQLiteStore, tmp_path: Path) -> None:
+    from decimal import Decimal
+
+    f = Fact.make(
+        FactKind.ROW_COUNT,
+        tref("orders"),
+        {"rows": Decimal("12.50"), "at": NOW, "n": 3},
+        Provenance.CATALOG,
+        Status.OBSERVED,
+    )
+    store.put_facts([f])
+    (got,) = store.facts_for([tref("orders")], None)
+    assert got.id == f.id
+    # canonical encoding: Decimal -> its string, aware datetime -> UTC ISO text, numbers intact
+    assert got.value == {"rows": "12.50", "at": NOW.isoformat(), "n": 3}
+    store.snapshot()
+    from schemaguru.store.export import export_json
+
+    out = tmp_path / "e.json"
+    export_json(store, out)
+    assert b'"rows":"12.50"' in out.read_bytes()

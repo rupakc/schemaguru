@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+# What an agent or HTTP client is told about a shared store's trouble: fixed text, never the
+# store's address, user or driver message (those go to the host's logs and exceptions)
+STORE_UNAVAILABLE = "the knowledge store is unavailable; retry later"
+STORE_MISCONFIGURED = "the knowledge store is misconfigured (its credentials were rejected)"
+
 
 class SchemaGuruError(Exception):
     """Base class of every exception SchemaGuru raises on purpose."""
@@ -25,3 +30,8 @@ class ConfigError(SchemaGuruError):
 
 class StoreUnavailableError(SchemaGuruError):
     """A shared store cannot be reached right now (connection refused, lost, pool exhausted)."""
+
+
+class StoreConfigError(ConfigError):
+    """A shared store rejected the configured credentials: the host's configuration, not an
+    outage (``SG704``; retrying will not help)."""

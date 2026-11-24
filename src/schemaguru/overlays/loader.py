@@ -627,3 +627,52 @@ def load_overlays(
         waypoints += fl.waypoints
         waivers += fl.waivers
     return facts, chains, waypoints, waivers, bag
+
+
+# crawl_state key recording the ids of the facts the last overlay load put in the store
+OVERLAY_STATE = "overlay_facts"
+_SOURCE = "overlay:"
+# file-level failures: a file reporting one keeps its previous facts until it loads cleanly
+_FILE_ERRORS = frozenset({"SG201", "SG208"})
+
+
+def _source_file(source: str | None) -> str | None:
+    if not source or not source.startswith(_SOURCE):
+        return None
+    return source[len(_SOURCE) :].rsplit(":", 1)[0]
+
+
+def retract_removed(store: Store, loaded: Sequence[Fact], diagnostics: Iterable[Diagnostic]) -> int:
+    """Remove the overlay facts of earlier loads that this load no longer produces (17b).
+
+    A load replaces the overlay knowledge: an entry removed from its file (or a file no longer
+    passed) loses its HUMAN facts. A file that failed to load (``SG201``/``SG208``) keeps its
+    previous facts, so a typo never wipes knowledge. Only facts whose source is an overlay are
+    candidates; measured, accepted and dbt facts are never touched. Returns how many went.
+    """
+    state = store.crawl_state_get(OVERLAY_STATE)
+    previous: dict[str, str] = {}
+    if state is None:  # first load with retraction: every stored overlay fact is a candidate
+        for f in store.iter_facts():
+            if (path := _source_file(f.source)) is not None:
+                previous[f.id] = path
+    else:
+        raw = state.get("facts")
+        previous = {str(i): str(p) for i, p in raw.items()} if isinstance(raw, dict) else {}
+    failed = [
+        d.location
+        for d in diagnostics
+        if d.code in _FILE_ERRORS and d.severity is Severity.ERROR and d.location
+    ]
+    keep_files = {p for p in previous.values() if any(_same_file(p, loc) for loc in failed)}
+    current = {f.id: _source_file(f.source) or "" for f in loaded}
+    kept = {i: p for i, p in previous.items() if p in keep_files and i not in current}
+    stale = sorted(i for i, p in previous.items() if i not in current and p not in keep_files)
+    removed = store.delete_facts(stale) if stale else 0
+    store.crawl_state_set(OVERLAY_STATE, {"facts": {**kept, **current}})
+    return removed
+
+
+def _same_file(source_file: str, location: str) -> bool:
+    """Does a diagnostic location (``path`` or ``path:line``) name ``source_file``?"""
+    return location == source_file or location.startswith(source_file + ":")

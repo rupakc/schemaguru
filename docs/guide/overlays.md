@@ -46,13 +46,21 @@ guru.close()
   filter (`SG205`), a waiver without a valid `expires` (`SG206`) or already expired
   (`SG207`), a malformed entry (`SG208`). An empty key counts as absent.
 * **One call, all files.** Each `load_overlays` call *replaces* the previously loaded rules,
-  chains and waivers. Pass every overlay path in one call:
-  `guru.load_overlays("schemaguru/", "team-a.yaml")`.
+  chains, waivers and overlay facts. Pass every overlay path in one call:
+  `guru.load_overlays("schemaguru/", "team-a.yaml")`. An entry you delete from a file (or a
+  file you no longer pass) has its facts retracted from the store; a file that fails to load
+  (`SG201`, `SG208`) keeps its previous facts until it loads again.
 * **What persists.** The `HUMAN` facts (descriptions, expectations, glossary, …) are written
   to the store. Waypoint rules, chains and waivers live on the `Guru` that loaded them; load
   the overlays in the process that serves the agent.
 * **Filters** (soft delete, chain filters) are checked with FactLang's parser; with a FactLang
-  that lacks it, syntax only (`SG503`, informational).
+  that lacks it, syntax only (`SG503`, informational). In SQL snippets SchemaGuru quotes a
+  soft-delete column in the catalog's exact case; when two columns differ only in case, the
+  exact spelling wins, and a name matching several of them stays unquoted (`SG506`).
+* **A soft-delete filter is checked against the data.** It must name existing columns and,
+  when it compares one column with values, at least one of them must occur in that column's
+  measured values (`TRUE`/`FALSE` need a boolean column; NULLs are always fine). A mismatch is
+  `SG210`: the view warns and SQL snippets leave the filter out. The text is never edited.
 
 Lint overlays in CI without touching your store — it loads them into a throwaway copy and
 exits `1` on findings:

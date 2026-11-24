@@ -62,6 +62,11 @@ class Store(Protocol):
         """Upsert by ``Fact.id``: re-measurement replaces the stored row."""
         ...
 
+    def delete_facts(self, ids: Iterable[str]) -> int:
+        """Remove facts from the live knowledge by id (snapshots keep their copies); returns
+        how many existed. Used to retract HUMAN facts whose overlay entry was removed."""
+        ...
+
     def iter_facts(self) -> Iterator[Fact]: ...
 
     def facts_for(

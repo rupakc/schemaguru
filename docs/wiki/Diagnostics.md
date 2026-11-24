@@ -47,6 +47,8 @@ All deliberate exceptions derive from `sg.SchemaGuruError`:
 - `AmbiguousNameError`: a bare name matches several objects (`.candidates` lists them);
 - `StoreVersionError`: the store was written by a newer schema version (`SG702`);
 - `StoreUnavailableError`: a shared (Postgres) store cannot be reached right now (`SG703`);
+- `StoreConfigError` (a `ConfigError`): the shared store rejected the configured credentials
+  (`SG704`); retrying does not help;
 - `CatalogError`: a catalog-layer failure with an `SG1xx` code (e.g. `SG106` for a URL that
   cannot be opened);
 - `SchemaGuruError` itself, e.g. "unknown table 'nosuch' (crawl first, or qualify the name)".
@@ -80,6 +82,7 @@ holds the same list, and a test keeps that file equal to the codes the source em
 | `SG207` | overlay waiver has expired and is ignored |
 | `SG208` | overlay file is unreadable or an entry is malformed |
 | `SG209` | dbt manifest is unreadable |
+| `SG210` | a declared soft-delete filter does not match the catalog or the measured values; it is shown with a warning and never applied in SQL snippets |
 
 ### SG3xx: Measurement and budget
 
@@ -129,6 +132,7 @@ holds the same list, and a test keeps that file equal to the codes the source em
 | `SG701` | SQLite FTS5 is unavailable; search falls back to a slower LIKE scan |
 | `SG702` | the store was written by a newer schema version than this library supports |
 | `SG703` | the shared store is unavailable (refused, lost or pool exhausted; HTTP 503) |
+| `SG704` | the shared store rejected the configured credentials: a configuration error, not an outage (HTTP 500) |
 
 ### SG8xx: Agent and server
 

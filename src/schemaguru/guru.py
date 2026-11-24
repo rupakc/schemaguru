@@ -70,6 +70,7 @@ from schemaguru.graph.hubs import Hubs
 from schemaguru.graph.search import Automaton, Graph, PathResult, find_paths
 from schemaguru.graph.waypoints import compile_rules, lint_rules, validate_rules
 from schemaguru.knowledge.resolve import resolve
+from schemaguru.knowledge.soft_delete import store_mismatch
 from schemaguru.measure.backend import CostEstimate, MeasureBackend, MeasureResult
 from schemaguru.measure.budget import BudgetGuard
 from schemaguru.measure.catalog_bridge import StoreCatalog
@@ -81,6 +82,7 @@ from schemaguru.model.evidence import Evidence
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
 from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays.loader import load_overlays as _load_overlays
+from schemaguru.overlays.loader import retract_removed
 from schemaguru.overlays.schema import WaypointSpec
 from schemaguru.refresh.report import RefreshReport
 from schemaguru.refresh.run import refresh as _refresh
@@ -663,7 +665,11 @@ class Guru:
     def load_overlays(self, *paths: str | os.PathLike[str]) -> list[Diagnostic]:
         """Load human overlay files/directories (spec 14); returns this load's diagnostics.
 
-        Never raises on data. Replaces the previously loaded rules, chains and waivers.
+        Never raises on data. Replaces the previously loaded rules, chains, waivers and overlay
+        facts: an entry removed from its file (or a file no longer passed) has its facts
+        retracted, except for a file that failed to load, which keeps them until it loads again.
+        A human soft-delete filter that does not fit the catalog or the measured values is
+        reported (``SG210``) and shown with a warning, never applied silently.
         """
         today = require_aware(self._now()).date()
         facts, chains, waypoints, waivers, bag = _load_overlays(
@@ -701,6 +707,21 @@ class Guru:
         with self._lock:
             if kept:
                 self.store.put_facts(kept)
+            # entries removed since the last load take their facts with them (17b)
+            retract_removed(self.store, kept, out)
+            for f in kept:  # a declared live-rows filter is checked, never applied blind (6d)
+                why = store_mismatch(self.store, f)
+                if why is not None and isinstance(f.subject, ObjectRef):
+                    out.append(
+                        Diagnostic(
+                            "SG210",
+                            Severity.WARNING,
+                            f"the soft-delete filter of {f.subject.table_ref().canonical()} does "
+                            f"not match the data: {why}; it is shown with a warning and left out "
+                            "of SQL snippets",
+                            f.source,
+                        )
+                    )
             self._waypoints = list(waypoints)
             self._chains = good_chains
             self._waivers = tuple(waivers)

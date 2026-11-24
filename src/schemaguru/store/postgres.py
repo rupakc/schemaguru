@@ -41,7 +41,12 @@ from schemaguru._util.hashing import canonical_json
 from schemaguru._util.text import name_tokens
 from schemaguru._util.timeutil import to_iso, utcnow
 from schemaguru.diagnostics import DiagnosticBag
-from schemaguru.errors import SchemaGuruError, StoreUnavailableError, StoreVersionError
+from schemaguru.errors import (
+    SchemaGuruError,
+    StoreConfigError,
+    StoreUnavailableError,
+    StoreVersionError,
+)
 from schemaguru.model.facts import Fact
 from schemaguru.model.joins import JoinRef
 from schemaguru.model.refs import ObjectRef
@@ -122,6 +127,18 @@ def _unavailable(where: str) -> Iterator[None]:
         raise StoreUnavailableError(
             f"SG703: the Postgres store at {where} is unavailable: {type(e).__name__}"
         ) from None
+
+
+# SQLSTATE invalid_password / invalid_authorization_specification
+_AUTH_STATES = frozenset({"28P01", "28000"})
+
+
+def _auth_failed(e: Exception) -> bool:
+    """Did the server reject the credentials (rather than not answer)?"""
+    if getattr(e, "sqlstate", None) in _AUTH_STATES:
+        return True
+    text = str(e).lower()
+    return "authentication failed" in text or "no password supplied" in text
 
 
 def _where(dsn: str) -> str:
@@ -243,6 +260,11 @@ class PostgresStore:
                 self.dsn, autocommit=True, connect_timeout=self._connect_timeout_s
             )
         except psycopg.OperationalError as e:
+            if _auth_failed(e):  # the DSN's user/password: configuration, not an outage
+                raise StoreConfigError(
+                    f"SG704: the Postgres store at {_where(self.dsn)} rejected the configured "
+                    "credentials (authentication failed); check the DSN's user and password"
+                ) from None
             raise StoreUnavailableError(
                 f"SG703: cannot connect to the Postgres store at {_where(self.dsn)}: "
                 f"{str(e).strip()}"
@@ -555,6 +577,21 @@ class PostgresStore:
                 list(rows.values()),
             )
             self._reindex_many(sorted(touched))
+
+    def delete_facts(self, ids: Iterable[str]) -> int:
+        wanted = sorted(set(ids))
+        if not wanted:
+            return 0
+        with self.transaction():
+            touched: set[str] = set()
+            rows = self._q("SELECT id, data FROM facts WHERE id = ANY(%s)", (wanted,))
+            for _, data in rows:
+                f = Fact.from_dict(json.loads(data))
+                if f.kind.name in _MEANING_KINDS and isinstance(f.subject, ObjectRef):
+                    touched.add(f.subject.table_ref().canonical())
+            self._x("DELETE FROM facts WHERE id = ANY(%s)", (wanted,))
+            self._reindex_many(sorted(touched))
+        return len(rows)
 
     def iter_facts(self) -> Iterator[Fact]:
         last = ""

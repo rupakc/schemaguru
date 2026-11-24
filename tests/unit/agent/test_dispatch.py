@@ -475,3 +475,47 @@ def test_budget_guard_admission_is_thread_safe(tmp_path: Path) -> None:
             t.join()
         assert len(admitted) == 50 and guard.probes == 50
         assert store.ledger_total("agent_check", "queries", None) == 50
+
+
+def test_store_outage_message_is_what_http_shows(shop_guru: Guru, monkeypatch: Any) -> None:
+    """T21: a tool result for a store outage carries neither host:port/database nor driver
+    text, only the fixed message the HTTP surface returns."""
+    from schemaguru.errors import STORE_UNAVAILABLE, StoreUnavailableError
+
+    def down(*a: Any, **k: Any) -> Any:
+        raise StoreUnavailableError(
+            "SG703: the Postgres store at db.internal:6432/shopkb is unavailable: "
+            "OperationalError (server closed the connection unexpectedly)"
+        )
+
+    monkeypatch.setattr(shop_guru.store, "search", down)
+    out = handle_tool_call(shop_guru, "search_tables", {"query": "orders"})
+    assert out["error"]["code"] == "SG703"
+    assert out["error"]["message"] == STORE_UNAVAILABLE
+    assert out["text"] == f"SG703 {STORE_UNAVAILABLE}"
+    for bad in ("db.internal", "6432", "shopkb", "OperationalError", "server closed"):
+        assert bad not in json.dumps(out)
+
+
+def test_store_credentials_rejected_is_a_configuration_error(
+    shop_guru: Guru, monkeypatch: Any
+) -> None:
+    """T21: a rejected password is the host's configuration, not an outage: its own code
+    (SG704), not SG703 'retry later', and no host or user in the tool result."""
+    from schemaguru.errors import (
+        STORE_MISCONFIGURED,
+        ConfigError,
+        StoreConfigError,
+        StoreUnavailableError,
+    )
+
+    assert issubclass(StoreConfigError, ConfigError)
+    assert not issubclass(StoreConfigError, StoreUnavailableError)
+
+    def refused(*a: Any, **k: Any) -> Any:
+        raise StoreConfigError("SG704: the Postgres store at db.internal:5432/kb refused user sg")
+
+    monkeypatch.setattr(shop_guru.store, "search", refused)
+    out = handle_tool_call(shop_guru, "search_tables", {"query": "orders"})
+    assert out["error"]["code"] == "SG704" and out["error"]["message"] == STORE_MISCONFIGURED
+    assert "db.internal" not in json.dumps(out) and "sg" not in out["text"].split()

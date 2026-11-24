@@ -9,13 +9,14 @@ never on insertion order (spec 12.2).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from schemaguru._util.timeutil import require_aware
 from schemaguru.config import Config
 from schemaguru.knowledge.resolve import Effective, resolve
-from schemaguru.model.facts import Fact, Provenance, Waiver
+from schemaguru.knowledge.soft_delete import MISMATCH, fact_mismatch
+from schemaguru.model.facts import Fact, Provenance, Status, Waiver
 from schemaguru.model.joins import JoinRef
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column, Constraint, Table
@@ -104,6 +105,7 @@ def collect(
     touching = [f for f in joins if isinstance(f.subject, JoinRef) and _touches(f.subject, ref)]
     facts = sorted({f.id: f for f in (*own, *touching)}.values(), key=lambda f: f.id)
     effective = resolve(facts, now=now, ttl_days=cfg.fact_ttl_days, waivers=waivers)
+    effective = _check_soft_delete(effective, ref, columns, facts, now, waivers)
     return TableKnowledge(
         ref=ref,
         table=store.table(ref),
@@ -114,3 +116,39 @@ def collect(
         now=now,
         config=cfg,
     )
+
+
+def _check_soft_delete(
+    effective: dict[tuple[str, str], Effective],
+    ref: ObjectRef,
+    columns: Sequence[Column],
+    facts: Sequence[Fact],
+    now: datetime,
+    waivers: Sequence[Waiver],
+) -> dict[tuple[str, str], Effective]:
+    """A human/declared live-rows filter that does not fit the catalog or the measured values
+    becomes CONTRADICTED (WAIVED under a live waiver) with the reason, so the view warns and the
+    snippet leaves it out (spec 15: an expectation is checked, never applied silently)."""
+    key = ("SOFT_DELETE", ref.canonical())
+    eff = effective.get(key)
+    p = None if eff is None else eff.primary
+    if eff is None or p is None or p.status not in (Status.UNVERIFIED, Status.OBSERVED):
+        return effective
+    why = fact_mismatch(p, columns, facts)
+    if why is None:
+        return effective
+    msg = MISMATCH + why
+    waiver = next((w for w in waivers if w.active(now) and w.matches(*key)), None)
+    if waiver is not None:
+        msg = f"WAIVED until {waiver.expires.isoformat()} ({waiver.reason}): {msg}"
+    checked = replace(p, status=Status.CONTRADICTED if waiver is None else Status.WAIVED)
+    exp = eff.expectation
+    out = dict(effective)
+    out[key] = replace(
+        eff,
+        primary=checked,
+        expectation=checked if exp is not None and exp.id == p.id else exp,
+        contradictions=(*eff.contradictions, msg),
+        all=tuple(checked if f.id == p.id else f for f in eff.all),
+    )
+    return out

@@ -14,7 +14,7 @@ version than the library knows is refused (`SG702`).
 ## Protocol
 
 `schemaguru.store.Store` (about 30 methods) covers CRUD over the model plus `search(query, k)`,
-`facts_for(subjects, kinds)`, `put_facts`, snapshots and diffs, `crawl_state`, the budget
+`facts_for(subjects, kinds)`, `put_facts`, `delete_facts`, snapshots and diffs, `crawl_state`, the budget
 ledger, the feedback queue and transactions. Every write is an idempotent upsert keyed on
 stable ids; every listing is in a stable order. Read the protocol's docstrings in
 `schemaguru/store/protocol.py` before implementing it.

@@ -418,6 +418,25 @@ class SQLiteStore:
             for key in sorted(touched):
                 self._reindex(key)
 
+    def delete_facts(self, ids: Iterable[str]) -> int:
+        wanted = sorted(set(ids))
+        if not wanted:
+            return 0
+        removed = 0
+        with self.transaction():
+            touched: set[str] = set()
+            for chunk in _chunks(wanted):
+                marks = _marks(len(chunk))
+                for _, data in self._q(f"SELECT id, data FROM facts WHERE id IN ({marks})", chunk):
+                    f = Fact.from_dict(json.loads(data))
+                    removed += 1
+                    if f.kind.name in _MEANING_KINDS and isinstance(f.subject, ObjectRef):
+                        touched.add(f.subject.table_ref().canonical())
+                self._conn.execute(f"DELETE FROM facts WHERE id IN ({marks})", list(chunk))
+            for key in sorted(touched):
+                self._reindex(key)
+        return removed
+
     def iter_facts(self) -> Iterator[Fact]:
         last = ""
         while True:

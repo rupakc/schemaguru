@@ -412,3 +412,22 @@ def test_request_caps_match_the_tools(client: TestClient) -> None:
     ok = " ".join(f"w{i}" for i in range(64))
     assert client.get("/search", params={"q": ok}, headers=H_READER).status_code == 200
     assert client.get("/tables/" + "x" * 600, headers=H_READER).status_code == 400
+
+
+def test_store_credentials_rejected_is_500_config(
+    client: TestClient, guru: Guru, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T21: rejected store credentials are a server configuration error (SG704, 500), never
+    the SG703 'retry later' outage, and the response names no host, user or database."""
+    from schemaguru.errors import StoreConfigError
+
+    def refused(*a: Any, **k: Any) -> Any:
+        raise StoreConfigError("SG704: the Postgres store at h:5432/db rejected user sg")
+
+    monkeypatch.setattr(guru, "table_ref", refused)
+    r = client.get("/tables/shop.orders", headers=H_READER)
+    assert r.status_code == 500 and r.json()["error"]["code"] == "SG704"
+    assert "5432" not in r.text and "h:" not in r.text
+    monkeypatch.setattr(guru.store, "search", refused)
+    r = client.get("/search?q=orders", headers=H_READER)
+    assert r.status_code == 500 and r.json()["error"]["code"] == "SG704"

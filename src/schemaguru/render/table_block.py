@@ -25,6 +25,7 @@ from typing import Any
 from schemaguru.graph.search import Path
 from schemaguru.knowledge.columns import LITE_MAX_COLUMNS, lite_columns
 from schemaguru.knowledge.resolve import Effective
+from schemaguru.knowledge.soft_delete import MISMATCH
 from schemaguru.model.detail import DetailLevel
 from schemaguru.model.facts import Fact, Provenance, Status, method_class
 from schemaguru.model.joins import JoinRef, join_verdict
@@ -615,10 +616,19 @@ class _Analyser:
             return
         self.used.append(f)
         if f.status in (_S.CONTRADICTED, _S.WAIVED):
-            self.warn(
-                f"{_waived(eff)}live-rows filter {_wrap(self.pred(pred))} failed its check "
-                f"({phrase(f)}, {day(f.observed_at)}){tag(f)}"
-            )
+            # a human/declared filter that does not fit the catalog or the measured values
+            why = next((m.split(MISMATCH, 1)[1] for m in eff.contradictions if MISMATCH in m), None)
+            if why is not None:
+                who = "human" if f.provenance is _P.HUMAN else "declared"
+                self.warn(
+                    f"{_waived(eff)}live-rows filter {_wrap(self.pred(pred))} does not match "
+                    f"the data: {why} ({who}) — not applied"
+                )
+            else:
+                self.warn(
+                    f"{_waived(eff)}live-rows filter {_wrap(self.pred(pred))} failed its check "
+                    f"({phrase(f)}, {day(f.observed_at)}){tag(f)}"
+                )
             self.keyed(None, LITE_UP, f"SOFT_DELETE {_wrap(self.pred(pred))} contradicted")
             return
         how = phrase(f)
@@ -1206,7 +1216,8 @@ class _Analyser:
                 self.used.append(f)
 
     def failures_and_contradictions(self) -> None:
-        skip = ("latest measurement failed", "measured contradiction", "declared values")
+        # stated elsewhere in the block (values, measurements, the live-rows filter line)
+        skip = ("latest measurement failed", "measured contradiction", "declared values", MISMATCH)
         for key in sorted(self.k.effective):
             eff = self.k.effective[key]
             subj = eff.subject

@@ -563,6 +563,74 @@ def test_overlay_filters_validated_with_render_seam(
     assert guru.store.facts_for([ORD], ["DESCRIPTION"])  # the rest of the file still loads
 
 
+def _soft_delete_overlay(tmp_path: Path, predicate: str) -> Path:
+    p = tmp_path / "soft.yaml"
+    p.write_text(
+        f"version: 1\ntables:\n  shop.orders:\n    soft_delete: {json.dumps(predicate)}\n",
+        encoding="utf-8",
+    )
+    return p
+
+
+def test_declared_soft_delete_checked_against_the_data(guru: Guru, tmp_path: Path) -> None:
+    """6d: a human soft-delete filter that fits the measured data stays a (human, unchecked)
+    filter; one naming a missing column, or values the column never holds, gets SG210, a
+    warning in the view and no place in a SQL snippet. The human text itself is kept."""
+    guru.measure(["shop.orders", "shop.customers"])
+    good = guru.load_overlays(_soft_delete_overlay(tmp_path, "deleted IS NULL OR NOT deleted"))
+    assert not [d for d in good if d.code == "SG210"]
+    text = guru.context("orders per customer").text
+    assert "live rows: (deleted IS NULL OR NOT deleted) (human, unchecked)" in text
+    assert "WHERE" in text  # the fitting filter goes into the join snippet
+
+    for predicate, why in [
+        ("is_deleted = 0", "names no column"),
+        ("status != 'removed'", "include none it compares with"),
+    ]:
+        diags = guru.load_overlays(_soft_delete_overlay(tmp_path, predicate))
+        sg210 = [d for d in diags if d.code == "SG210"]
+        assert len(sg210) == 1 and why in sg210[0].message, diags
+        assert sg210[0].location and "soft.yaml" in sg210[0].location
+        text = guru.context("orders per customer").text
+        warning = next(ln for ln in text.splitlines() if "live-rows filter" in ln)
+        assert "⚠" in warning and "does not match the data" in warning and why in warning
+        assert "WHERE" not in text  # never a silent filter
+        stored = guru.store.facts_for([ORD], ["SOFT_DELETE"])
+        assert [f.value["predicate"] for f in stored if f.provenance is Provenance.HUMAN] == [
+            predicate
+        ]
+
+
+def test_removed_overlay_entries_are_retracted(guru: Guru, tmp_path: Path) -> None:
+    """17b: load, remove an entry, reload: the HUMAN facts it produced leave the store and the
+    view. A file that fails to load keeps its previous facts until it loads again; facts from
+    other sources (accepted drafts, measurements) are never touched."""
+    guru.measure(["shop.orders", "shop.customers"])
+    p = tmp_path / "o.yaml"
+    p.write_text(OVERLAY, encoding="utf-8")
+    guru.load_overlays(p)
+    assert "One row per order placed on the storefront." in guru.context("refund rate").text
+    measured = {f.id for f in guru.store.iter_facts() if f.provenance is Provenance.MEASURED}
+
+    p.write_text("version: 1\ntables: [unclosed\n", encoding="utf-8")  # broken: keep all
+    assert any(d.code == "SG208" for d in guru.load_overlays(p))
+    assert "One row per order placed on the storefront." in guru.context("refund rate").text
+
+    p.write_text(OVERLAY.replace("    description: One row per order placed on the storefront.\n",
+                                 ""), encoding="utf-8")  # fmt: skip
+    guru.load_overlays(p)
+    text = guru.context("refund rate").text
+    assert "One row per order placed on the storefront." not in text
+    assert "live rows: (deleted IS NULL OR NOT deleted)" in text  # the kept entry stays
+    assert not guru.store.facts_for([ORD], ["DESCRIPTION"])
+    assert measured <= {f.id for f in guru.store.iter_facts()}
+
+    p.unlink()
+    guru.load_overlays(tmp_path / "nothing.yaml")  # every overlay gone: every overlay fact goes
+    left = [f for f in guru.store.iter_facts() if (f.source or "").startswith("overlay:")]
+    assert left == [] and measured <= {f.id for f in guru.store.iter_facts()}
+
+
 # --- measurement, drafting, verification -------------------------------------------------------
 
 

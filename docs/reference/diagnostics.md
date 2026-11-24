@@ -18,6 +18,7 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG207 | overlay waiver has expired and is ignored |
 | SG208 | overlay file is unreadable or an entry is malformed |
 | SG209 | dbt manifest is unreadable |
+| SG210 | a declared soft-delete filter does not match the catalog or the measured values; it is shown with a warning and never applied in SQL snippets |
 | SG301 | probe over the per-probe byte budget was not run (fact ERROR over_budget) |
 | SG302 | total measurement budget exhausted; the remaining tables stay queued |
 | SG303 | a measurement probe failed (fact ERROR for that subject only) |
@@ -43,6 +44,7 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG701 | SQLite FTS5 is unavailable; search falls back to a slower LIKE scan |
 | SG702 | the store was written by a newer schema version than this library supports |
 | SG703 | the shared store is unavailable (refused, lost or pool exhausted; HTTP 503) |
+| SG704 | the shared store rejected the configured credentials: a configuration error, not an outage (HTTP 500) |
 | SG801 | guard refused the SQL: not a single read-only SELECT/WITH statement |
 | SG802 | guard refused the SQL: it reads a never-query table |
 | SG803 | an agent tool call was refused: unknown tool or invalid arguments |

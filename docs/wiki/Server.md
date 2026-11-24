@@ -217,6 +217,7 @@ unless the value policy is `raw`.
 | 409 | `SG809` | a refresh is already running on this store |
 | 413 | `SG807` | request body over 1 MiB |
 | 429 | `SG301` / `SG302` | a measurement budget refused the work |
+| 500 | `SG704` | the store rejected the configured credentials (a configuration error) |
 | 500 | `SG810` | unexpected error; details are logged, never returned |
 | 501 | `SG812` | MCP over HTTP is not available in this build |
 | 503 | `SG703` | the shared store is unavailable (refused, lost, pool exhausted) |

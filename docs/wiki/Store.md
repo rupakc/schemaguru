@@ -97,6 +97,9 @@ processes can share one store:
 - **Embeddings** are stored as bytes; `pgvector` is not required.
 - `advisory_lock("refresh")` lets the server run one refresh at a time across replicas.
 - A lost or refused connection, or an exhausted pool, raises `StoreUnavailableError` (`SG703`).
+  Rejected credentials raise `StoreConfigError` (`SG704`): a configuration error, not an outage.
+  Agents and HTTP clients see only a fixed message, never the store's host, database or driver
+  text.
 
 It is tested against a real PostgreSQL 16 server in the CI integration job, and both stores pass
 one shared contract suite

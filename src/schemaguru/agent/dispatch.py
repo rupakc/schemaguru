@@ -30,7 +30,14 @@ from typing import Any, cast
 
 from schemaguru._util.hashing import canonical_json
 from schemaguru.agent.tools import ToolHost, check_spec, tool_definitions
-from schemaguru.errors import AmbiguousNameError, SchemaGuruError, StoreUnavailableError
+from schemaguru.errors import (
+    STORE_MISCONFIGURED,
+    STORE_UNAVAILABLE,
+    AmbiguousNameError,
+    SchemaGuruError,
+    StoreConfigError,
+    StoreUnavailableError,
+)
 from schemaguru.measure import flbridge
 from schemaguru.model.detail import DetailLevel
 from schemaguru.model.evidence import Evidence
@@ -468,8 +475,11 @@ def handle_tool_call(guru: ToolHost, name: str, args: Mapping[str, Any]) -> dict
     except ToolError as e:
         extra: dict[str, Any] = {"candidates": e.candidates} if e.candidates else {}
         return _error(e.code, error_text(guru, e.message), **extra)
-    except StoreUnavailableError as e:  # a shared store is down: not the caller's fault
-        return _error("SG703", error_text(guru, str(e)))
+    except StoreUnavailableError:  # a shared store is down: not the caller's fault
+        # fixed text, as over HTTP: never the store's host, port, database or driver message
+        return _error("SG703", STORE_UNAVAILABLE)
+    except StoreConfigError:  # the host's store credentials were rejected: not an outage
+        return _error("SG704", STORE_MISCONFIGURED)
     except SchemaGuruError as e:
         return _error("SG803", error_text(guru, f"{name}: {e}"))
     except Exception as e:  # a tool result is always JSON (spec 18.1)

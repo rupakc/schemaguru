@@ -187,6 +187,22 @@ def test_snapshot_and_facts(store: Any) -> None:
     assert store.snapshot_facts("nope") == []
 
 
+def test_delete_facts_removes_live_rows_only(store: Any) -> None:
+    store.upsert_tables([tbl("orders")])
+    desc = Fact.make(FactKind.DESCRIPTION, tref("orders"), {"text": "ledger of refunds"},
+                     Provenance.HUMAN, Status.UNVERIFIED, source="overlay:o.yaml:3")  # fmt: skip
+    rows = Fact.make(FactKind.ROW_COUNT, tref("orders"), {"rows": 3}, Provenance.CATALOG,
+                     Status.OBSERVED)  # fmt: skip
+    store.put_facts([desc, rows])
+    snap = store.snapshot("before")
+    assert store.search("refunds", 5)[0][0] == tref("orders")
+    assert store.delete_facts([desc.id, "sha256:not-there"]) == 1
+    assert store.facts_for([tref("orders")], None) == [rows]
+    assert store.search("refunds", 5) == []  # the search document follows
+    assert {f.id for f in store.snapshot_facts(snap)} == {desc.id, rows.id}  # history kept
+    assert store.delete_facts([]) == 0
+
+
 def test_many_subjects_chunked(store: Any) -> None:
     facts = [
         Fact.make(

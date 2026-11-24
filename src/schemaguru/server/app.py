@@ -38,7 +38,13 @@ from schemaguru.agent.dispatch import error_text
 from schemaguru.agent.facts import outbound_facts
 from schemaguru.agent.tools import MAX_NAME, MAX_TEXT, tool_definitions
 from schemaguru.catalog.executor import scrub_text
-from schemaguru.errors import SchemaGuruError, StoreUnavailableError
+from schemaguru.errors import (
+    STORE_MISCONFIGURED,
+    STORE_UNAVAILABLE,
+    SchemaGuruError,
+    StoreConfigError,
+    StoreUnavailableError,
+)
 from schemaguru.guru import Guru
 from schemaguru.model.refs import ObjectRef
 from schemaguru.server.auth import Authenticator
@@ -53,7 +59,7 @@ log = logging.getLogger("schemaguru.server")
 MAX_BODY = 1 << 20  # bytes of a request body
 MAX_TERMS = 64  # words in a question or search query
 _CHALLENGE = {"WWW-Authenticate": 'Bearer realm="schemaguru"'}
-_UNAVAILABLE = "the knowledge store is unavailable; retry later"
+_UNAVAILABLE = STORE_UNAVAILABLE
 
 
 class _Fail(Exception):
@@ -62,7 +68,7 @@ class _Fail(Exception):
         self.status, self.code, self.message = status, code, message
 
 
-_STATUS = {"SG803": 400, "SG804": 500, "SG301": 429, "SG302": 429, "SG703": 503}
+_STATUS = {"SG803": 400, "SG804": 500, "SG301": 429, "SG302": 429, "SG703": 503, "SG704": 500}
 
 
 def _budget_range(guru: Guru) -> tuple[int, int]:
@@ -173,6 +179,8 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
                     msg = str(err.get("message", "")) if isinstance(err, dict) else str(err)
                     if code == "SG703":
                         msg = _UNAVAILABLE
+                    elif code == "SG704":
+                        msg = STORE_MISCONFIGURED
                     raise _Fail(_STATUS.get(code, 400), code, msg)
                 return JSONResponse(payload)
             except _Fail as f:
@@ -180,6 +188,10 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
             except StoreUnavailableError:
                 log.warning("SG703 store unavailable on %s %s", request.method, request.url.path)
                 return error(503, "SG703", _UNAVAILABLE)
+            except StoreConfigError:  # the host's store credentials: configuration, not outage
+                log.error("SG704 store credentials rejected on %s %s", request.method,
+                          request.url.path)  # fmt: skip
+                return error(500, "SG704", STORE_MISCONFIGURED)
             except SchemaGuruError as e:
                 return error(400, "SG807", str(e))
             except Exception:
@@ -225,7 +237,7 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
             raise _Fail(400, "SG807", f"{name} must be an integer") from None
 
     def not_found(e: SchemaGuruError) -> _Fail:
-        if isinstance(e, StoreUnavailableError):
+        if isinstance(e, StoreUnavailableError | StoreConfigError):
             raise e
         return _Fail(404, "SG808", str(e))
 
@@ -285,7 +297,7 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
         try:
             return guru.table_ref(text)
         except SchemaGuruError as e:
-            if isinstance(e, StoreUnavailableError):
+            if isinstance(e, StoreUnavailableError | StoreConfigError):
                 raise
         try:
             return guru.column_ref(text)

@@ -12,7 +12,7 @@
 |---|---|
 | structure | `upsert_schemas`, `upsert_tables`, `upsert_columns`, `upsert_constraints`, `mark_withdrawn`, `table`, `columns`, `constraints`, `iter_schemas`, `iter_tables(include_withdrawn=False)` |
 | names | `resolve(text) -> (ref, candidates)`, `tables_named(names, limit=...)` |
-| facts | `put_facts`, `iter_facts`, `facts_for(subjects, kinds)` |
+| facts | `put_facts`, `delete_facts`, `iter_facts`, `facts_for(subjects, kinds)` |
 | search | `search(query, k)` (lexical, live tables, name hits first) |
 | snapshots | `snapshot(label, checks_run=...)`, `snapshot_facts`, `snapshot_checks_run`, `latest_snapshot` |
 | state | `crawl_state_get`, `crawl_state_set`, `ledger_add`, `ledger_total`, `queue_push`, `queue_pop`, `feedback_add`, `feedback_summary` |
@@ -26,7 +26,8 @@ The contracts that matter most (each one is relied on elsewhere):
 - `resolve`: exact first, then a *unique* case-insensitive match; ambiguous returns
   `(None, candidates)`; never a guess.
 - `facts_for(None, ...)` means no filter; an empty iterable matches nothing; results sorted by id.
-- `put_facts` upserts by `Fact.id` (re-measurement replaces).
+- `put_facts` upserts by `Fact.id` (re-measurement replaces); `delete_facts(ids)` removes live
+  facts (snapshots keep their copies) and returns how many existed.
 - `search` must run in an index, not as a Python scan (it is on the agent's hot path).
 - Optional, for the embedding retriever: `embeddings_put`, `embeddings_get`, `embeddings_hashes`.
 

@@ -1,0 +1,65 @@
+CREATE TABLE shop.accounts (
+  account_id INTEGER,
+  name VARCHAR
+);
+CREATE TABLE shop.all_null_t (
+  id INTEGER,
+  c INTEGER
+);
+CREATE TABLE shop.anon_enum_t (
+  id INTEGER,
+  kind VARCHAR
+);
+CREATE TABLE shop.broken_child (
+  child_id INTEGER,
+  parent_id INTEGER
+);
+CREATE TABLE shop.customers (
+  customer_id INTEGER,
+  email VARCHAR,
+  phone VARCHAR,
+  segment VARCHAR
+);
+CREATE TABLE shop.empty_t (
+  id INTEGER,
+  v VARCHAR
+);
+CREATE TABLE shop.events (
+  event_id INTEGER,
+  session_id VARCHAR,
+  account_id INTEGER,
+  kind VARCHAR
+);
+CREATE TABLE shop.order_items (
+  order_id INTEGER,
+  line_no INTEGER,
+  product_id INTEGER
+);
+CREATE TABLE shop.orders (
+  order_id INTEGER,
+  customer_id INTEGER,
+  account_id INTEGER,
+  status VARCHAR,
+  created_at VARCHAR,
+  deleted BOOLEAN
+);
+CREATE TABLE shop.payments (
+  payment_id INTEGER,
+  order_id INTEGER,
+  amount INTEGER
+);
+CREATE TABLE shop.products (
+  product_id INTEGER,
+  name VARCHAR
+);
+CREATE TABLE shop.ref_child (
+  child_id INTEGER,
+  parent_id INTEGER
+);
+CREATE TABLE shop.ref_parent (
+  id INTEGER
+);
+CREATE TABLE shop.sessions (
+  session_id VARCHAR,
+  started_at VARCHAR
+);

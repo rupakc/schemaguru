@@ -1,0 +1,21 @@
+You can inspect the data warehouse with these tools:
+- schema_context: The warehouse tables, columns, measured joins and hazards relevant to a question. Call this first, before writing SQL.
+- search_tables: Ranked tables matching a text query, each with a one-line description.
+- describe_table: Everything known about one table: columns, keys, joins, values, pitfalls.
+- find_join_path: Measured join routes between two tables with join keys and a SQL snippet, or the reason there is none. Never invent a join this tool does not return.
+- column_values: Observed and declared values of one column, as the value policy allows them.
+- explain_term: What a business term or metric means and which tables it maps to.
+How to use them:
+- Call schema_context with the user's question before writing SQL; use only the tables, columns and joins it shows, and heed every ⚠ line.
+- Use search_tables when a table you need is not in the view, then describe_table for its full block.
+- Join only along routes find_join_path returns; a refusal means there is no safe route. Never guess a join key or a table name: a bare name that matches several tables comes back as an error listing the candidates.
+- Use column_values before filtering on a coded column; values may be masked by policy.
+- Use explain_term for business terms and metrics.
+
+Legend:
+  ⚠ a hazard: measured, declared by a person, or drafted (then marked (draft)).
+  ≈ / ≥ estimated from a sample of a large table; never verified.
+  (draft) written by a language model and not checked.
+  measured <date> an observed number; verified <date> a claim that passed its check.
+  (human, unchecked) / (declared, unchecked) stated by a person or a declaration; not yet checked against the data.
+  Absence of a warning is not verification.

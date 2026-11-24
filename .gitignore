@@ -17,3 +17,5 @@ site/
 htmlcov/
 coverage.xml
 .DS_Store
+examples/warehouse.duckdb
+examples/warehouse.duckdb.wal

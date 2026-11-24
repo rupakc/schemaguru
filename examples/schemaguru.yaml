@@ -1,0 +1,34 @@
+# A human overlay for the example shop warehouse (format: spec 14.1; docs: guide/overlays).
+# Humans write here; SchemaGuru never edits this file. Expectations (values, joins, soft
+# delete) are checked against measurement and contradictions are shown, never "fixed".
+version: 1
+warehouse: shop
+tables:
+  shop.orders:
+    description: One row per order placed on the storefront.
+    use_cases: [revenue by month, average basket size]
+    entity_type: order
+    soft_delete: "deleted IS NULL OR NOT deleted"
+    pitfalls:
+      - rule: Refunds are a second row with negative amount.
+        fix: Filter amount > 0 for gross revenue.
+    columns:
+      status:
+        description: Payment state of the order.
+        values: [paid, refunded, cancelled]
+      created_at:
+        type_note: ISO-8601 timestamp stored as STRING
+  shop.customers:
+    description: One row per customer account on the storefront.
+    columns:
+      segment:
+        description: Commercial segment used for reporting.
+        values: [retail, wholesale, vip]
+glossary:
+  - term: active customer
+    definition: ordered in the last 90 days
+    maps_to: [shop.orders, shop.customers]
+waivers:
+  - fact: "VALUES shop.orders.status"
+    reason: legacy upper-case rows being migrated
+    expires: 2027-01-31

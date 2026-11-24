@@ -1,0 +1,4 @@
+/* small additions to mkdocs-material; colours come from the theme's variables */
+.sg-out pre code { white-space: pre-wrap; }
+.md-typeset .sg-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+.md-typeset .sg-grid > div { border: 1px solid var(--md-default-fg-color--lightest); border-radius: .4rem; padding: .2rem 1rem; }

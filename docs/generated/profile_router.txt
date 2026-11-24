@@ -1,0 +1,6 @@
+Glossary:
+  active customer: ordered in the last 90 days [tables: shop.orders, shop.customers]
+
+shop.orders — One row per order placed on the storefront.
+
+Not shown: no other candidate tables.

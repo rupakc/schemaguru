@@ -1,0 +1,35 @@
+Legend:
+  ⚠ a hazard: measured, declared by a person, or drafted (then marked (draft)).
+  ≈ / ≥ estimated from a sample of a large table; never verified.
+  (draft) written by a language model and not checked.
+  measured <date> an observed number; verified <date> a claim that passed its check.
+  (human, unchecked) / (declared, unchecked) stated by a person or a declaration; not yet checked against the data.
+  Absence of a warning is not verification.
+
+Glossary:
+  active customer: ordered in the last 90 days [tables: shop.orders, shop.customers]
+
+TABLE shop.orders
+PITFALL ⚠ warn: Refunds are a second row with negative amount. — fix: Filter amount > 0 for gross revenue.
+WARN ⚠ WAIVED until 2027-01-31 (legacy upper-case rows being migrated): status: declared values 'paid','refunded','cancelled' — observed also 'PAID' (412 rows)
+WARN ⚠ status: case drift: 'paid'/'PAID' differ only in case — compare case-insensitively
+WARN ⚠ created_at: stored as VARCHAR, holds ISO-8601 date text (100% of values, measured 2026-11-24) — CAST before comparing
+ROWS 10000 measured 2026-11-24
+PK order_id unique measured 2026-11-24
+SOFT_DELETE (deleted IS NULL OR NOT deleted) human unchecked
+COLUMNS order_id INTEGER | customer_id INTEGER | account_id INTEGER | status VARCHAR | created_at VARCHAR | deleted BOOLEAN
+DISTINCT order_id 10000 measured 2026-11-24
+JOIN customer_id -> shop.customers.customer_id N:1 match=0.9804 coverage=1 measured 2026-11-24
+DISTINCT customer_id 1020 measured 2026-11-24
+JOIN account_id -> shop.accounts.account_id N:1 match=1 coverage=0.4 measured 2026-11-24
+DISTINCT account_id 40 measured 2026-11-24
+VALUES status declared='paid','refunded','cancelled' observed_extra='PAID':412
+DISTINCT status 4 measured 2026-11-24
+TYPE created_at stored_as=VARCHAR means=ISO-8601 date text rate=1 measured 2026-11-24
+NOTE created_at ISO-8601 timestamp stored as STRING
+DISTINCT created_at 10000 measured 2026-11-24
+VALUES deleted observed=TRUE:300 measured 2026-11-24
+NULLS deleted rate=0.97 measured 2026-11-24
+DISTINCT deleted 1 measured 2026-11-24
+
+Not shown: no other candidate tables.

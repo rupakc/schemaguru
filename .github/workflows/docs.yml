@@ -1,0 +1,51 @@
+name: Docs
+
+# Builds the documentation site (mkdocs-material + mkdocstrings) and the interactive demo,
+# and publishes it to the gh-pages branch. The repository's Pages source must be set to the
+# gh-pages branch once (Settings -> Pages).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: docs
+  cancel-in-progress: true
+
+permissions:
+  contents: write  # push to gh-pages
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Until FactLang 0.1.0 is on PyPI, install it from git first.
+      - run: pip install "factlang @ git+https://github.com/rupakc/factlang@main"
+      - name: Build the wheel and install it
+        run: |
+          pip install build
+          python -m build --wheel
+          pip install dist/*.whl
+          pip install "duckdb>=1.0" "mkdocs-material" "mkdocstrings[python]"
+      - name: Export the shop knowledge for the demo
+        run: python scripts/build_demo_export.py
+      - name: Check the generated pages are current
+        run: |
+          python scripts/gen_docs.py
+          git diff --exit-code -- docs/ site-demo/
+      - name: Build the site
+        run: mkdocs build --strict
+        env:
+          NO_MKDOCS_2_WARNING: "1"
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          force_orphan: true

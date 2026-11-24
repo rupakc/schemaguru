@@ -1,0 +1,1 @@
+shop.orders — One row per order placed on the storefront.

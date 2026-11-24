@@ -1,0 +1,8 @@
+Join paths (join keys, advisory; support = the weakest hop's match or coverage):
+  ⚠ no safe route (shop.events -> shop.orders; shop.sessions -> shop.orders): every route pivots through hub shop.accounts on two attribution edges (fan-in > 10): a cartesian hazard
+  shop.events → shop.sessions · support 100%
+    events.session_id = sessions.session_id (N:1)
+  shop.events → shop.accounts · support 100%
+    events.account_id = accounts.account_id (N:1)
+  shop.accounts → shop.orders · support 40%
+    orders.account_id = accounts.account_id (N:1)

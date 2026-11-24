@@ -1,0 +1,23 @@
+[shop.customers]
+  unmeasured: nothing here has been measured yet; figures are declared or drafted
+  1,000 rows (catalog stats)
+  Columns:
+    customer_id  INTEGER  PK (declared, enforced)
+    email        VARCHAR
+    phone        VARCHAR
+    segment      VARCHAR
+  Provenance: catalog only
+
+[shop.orders]
+  unmeasured: nothing here has been measured yet; figures are declared or drafted
+  10,000 rows (catalog stats)
+  Columns:
+    order_id     INTEGER  PK (declared, enforced)
+    customer_id  INTEGER
+    account_id   INTEGER
+    status       VARCHAR
+    created_at   VARCHAR
+    deleted      BOOLEAN
+  Provenance: catalog only
+
+Not shown: no other candidate tables.

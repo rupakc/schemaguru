@@ -1,0 +1,26 @@
+[
+  {
+    "name": "schema_context",
+    "description": "The warehouse tables, columns, measured joins and hazards relevant to a question. Call this first, before writing SQL."
+  },
+  {
+    "name": "search_tables",
+    "description": "Ranked tables matching a text query, each with a one-line description."
+  },
+  {
+    "name": "describe_table",
+    "description": "Everything known about one table: columns, keys, joins, values, pitfalls."
+  },
+  {
+    "name": "find_join_path",
+    "description": "Measured join routes between two tables with join keys and a SQL snippet, or the reason there is none. Never invent a join this tool does not return."
+  },
+  {
+    "name": "column_values",
+    "description": "Observed and declared values of one column, as the value policy allows them."
+  },
+  {
+    "name": "explain_term",
+    "description": "What a business term or metric means and which tables it maps to."
+  }
+]

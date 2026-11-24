@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from schemaguru import plugins
 from schemaguru.catalog.executor import MetadataExecutor
 from schemaguru.catalog.protocol import CatalogError, CatalogReader
 
@@ -13,6 +14,14 @@ _FACTORIES: dict[str, ReaderFactory] = {}
 
 
 def register_reader(dialect: str, factory: ReaderFactory) -> None:
+    _FACTORIES[dialect] = factory
+
+
+def _plugin(dialect: str, factory: object) -> None:
+    if dialect in _FACTORIES:
+        raise ValueError(f"dialect {dialect!r} already has a reader")
+    if not callable(factory):
+        raise TypeError("a reader plugin must be a factory taking a metadata executor")
     _FACTORIES[dialect] = factory
 
 
@@ -28,6 +37,8 @@ def _load_builtin() -> None:
     from schemaguru.catalog.readers import snowflake as _snowflake  # noqa: F401
     from schemaguru.catalog.readers import trino as _trino  # noqa: F401
     from schemaguru.catalog.readers import tsql as _tsql  # noqa: F401
+
+    plugins.discover("readers", _plugin)  # entry points ``schemaguru.readers`` (spec 21)
 
 
 def dialects() -> list[str]:

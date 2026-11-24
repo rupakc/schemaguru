@@ -134,11 +134,24 @@ _AUTH_STATES = frozenset({"28P01", "28000"})
 
 
 def _auth_failed(e: Exception) -> bool:
-    """Did the server reject the credentials (rather than not answer)?"""
-    if getattr(e, "sqlstate", None) in _AUTH_STATES:
-        return True
+    """Did the server reject the credentials or the role (rather than not answer)?
+
+    The SQLSTATE decides (28P01 invalid password, 28000 invalid authorization, e.g. a role that
+    does not exist), read from the error or its ``diag``; the English server text is only a
+    fallback for drivers that report no SQLSTATE on connect.
+    """
+    for state in (
+        getattr(e, "sqlstate", None),
+        getattr(getattr(e, "diag", None), "sqlstate", None),
+    ):
+        if isinstance(state, str) and state:
+            return state in _AUTH_STATES
     text = str(e).lower()
-    return "authentication failed" in text or "no password supplied" in text
+    return (
+        "authentication failed" in text
+        or "no password supplied" in text
+        or ("role" in text and "does not exist" in text)
+    )
 
 
 def _where(dsn: str) -> str:

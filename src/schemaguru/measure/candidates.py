@@ -1,7 +1,8 @@
 """Join candidates (spec 8.4): where the joins to measure come from.
 
-In priority order: declared constraints, overlays (human YAML), dbt, name/type heuristics, LLM
-drafts. A candidate is never a fact: it becomes a ``JOIN`` fact only after measurement.
+In priority order: declared constraints, overlays (human YAML), dbt, plug-in
+:class:`JoinCandidateSource` objects, name/type heuristics, LLM drafts. A candidate is never a
+fact: it becomes a ``JOIN`` fact only after measurement.
 
 Heuristics (spec 8.4.3), bounded to ``max_per_column`` per column and to the table's catalog
 unless ``same_catalog_only=False``:
@@ -19,7 +20,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from typing import Protocol, runtime_checkable
 
+from schemaguru import plugins
 from schemaguru.model.facts import Provenance
 from schemaguru.model.joins import JoinRef
 from schemaguru.model.refs import ObjectRef
@@ -32,7 +35,61 @@ _STEM = (
     re.compile(r"^(?P<x>.+?)_(?:id|fk)$", re.IGNORECASE),
     re.compile(r"^(?P<x>[a-z][A-Za-z0-9]*?)(?:Id|ID|Fk|FK)$"),
 )
-_RANK = {"constraint": 0, "overlay": 1, "dbt": 2, "heuristic": 3, "llm": 4}
+_RANK = {"constraint": 0, "overlay": 1, "dbt": 2, "plugin": 3, "heuristic": 4, "llm": 5}
+
+
+@runtime_checkable
+class JoinCandidateSource(Protocol):
+    """Proposes joins to measure (spec 8.4, 21): ``candidates(store, table)`` returns joins with
+    ``table`` on the left (child) side. Reads only; a proposal is measured before it is shown,
+    and one that fails measurement leaves only a diagnostic (like a heuristic guess)."""
+
+    name: str
+
+    def candidates(self, store: Store, table: ObjectRef) -> Iterable[JoinRef]: ...
+
+
+_SOURCES: list[JoinCandidateSource] = []
+
+
+def register_join_candidate_source(source: JoinCandidateSource) -> None:
+    """Add a source (also discovered from entry points ``schemaguru.join_candidate_sources``)."""
+    if not (
+        isinstance(getattr(source, "name", None), str)
+        and callable(getattr(source, "candidates", None))
+    ):
+        raise TypeError("a join candidate source needs a str name and candidates(store, table)")
+    if any(s.name == source.name for s in _SOURCES):
+        raise ValueError(f"join candidate source already registered: {source.name}")
+    _SOURCES.append(source)
+
+
+def reset_join_candidate_sources() -> None:
+    """Forget the registered sources (tests)."""
+    _SOURCES.clear()
+
+
+def _plugin(name: str, obj: object) -> None:
+    register_join_candidate_source(plugins.instance(obj))
+
+
+def join_candidate_sources() -> tuple[JoinCandidateSource, ...]:
+    plugins.discover("join_candidate_sources", _plugin)
+    return tuple(_SOURCES)
+
+
+def _from_sources(store: Store, table: ObjectRef) -> list[JoinRef]:
+    """Every registered source's proposals for ``table``; a source that raises, or proposes
+    something that is not a join from ``table``, costs only that proposal (spec 2 G7)."""
+    out: list[JoinRef] = []
+    for source in join_candidate_sources():
+        try:
+            for j in source.candidates(store, table):
+                if isinstance(j, JoinRef) and j.left and j.left[0].table_ref() == table:
+                    out.append(j)
+        except Exception:
+            continue
+    return out
 
 
 def _cast(left: str, right: str) -> tuple[bool, str | None]:
@@ -155,8 +212,8 @@ def join_candidates(
     store: Store, table: ObjectRef, *, max_per_column: int = 5, same_catalog_only: bool = True
 ) -> list[tuple[JoinRef, str]]:
     """Candidate joins with ``table`` on the child (left) side, labelled by origin
-    (``constraint, overlay, dbt, heuristic, llm``) in that priority order, de-duplicated (the
-    first origin wins). Reads the store only; never writes a fact."""
+    (``constraint, overlay, dbt, plugin, heuristic, llm``) in that priority order,
+    de-duplicated (the first origin wins). Reads the store only; never writes a fact."""
     table = table.table_ref()
     if store.table(table) is None:
         return []
@@ -192,6 +249,7 @@ def join_candidates(
         else:
             continue  # a measured join came from some candidate; it is not a source itself
         found.append((j, label))
+    found += [(j, "plugin") for j in _from_sources(store, table)]
     found += [
         (j, "heuristic") for j in _heuristics(store, table, max_per_column, same_catalog_only)
     ]

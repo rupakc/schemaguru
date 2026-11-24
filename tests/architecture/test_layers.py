@@ -19,6 +19,7 @@ LAYERS: dict[str, int] = {
     "schemaguru.errors": 0,
     "schemaguru.diagnostics": 0,
     "schemaguru._util": 0,
+    "schemaguru.plugins": 0,
     "schemaguru.model": 1,
     "schemaguru.store": 2,
     "schemaguru.config": 2,

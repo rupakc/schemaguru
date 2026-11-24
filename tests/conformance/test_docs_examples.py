@@ -105,6 +105,8 @@ REGISTRIES = (
     ("schemaguru.render.profiles", "_PROFILES"),
     ("schemaguru.render.formats", "_FORMATS"),
     ("schemaguru.refresh.classify", "_CUSTOM"),
+    ("schemaguru.feedback.classifiers", "_PLUGINS"),
+    ("schemaguru.measure.candidates", "_SOURCES"),
 )
 
 

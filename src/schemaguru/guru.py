@@ -47,11 +47,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, TypeVar, overload
 
+from schemaguru import plugins
 from schemaguru._util.hashing import stable_hash
 from schemaguru._util.timeutil import require_aware, utcnow
 from schemaguru.catalog.crawl import CrawlReport
 from schemaguru.catalog.crawl import crawl as _crawl
-from schemaguru.catalog.executor import Connection, FactLangExecutor
+from schemaguru.catalog.executor import Connection, FactLangExecutor, as_connector
 from schemaguru.catalog.executor import connect as _connect
 from schemaguru.catalog.protocol import CatalogError, CatalogReader
 from schemaguru.catalog.registry import reader_for
@@ -200,6 +201,8 @@ class Guru:
         self._now = now
         self._lock = threading.RLock()
         self._diags: dict[tuple[str, str, str | None], Diagnostic] = {}
+        if connector is not None:  # a DB-API connection, engine, client or callable (G2)
+            connector = as_connector(connector, dialect)
         self.dialect: str | None = (
             dialect or getattr(connector, "dialect", None) or getattr(reader, "dialect", None)
         )
@@ -377,7 +380,8 @@ class Guru:
     def diagnostics(self) -> tuple[Diagnostic, ...]:
         """Every distinct diagnostic the façade has seen (overlays, rules, chains, wiring)."""
         with self._lock:
-            return tuple(self._diags.values())
+            mine = tuple(self._diags.values())
+        return mine + tuple(d for d in plugins.diagnostics() if d not in mine)
 
     def _note(self, d: Diagnostic) -> None:
         with self._lock:
@@ -708,20 +712,24 @@ class Guru:
             if kept:
                 self.store.put_facts(kept)
             # entries removed since the last load take their facts with them (17b)
-            retract_removed(self.store, kept, out)
+            retract_removed(self.store, kept, bag.failed_files)
+            now = require_aware(self._now())
             for f in kept:  # a declared live-rows filter is checked, never applied blind (6d)
                 why = store_mismatch(self.store, f)
-                if why is not None and isinstance(f.subject, ObjectRef):
-                    out.append(
-                        Diagnostic(
-                            "SG210",
-                            Severity.WARNING,
-                            f"the soft-delete filter of {f.subject.table_ref().canonical()} does "
-                            f"not match the data: {why}; it is shown with a warning and left out "
-                            "of SQL snippets",
-                            f.source,
-                        )
+                if why is None or not isinstance(f.subject, ObjectRef):
+                    continue
+                key = ("SOFT_DELETE", f.subject.table_ref().canonical())
+                if any(w.active(now) and w.matches(*key) for w in waivers):
+                    continue  # waived, as in the view (render/knowledge.py)
+                out.append(
+                    Diagnostic(
+                        "SG210",
+                        Severity.WARNING,
+                        f"the soft-delete filter of {key[1]} does not match the data: {why}; it "
+                        "is shown with a warning and left out of SQL snippets",
+                        f.source,
                     )
+                )
             self._waypoints = list(waypoints)
             self._chains = good_chains
             self._waivers = tuple(waivers)

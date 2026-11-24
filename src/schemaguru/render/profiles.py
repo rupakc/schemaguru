@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from schemaguru import plugins
 from schemaguru.model.detail import DetailLevel
 from schemaguru.pii.policy import ValuePolicy
 from schemaguru.render.knowledge import TableKnowledge
@@ -126,7 +127,15 @@ def register_profile(name: str, profile: Profile, *, replace: bool = False) -> N
     _PROFILES[name] = profile
 
 
+def _plugin(name: str, obj: object) -> None:
+    profile = plugins.instance(obj)
+    if not callable(getattr(profile, "render_table", None)):
+        raise TypeError("a profile plugin needs render_table(knowledge, level)")
+    register_profile(name, profile)
+
+
 def get_profile(name: str) -> Profile:
+    plugins.discover("profiles", _plugin)  # entry points ``schemaguru.profiles`` (spec 21)
     try:
         return _PROFILES[name]
     except KeyError:

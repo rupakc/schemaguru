@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 
+from schemaguru import plugins
+
 
 @dataclass(frozen=True)
 class KindSpec:
@@ -30,7 +32,15 @@ def register_fact_kind(spec: KindSpec, *, replace: bool = False) -> None:
     _REGISTRY[spec.name] = spec
 
 
+def _plugin(name: str, obj: object) -> None:
+    if not isinstance(obj, KindSpec):
+        raise TypeError("a fact-kind plugin must be a KindSpec")
+    register_fact_kind(obj)
+
+
 def get_kind(name: str) -> KindSpec:
+    if name not in _REGISTRY:  # entry points ``schemaguru.fact_kinds`` (spec 21), once
+        plugins.discover("fact_kinds", _plugin)
     try:
         return _REGISTRY[name]
     except KeyError:

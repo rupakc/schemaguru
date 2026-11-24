@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from schemaguru import plugins
 from schemaguru._util.sqltext import NamePart, TableUse, Tok, blank, table_uses, tokenize
 from schemaguru.model.refs import ObjectRef
 
@@ -392,6 +393,31 @@ BUILTIN_CLASSIFIERS: tuple[FailureClassifier, ...] = (
 )
 
 
+_PLUGINS: list[FailureClassifier] = []
+
+
+def register_failure_classifier(c: FailureClassifier) -> None:
+    """Run ``c`` after the built-ins whenever no explicit classifier list is given."""
+    if not callable(getattr(c, "classify", None)):
+        raise TypeError("a failure classifier needs classify(sql, error, dialect)")
+    _PLUGINS.append(c)
+
+
+def reset_failure_classifiers() -> None:
+    """Forget registered classifiers (tests); the built-ins stay."""
+    _PLUGINS.clear()
+
+
+def _plugin(name: str, obj: object) -> None:
+    register_failure_classifier(plugins.instance(obj))
+
+
+def default_classifiers() -> tuple[FailureClassifier, ...]:
+    """The built-ins, then installed plugins (entry points ``schemaguru.failure_classifiers``)."""
+    plugins.discover("failure_classifiers", _plugin)
+    return (*BUILTIN_CLASSIFIERS, *_PLUGINS)
+
+
 def classify_all(
     sql: str,
     error: str,
@@ -406,7 +432,7 @@ def classify_all(
         sql, error = sql[:_MAX_SQL], error[:_MAX_ERROR]
     except Exception:
         return out
-    for c in BUILTIN_CLASSIFIERS if classifiers is None else classifiers:
+    for c in default_classifiers() if classifiers is None else classifiers:
         try:
             for rec in c.classify(sql, error, dialect):
                 if rec not in out:
@@ -423,4 +449,7 @@ __all__ = [
     "FeedbackRecord",
     "NamePart",
     "classify_all",
+    "default_classifiers",
+    "register_failure_classifier",
+    "reset_failure_classifiers",
 ]

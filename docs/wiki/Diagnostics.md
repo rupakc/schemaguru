@@ -68,6 +68,8 @@ holds the same list, and a test keeps that file equal to the codes the source em
 | `SG104` | metadata SQL was refused: only a single SELECT/WITH/SHOW/DESCRIBE is allowed |
 | `SG105` | the installed FactLang does not provide the metadata-SQL capability |
 | `SG106` | a connection URL could not be opened (no FactLang connect, no built-in driver) |
+| `SG107` | the object given as a connector is not one SchemaGuru can use, or its dialect cannot be told (ConfigError naming the accepted types) |
+| `SG108` | an installed plugin (entry point schemaguru.<point>) failed to load and was skipped |
 
 ### SG2xx: Overlays
 

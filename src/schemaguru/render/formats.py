@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape, quoteattr
 
+from schemaguru import plugins
 from schemaguru._util.hashing import canonical_json
 
 if TYPE_CHECKING:
@@ -84,7 +85,14 @@ def register_format(name: str, fn: Formatter, *, replace: bool = False) -> None:
     _FORMATS[name] = fn
 
 
+def _plugin(name: str, obj: object) -> None:
+    if not callable(obj):
+        raise TypeError("a format plugin must be a function view -> str")
+    register_format(name, obj)
+
+
 def format_view(view: ContextView, name: str) -> str:
+    plugins.discover("formats", _plugin)  # entry points ``schemaguru.formats`` (spec 21)
     try:
         fn = _FORMATS[name]
     except KeyError:

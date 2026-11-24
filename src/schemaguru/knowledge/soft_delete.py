@@ -160,7 +160,11 @@ def fact_mismatch(f: Fact, columns: Iterable[Column], facts: Iterable[Fact]) -> 
 
 def store_mismatch(store: Store, f: Fact) -> str | None:
     """:func:`fact_mismatch` reading the table's columns and values from ``store``."""
-    if not isinstance(f.subject, ObjectRef):
-        return None
+    if (
+        f.kind.name != "SOFT_DELETE"
+        or f.provenance not in (Provenance.HUMAN, Provenance.DECLARED)
+        or not isinstance(f.subject, ObjectRef)
+    ):
+        return None  # nothing to check: no store reads
     cols = store.columns(f.subject.table_ref())
     return fact_mismatch(f, cols, store.facts_for([c.ref for c in cols], ["VALUES"]))

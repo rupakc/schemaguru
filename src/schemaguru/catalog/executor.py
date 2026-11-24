@@ -398,3 +398,160 @@ def connect(url: str) -> Connection:
         or f"cannot open {redact_url(url)}: the installed FactLang has no connect() and there "
         f"is no built-in driver for {scheme!r} (pass a connector or reader to Guru instead)",
     )
+
+
+# --- bring your own connection (spec 2 G2): wrap what a host already holds ---------------------
+
+# root module of a DB-API driver -> FactLang/SchemaGuru dialect
+_DRIVER_DIALECTS = {
+    "duckdb": "duckdb",
+    "sqlite3": "sqlite",
+    "psycopg": "postgres",
+    "psycopg2": "postgres",
+    "pg8000": "postgres",
+    "pymysql": "mysql",
+    "MySQLdb": "mysql",
+    "mysql": "mysql",
+    "mariadb": "mysql",
+    "snowflake": "snowflake",
+    "redshift_connector": "redshift",
+    "databricks": "databricks",
+    "oracledb": "oracle",
+    "cx_Oracle": "oracle",
+    "trino": "trino",
+    "clickhouse_connect": "clickhouse",
+}
+ACCEPTED_CONNECTORS = (
+    "a FactLang connector, a DB-API (PEP 249) connection, a SQLAlchemy engine, a BigQuery "
+    "client, or a callable execute(sql) / execute(sql, params) returning rows as mappings"
+)
+
+
+def _quote_for(dialect: str) -> Any:
+    """A string-literal quoter for ``dialect``: backslash-escaping engines escape backslashes
+    too, so a value can never end a literal early."""
+    if dialect in ("bigquery", "mysql", "clickhouse", "databricks"):
+
+        def backslashed(text: str) -> str:
+            return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+        return backslashed
+
+    def ansi(text: str) -> str:
+        return "'" + text.replace("'", "''") + "'"
+
+    return ansi
+
+
+def _as_rows(result: Any) -> list[dict[str, Any]]:
+    """Rows as mappings, from a list of mappings or of row objects with ``keys()``/``items()``."""
+    out: list[dict[str, Any]] = []
+    for row in result:
+        if isinstance(row, dict):
+            out.append(dict(row))
+        elif hasattr(row, "items"):
+            out.append(dict(row.items()))
+        elif hasattr(row, "keys"):
+            out.append({k: row[k] for k in row.keys()})  # noqa: SIM118 - not always a dict
+        else:
+            raise TypeError(f"a row must be a mapping, got {type(row).__name__}")
+    return out
+
+
+class InlineConnector:
+    """A FactLang connector over a host that only runs SQL text: ``fn(sql) -> rows``.
+
+    The host takes no bind parameters, so values are inlined as literals, escaped for the
+    dialect (strings quoted, backslashes escaped where the engine treats them as escapes); NUL
+    is refused. Rows are mappings (or row objects with ``keys``/``items``).
+    """
+
+    paramstyle = "qmark"  # nominal: every value is inlined
+
+    def __init__(self, fn: Any, dialect: str) -> None:
+        self.fn = fn
+        self.dialect = dialect
+        self._quote = _quote_for(dialect)
+
+    def execute(self, probe: Any, *, timeout_s: float | None) -> Any:
+        base = importlib.import_module("factlang.connectors.base")
+        for p in probe.params:
+            if isinstance(p.value, str) and "\x00" in p.value:
+                raise base.ExecutionError("a NUL character cannot be inlined", code="FL700")
+        sql = probe.inline(self._quote)
+        try:
+            rows = _as_rows(self.fn(sql))
+        except base.ExecutionError:
+            raise
+        except Exception as exc:
+            raise base.map_error(exc, timeout_s=timeout_s) from exc
+        return base.QueryResult(base.normalise_rows(probe, rows))
+
+
+def _query_client(client: Any) -> Any:
+    """``fn(sql) -> rows`` over a client exposing ``query(sql).result()`` (BigQuery's shape)."""
+
+    def run(sql: str) -> list[dict[str, Any]]:
+        return _as_rows(client.query(sql).result())
+
+    return run
+
+
+def _positional_arity(fn: Any) -> int | None:
+    import inspect
+
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return None
+    required = [
+        p
+        for p in sig.parameters.values()
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) and p.default is p.empty
+    ]
+    return len(required)
+
+
+def as_connector(obj: Any, dialect: str | None = None) -> Any:
+    """A FactLang connector for what the host holds (spec 2 G2), or ``ConfigError`` ``SG107``.
+
+    Accepted: a FactLang connector (returned as is); a SQLAlchemy engine (FactLang's
+    ``SQLAlchemyConnector``); a BigQuery client (FactLang's ``BigQueryConnector`` when
+    ``google-cloud-bigquery`` is installed, else any object with ``query(sql).result()``,
+    inlined); a DB-API connection (FactLang's ``DBAPIConnector``, dialect from the driver
+    module unless given); a callable ``execute(sql, params)`` (FactLang's ``CallableConnector``)
+    or ``execute(sql)`` (values inlined). A callable or an unknown driver needs ``dialect``.
+    """
+    from schemaguru.errors import ConfigError
+
+    conns = importlib.import_module("factlang.connectors")
+    if isinstance(getattr(obj, "dialect", None), str) and callable(getattr(obj, "execute", None)):
+        return obj  # already a FactLang connector
+    module = type(obj).__module__ or ""
+    root = module.split(".")[0].lstrip("_")
+    if root == "sqlalchemy" or (
+        hasattr(getattr(obj, "dialect", None), "name") and callable(getattr(obj, "connect", None))
+    ):
+        return conns.SQLAlchemyConnector(obj)
+    if module.startswith("google.cloud.bigquery"):
+        return conns.BigQueryConnector(obj)
+    if callable(getattr(obj, "query", None)) and not callable(getattr(obj, "cursor", None)):
+        return InlineConnector(_query_client(obj), dialect or "bigquery")
+    if callable(getattr(obj, "cursor", None)):
+        name = dialect or _DRIVER_DIALECTS.get(root) or _DRIVER_DIALECTS.get(module.split(".")[0])
+        if name is None:
+            raise ConfigError(
+                f"SG107: cannot tell the dialect of a {module}.{type(obj).__name__} connection; "
+                "pass dialect=..."
+            )
+        return conns.DBAPIConnector(obj, name)
+    if callable(obj):
+        if dialect is None:
+            raise ConfigError("SG107: a callable connector needs dialect=... (the SQL it runs)")
+        if _positional_arity(obj) == 1:
+            return InlineConnector(obj, dialect)
+        return conns.CallableConnector(obj, dialect)
+    raise ConfigError(
+        f"SG107: cannot use a {module}.{type(obj).__name__} as a connector; expected "
+        f"{ACCEPTED_CONNECTORS}"
+    )

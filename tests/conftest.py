@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,28 @@ from typing import Any
 import pytest
 
 from tests.fixtures.shop import ShopFacts, build_big, build_shop, shop_catalog
+
+# CI jobs that install an extra set SCHEMAGURU_FORBID_SKIPS=1: there a skip (an importorskip
+# whose extra did not install, a missing fixture engine) fails the run instead of passing it.
+FORBID_SKIPS = os.environ.get("SCHEMAGURU_FORBID_SKIPS") == "1"
+
+
+def _forbid(rep: Any) -> None:
+    if FORBID_SKIPS and rep.skipped and not hasattr(rep, "wasxfail"):
+        rep.outcome = "failed"
+        rep.longrepr = f"skipped, but SCHEMAGURU_FORBID_SKIPS=1 forbids skips: {rep.longrepr}"
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: Any, call: Any) -> Iterator[None]:
+    outcome = yield
+    _forbid(outcome.get_result())  # type: ignore[attr-defined]
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector: Any) -> Iterator[None]:
+    outcome = yield
+    _forbid(outcome.get_result())  # type: ignore[attr-defined]
 
 
 @pytest.fixture(scope="session")

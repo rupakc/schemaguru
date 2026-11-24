@@ -19,6 +19,8 @@ from functools import lru_cache
 from importlib import resources
 from typing import Protocol, runtime_checkable
 
+from schemaguru import plugins
+
 # ---------------------------------------------------------------------------------------------
 # Shared patterns (also used by the outbound sweep, which searches instead of full-matching).
 
@@ -352,6 +354,7 @@ class PersonNameDetector:
 
 def names_enabled() -> bool:
     """False when the registered ``person_name`` detector is disabled or replaced by a stub."""
+    _discover()
     for d in _registry:
         if d.name == "person_name":
             return bool(getattr(d, "enabled", True))
@@ -376,8 +379,21 @@ _BUILTINS: tuple[Detector, ...] = (
 _registry: list[Detector] = list(_BUILTINS)
 
 
+def _plugin(name: str, obj: object) -> None:
+    d = plugins.instance(obj)
+    if not (isinstance(getattr(d, "name", None), str) and callable(getattr(d, "matches", None))):
+        raise TypeError("a PII detector plugin needs a str name and matches(value)")
+    register_detector(d)
+
+
+def _discover() -> None:
+    """Entry points ``schemaguru.pii_detectors`` (spec 21), once, on first use."""
+    plugins.discover("pii_detectors", _plugin)
+
+
 def all_detectors() -> tuple[Detector, ...]:
     """Registered detectors in priority order (built-ins first, then plug-ins)."""
+    _discover()
     return tuple(_registry)
 
 
@@ -401,6 +417,7 @@ def first_match(value: str) -> Detector | None:
     v = value.strip()
     if not v:
         return None
+    _discover()
     for d in _registry:
         if d.matches(v):
             return d

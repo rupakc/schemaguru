@@ -140,8 +140,9 @@ def test_negative_control_unknown_schema_is_empty():
                                           changed_since=None).items == []
 ```
 
-There is no entry-point discovery yet (spec 21 plans `schemaguru.<point>` entry-point groups):
-import your module so it calls `register_reader` before you call `reader_for`.
+An installed package can also declare it in the entry-point group `schemaguru.readers`
+(name = dialect, object = the factory); `reader_for` and `dialects()` load the group on first
+use. A plugin that fails to load, or reuses a built-in dialect name, is skipped with `SG108`.
 
 ## See also
 

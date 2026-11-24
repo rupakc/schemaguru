@@ -46,6 +46,25 @@ jobs:
       - run: pytest -m "not integration and not live and not benchmark" --cov
         shell: bash
 
+  # The agent surfaces whose SDKs are extras (MCP, framework adapters) and the bring-your-own-
+  # connection tests (SQLAlchemy). The default test job installs only [dev], where these skip;
+  # here a skip is a failure (SCHEMAGURU_FORBID_SKIPS, tests/conftest.py).
+  extras:
+    runs-on: ubuntu-latest
+    env:
+      SCHEMAGURU_FORBID_SKIPS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "factlang @ git+https://github.com/rupakc/factlang@main"
+      - run: pip install -e ".[dev,mcp,anthropic,langchain,llamaindex,openai-agents]" "sqlalchemy>=2"
+      - run: >-
+          pytest -rs -p no:cacheprovider
+          tests/unit/agent/test_mcp.py tests/unit/agent/test_adapters.py
+          tests/unit/test_connectors.py tests/acceptance
+
   integration:
     runs-on: ubuntu-latest
     env:

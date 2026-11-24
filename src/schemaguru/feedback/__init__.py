@@ -4,6 +4,8 @@ from schemaguru.feedback.classifiers import (
     BUILTIN_CLASSIFIERS,
     FailureClassifier,
     FeedbackRecord,
+    default_classifiers,
+    register_failure_classifier,
 )
 from schemaguru.feedback.intake import ReportOutcome, report_error, report_error_detailed
 
@@ -12,6 +14,8 @@ __all__ = [
     "FailureClassifier",
     "FeedbackRecord",
     "ReportOutcome",
+    "default_classifiers",
+    "register_failure_classifier",
     "report_error",
     "report_error_detailed",
 ]

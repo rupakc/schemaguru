@@ -55,8 +55,9 @@ report_error(guru.store, "SELECT amount FROM shop.orders",
 # 1   (real result on the shop fixture: one record written)
 ```
 
-There is no registry for failure classifiers in 0.1.0 (and no entry-point discovery yet):
-pass them explicitly as above.
+To run one on every report, register it: `schemaguru.feedback.register_failure_classifier(c)`
+(it runs after the built-ins), or install it through the entry-point group
+`schemaguru.failure_classifiers`; a plugin that fails to load is skipped with `SG108`.
 
 ## Test template
 

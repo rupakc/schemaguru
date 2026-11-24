@@ -34,6 +34,8 @@ def _is_null(node: yaml.Node) -> bool:
 
 
 class _FileLoader:
+    aborted = False  # the whole file failed (unreadable, not YAML, wrong version)
+
     def __init__(self, path: str, store: Store, bag: DiagnosticBag, today: date) -> None:
         self.path = path
         self.store = store
@@ -211,6 +213,7 @@ class _FileLoader:
     def run(self, root: yaml.Node) -> None:
         top = self.mapping(root, S.TOP_KEYS, "overlay")
         if top is None:
+            self.aborted = not _is_null(root)  # not a mapping: nothing of the file was read
             return
         ver = top.get("version")
         if (
@@ -224,6 +227,7 @@ class _FileLoader:
                 ver if ver is not None else root,
                 hint="add 'version: 1' at the top of the file",
             )
+            self.aborted = True
             return
         if "warehouse" in top:
             self.text(top["warehouse"], "warehouse")
@@ -583,14 +587,23 @@ def _expand(paths: Iterable[str | Path]) -> list[Path]:
     return out
 
 
+class OverlayDiagnostics(DiagnosticBag):
+    """The load's diagnostics plus ``failed_files``: files that failed as a whole (unreadable,
+    too large, not YAML, not a mapping, unsupported version), whose earlier facts are kept."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed_files: set[str] = set()
+
+
 def load_overlays(
     paths: Sequence[str | Path], store: Store, *, today: date | None = None
-) -> tuple[list[Fact], list[Chain], list[WaypointSpec], list[Waiver], DiagnosticBag]:
+) -> tuple[list[Fact], list[Chain], list[WaypointSpec], list[Waiver], OverlayDiagnostics]:
     """Load overlay files (a directory contributes its ``*.yaml`` / ``*.yml``, non-recursive).
 
     Never raises on data. ``today`` (default: the current UTC date) decides waiver expiry.
     """
-    bag = DiagnosticBag()
+    bag = OverlayDiagnostics()
     now = today or datetime.now(timezone.utc).date()
     facts: list[Fact] = []
     chains: list[Chain] = []
@@ -601,10 +614,12 @@ def load_overlays(
         try:
             if path.stat().st_size > _MAX_BYTES:
                 bag.add(Diagnostic("SG208", Severity.ERROR, "overlay file too large", str(path)))
+                bag.failed_files.add(str(path))
                 continue
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as e:
             bag.add(Diagnostic("SG208", Severity.ERROR, f"cannot read overlay: {e}", str(path)))
+            bag.failed_files.add(str(path))
             continue
         try:
             root = yaml.compose(text, Loader=yaml.SafeLoader)
@@ -612,9 +627,11 @@ def load_overlays(
             mark = getattr(e, "problem_mark", None)
             where = f"{path}:{mark.line + 1}" if mark is not None else str(path)
             bag.add(Diagnostic("SG208", Severity.ERROR, f"invalid YAML: {e}", where))
+            bag.failed_files.add(str(path))
             continue
         except Exception as e:  # never sink the load on hostile input
             bag.add(Diagnostic("SG208", Severity.ERROR, f"invalid YAML: {e}", str(path)))
+            bag.failed_files.add(str(path))
             continue
         if root is None:
             continue
@@ -622,6 +639,10 @@ def load_overlays(
             fl.run(root)
         except RecursionError:
             bag.add(Diagnostic("SG208", Severity.ERROR, "overlay nested too deeply", str(path)))
+            fl.aborted = True
+        if fl.aborted:
+            bag.failed_files.add(str(path))
+            continue  # a file that failed as a whole contributes nothing, not a partial read
         facts += fl.facts
         chains += fl.chains
         waypoints += fl.waypoints
@@ -632,8 +653,6 @@ def load_overlays(
 # crawl_state key recording the ids of the facts the last overlay load put in the store
 OVERLAY_STATE = "overlay_facts"
 _SOURCE = "overlay:"
-# file-level failures: a file reporting one keeps its previous facts until it loads cleanly
-_FILE_ERRORS = frozenset({"SG201", "SG208"})
 
 
 def _source_file(source: str | None) -> str | None:
@@ -642,12 +661,13 @@ def _source_file(source: str | None) -> str | None:
     return source[len(_SOURCE) :].rsplit(":", 1)[0]
 
 
-def retract_removed(store: Store, loaded: Sequence[Fact], diagnostics: Iterable[Diagnostic]) -> int:
+def retract_removed(store: Store, loaded: Sequence[Fact], failed_files: Iterable[str]) -> int:
     """Remove the overlay facts of earlier loads that this load no longer produces (17b).
 
-    A load replaces the overlay knowledge: an entry removed from its file (or a file no longer
-    passed) loses its HUMAN facts. A file that failed to load (``SG201``/``SG208``) keeps its
-    previous facts, so a typo never wipes knowledge. Only facts whose source is an overlay are
+    A load replaces the overlay knowledge: an entry removed from its file, or a malformed entry
+    (its diagnostic says why), or a file no longer passed loses its HUMAN facts. A file that
+    failed as a whole (``failed_files``: unreadable, not YAML, wrong version) keeps its previous
+    facts, so a typo never wipes a file's knowledge. Only facts whose source is an overlay are
     candidates; measured, accepted and dbt facts are never touched. Returns how many went.
     """
     state = store.crawl_state_get(OVERLAY_STATE)
@@ -659,20 +679,10 @@ def retract_removed(store: Store, loaded: Sequence[Fact], diagnostics: Iterable[
     else:
         raw = state.get("facts")
         previous = {str(i): str(p) for i, p in raw.items()} if isinstance(raw, dict) else {}
-    failed = [
-        d.location
-        for d in diagnostics
-        if d.code in _FILE_ERRORS and d.severity is Severity.ERROR and d.location
-    ]
-    keep_files = {p for p in previous.values() if any(_same_file(p, loc) for loc in failed)}
+    keep_files = set(failed_files)
     current = {f.id: _source_file(f.source) or "" for f in loaded}
     kept = {i: p for i, p in previous.items() if p in keep_files and i not in current}
     stale = sorted(i for i, p in previous.items() if i not in current and p not in keep_files)
     removed = store.delete_facts(stale) if stale else 0
     store.crawl_state_set(OVERLAY_STATE, {"facts": {**kept, **current}})
     return removed
-
-
-def _same_file(source_file: str, location: str) -> bool:
-    """Does a diagnostic location (``path`` or ``path:line``) name ``source_file``?"""
-    return location == source_file or location.startswith(source_file + ":")

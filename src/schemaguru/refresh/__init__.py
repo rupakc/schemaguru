@@ -3,6 +3,7 @@
 from schemaguru.refresh.classify import (
     ChangeClass,
     ChangeClassifier,
+    change_classifiers,
     classify_change,
     register_change_classifier,
     reset_change_classifiers,
@@ -14,6 +15,7 @@ __all__ = [
     "ChangeClass",
     "ChangeClassifier",
     "RefreshReport",
+    "change_classifiers",
     "classify_change",
     "refresh",
     "register_change_classifier",

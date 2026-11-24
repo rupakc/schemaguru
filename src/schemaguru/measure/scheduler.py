@@ -40,7 +40,7 @@ from schemaguru.measure.requests import (
     Uniqueness,
 )
 from schemaguru.measure.sampling import choose_sample, is_large, seed_for
-from schemaguru.model.facts import Fact, Provenance, Status
+from schemaguru.model.facts import Fact, Provenance, Status, method_class
 from schemaguru.model.joins import JoinRef
 from schemaguru.model.kinds import FactKind
 from schemaguru.model.refs import ObjectRef
@@ -56,7 +56,7 @@ DATE_TEXT_MEANS = "ISO-8601 date text"
 NO_BLOCK_SAMPLING = "no_block_sampling"
 _BYTES_PER_VALUE = 8  # the row-count heuristic's width of one stored value
 # candidate origins whose join is only a guess: an unmeasured guess leaves no fact
-_GUESSES = frozenset({"heuristic", "llm"})
+_GUESSES = frozenset({"plugin", "heuristic", "llm"})
 _QUEUE_ALL = 1_000_000
 
 
@@ -74,6 +74,51 @@ class MeasureReport:
     # unknown is not 0 (spec 25.1): ``bytes`` is a lower bound while either count is non-zero
     unknown_cost_probes: int = 0  # admitted without a known cost estimate
     unknown_spend_probes: int = 0  # ran, and neither the warehouse nor an estimate gave bytes
+
+
+def _estimated(f: Fact) -> bool:
+    """A fact that carries a sample's estimate (what makes a table "sampled" in a report)."""
+    return method_class(f.method) == "sampled" and f.status in (
+        Status.ESTIMATED,
+        Status.CONTRADICTED,
+    )
+
+
+def _known_rows(table: Table, facts: Sequence[Fact]) -> int | None:
+    """The table's row count when known exactly: a measured exact count, else catalog stats."""
+    for f in facts:
+        rows = f.value.get("rows")
+        if (
+            f.kind.name == "ROW_COUNT"
+            and f.method == "exact"
+            and f.status is Status.OBSERVED
+            and isinstance(rows, int)
+        ):
+            return rows
+    return table.row_count
+
+
+def cap_sampled_distinct(facts: list[Fact], rows: int | None) -> list[Fact]:
+    """A sampled distinct count scaled past the table's row count is capped at it (a column
+    cannot hold more distinct values than rows); the estimate's bounds are capped too and the
+    value says ``capped_at_rows``. Exact and unknown counts are left alone."""
+    if rows is None:
+        return facts
+    out: list[Fact] = []
+    for f in facts:
+        d = f.value.get("distinct_keys")
+        if f.kind.name == "DISTINCT" and _estimated(f) and isinstance(d, int) and d > rows:
+            value = dict(f.value, distinct_keys=rows, capped_at_rows=True)
+            est = value.get("estimate")
+            if isinstance(est, dict):
+                value["estimate"] = {
+                    k: (min(v, rows) if k in ("value", "low", "high") and isinstance(v, int | float)
+                        and not isinstance(v, bool) else v)
+                    for k, v in est.items()
+                }  # fmt: skip
+            f = replace(f, value=value)
+        out.append(f)
+    return out
 
 
 def _diag(code: str, message: str, location: str | None = None) -> Diagnostic:
@@ -256,6 +301,9 @@ class Scheduler:
             ran = ran or stop.ran
             raise
         finally:
+            facts = cap_sampled_distinct(facts, _known_rows(table, facts))
+            if ref in report.sampled_tables and not any(_estimated(f) for f in facts):
+                report.sampled_tables.remove(ref)  # nothing estimated came of the sample
             if facts:
                 self.store.put_facts(facts)
                 report.facts_written += len(facts)

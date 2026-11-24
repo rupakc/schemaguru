@@ -601,6 +601,43 @@ def test_declared_soft_delete_checked_against_the_data(guru: Guru, tmp_path: Pat
         ]
 
 
+def test_waived_soft_delete_mismatch_is_not_reported(guru: Guru, tmp_path: Path) -> None:
+    """A live waiver on the table's SOFT_DELETE silences SG210, as it turns the view's warning
+    into WAIVED (render/knowledge.py); the filter still stays out of SQL snippets."""
+    guru.measure(["shop.orders", "shop.customers"])
+    p = tmp_path / "w.yaml"
+    p.write_text(
+        'version: 1\ntables:\n  shop.orders:\n    soft_delete: "is_deleted = 0"\n'
+        'waivers:\n  - fact: "SOFT_DELETE shop.orders"\n    reason: column being added\n'
+        "    expires: 2999-01-01\n",
+        encoding="utf-8",
+    )
+    assert not [d for d in guru.load_overlays(p) if d.code == "SG210"]
+    text = guru.context("orders per customer").text
+    assert "WAIVED until 2999-01-01" in text and "WHERE" not in text
+    p.write_text(p.read_text(encoding="utf-8").replace("2999-01-01", "2001-01-01"), "utf-8")
+    assert [d for d in guru.load_overlays(p) if d.code == "SG210"]  # expired: reported
+
+
+def test_malformed_entry_retracts_its_previous_fact(guru: Guru, tmp_path: Path) -> None:
+    """An entry-level error (SG208 on one entry) costs that entry: its earlier fact goes;
+    the rest of the file still loads. Only a file that fails as a whole keeps its facts."""
+    p = tmp_path / "e.yaml"
+    p.write_text(OVERLAY, encoding="utf-8")
+    guru.load_overlays(p)
+    status = ObjectRef(None, "shop", "orders", "status")
+    assert guru.store.facts_for([status], ["VALUES"])
+    p.write_text(
+        OVERLAY.replace("        values: [paid, refunded, cancelled]", "        values: {paid: 1}"),
+        encoding="utf-8",
+    )
+    diags = guru.load_overlays(p)
+    assert any(d.code == "SG208" for d in diags)
+    human = [f for f in guru.store.facts_for([status], ["VALUES"]) if f.provenance.name == "HUMAN"]
+    assert human == []
+    assert guru.store.facts_for([ORD], ["DESCRIPTION"])  # the other entries stay
+
+
 def test_removed_overlay_entries_are_retracted(guru: Guru, tmp_path: Path) -> None:
     """17b: load, remove an entry, reload: the HUMAN facts it produced leave the store and the
     view. A file that fails to load keeps its previous facts until it loads again; facts from
@@ -764,8 +801,15 @@ def test_token_counters(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
 def test_connector_wiring(tmp_path: Path) -> None:
     from schemaguru.config import SamplingConfig
 
+    class Stub:  # a FactLang connector shape: used as is
+        dialect = "duckdb"
+        paramstyle = "qmark"
+
+        def execute(self, probe: Any, *, timeout_s: float | None) -> Any:
+            raise AssertionError("not run")
+
     cfg = Config(sampling=SamplingConfig(measurement="force"))
-    g = Guru(connector=object(), dialect="duckdb", store=str(tmp_path / "c.db"), config=cfg)
+    g = Guru(connector=Stub(), dialect="duckdb", store=str(tmp_path / "c.db"), config=cfg)
     assert isinstance(g.backend, flbridge.FactLangBackend)
     assert g.backend._sampling is cfg.sampling  # sampled measurement scales by the config
     if "run_metadata" not in flbridge.capabilities():

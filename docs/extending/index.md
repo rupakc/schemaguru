@@ -12,17 +12,29 @@ worked example that runs, and a test template.
 | [Token counter](token-counter.md) | `sg.scope.TokenCounter` | `Guru(token_counter=...)` |
 | [LLM provider](llm-provider.md) — drafting | `sg.draft.LLMProvider` | `guru.draft(..., provider=...)` |
 | [PII detector](pii-detector.md) | `sg.pii.Detector` | `sg.pii.register_detector(d)` |
-| [Failure classifier](failure-classifier.md) — runtime feedback | `schemaguru.feedback.FailureClassifier` | `schemaguru.feedback.report_error(..., classifiers=[...])` |
+| [Failure classifier](failure-classifier.md) — runtime feedback | `schemaguru.feedback.FailureClassifier` | `schemaguru.feedback.register_failure_classifier(c)` or `report_error(..., classifiers=[...])` |
 | [Fact kind](fact-kind.md) | `schemaguru.model.KindSpec` | `schemaguru.model.register_fact_kind(spec)` |
 | [Render profile and format](profile-format.md) | `sg.render.Profile`, a formatter | `sg.render.register_profile` / `register_format` |
 | [Change classifier](change-classifier.md) — refresh | `schemaguru.refresh.ChangeClassifier` | `schemaguru.refresh.register_change_classifier(c)` |
-| [Join candidate source](join-candidates.md) | — | overlays and dbt today (see the page) |
+| [Join candidate source](join-candidates.md) | `sg.measure.JoinCandidateSource` | `sg.measure.register_join_candidate_source(s)` |
 | [Server authenticator](authenticator.md) | `schemaguru.server.Authenticator` | `create_app(guru, authenticator=...)` |
 
 !!! note "Discovery"
-    The design reserves entry-point groups (`schemaguru.<point>`) for discovering
-    extensions from installed packages. 0.1 does not read entry points: register extensions
-    in code, as the pages show.
+    Installed packages are discovered through entry-point groups `schemaguru.<point>`
+    (`readers`, `stores`, `retrievers`, `embedders`, `token_counters`, `llm_providers`,
+    `pii_detectors`, `failure_classifiers`, `fact_kinds`, `profiles`, `formats`,
+    `change_classifiers`, `join_candidate_sources`, `authenticators`). Each registry loads its
+    group lazily, once, on first use. A plugin that fails to import, or that its registry refuses
+    (a duplicate name, a wrong shape), is skipped with diagnostic `SG108` (`guru.diagnostics`,
+    `schemaguru.plugins.diagnostics()`); it never raises. Points that are passed to a constructor
+    (store, retriever, embedder, token counter, LLM provider, authenticator) are kept by name:
+    `schemaguru.plugins.get("retrievers", "mine")` returns the factory, and
+    `schemaguru.plugins.register(point, name, factory)` adds one in code.
+
+    ```toml
+    [project.entry-points."schemaguru.readers"]
+    toyshop = "toyshop_sg:make_reader"
+    ```
 
 Rules every extension follows, because the rest of SchemaGuru relies on them:
 

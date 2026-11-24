@@ -66,8 +66,9 @@ def test_roles(guru):
     assert c.post("/refresh", json={}, headers={"X-Auth-Groups": "analysts"}).status_code == 403
 ```
 
-There is no entry-point discovery yet (spec 21 plans `schemaguru.<point>` groups): pass the
-object in.
+Pass the object in. An installed package can also declare it in the entry-point group
+`schemaguru.authenticators`; `schemaguru.plugins.get("authenticators", name)` returns it (a
+plugin that fails to load is skipped with `SG108`).
 
 ## See also
 

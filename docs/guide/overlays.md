@@ -48,8 +48,10 @@ guru.close()
 * **One call, all files.** Each `load_overlays` call *replaces* the previously loaded rules,
   chains, waivers and overlay facts. Pass every overlay path in one call:
   `guru.load_overlays("schemaguru/", "team-a.yaml")`. An entry you delete from a file (or a
-  file you no longer pass) has its facts retracted from the store; a file that fails to load
-  (`SG201`, `SG208`) keeps its previous facts until it loads again.
+  file you no longer pass) has its facts retracted from the store, and so does an entry with
+  an error of its own (an `SG208` on that entry retracts that entry's previous fact; the rest
+  of the file loads). A file that fails as a whole (unreadable, not YAML, not a mapping,
+  unsupported `version`) keeps its previous facts until it loads again.
 * **What persists.** The `HUMAN` facts (descriptions, expectations, glossary, …) are written
   to the store. Waypoint rules, chains and waivers live on the `Guru` that loaded them; load
   the overlays in the process that serves the agent.

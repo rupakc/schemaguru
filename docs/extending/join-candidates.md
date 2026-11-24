@@ -1,18 +1,44 @@
 # Join candidate source
 
-A join is measured only if something proposes it. The design lists a pluggable
-`JoinCandidateSource`; **0.1 does not ship that protocol yet**. Candidates come from four
-built-in sources, in priority order (`schemaguru.measure.join_candidates`):
+A join is measured only if something proposes it. Candidates come from these sources, in
+priority order (`schemaguru.measure.join_candidates`):
 
 1. declared foreign keys from the catalog;
 2. joins in overlays (`tables.<t>.joins`) and dbt `relationships` tests (`DECLARED`);
-3. name and type heuristics: `x_id` / `xId` / `x_fk` → a table `x` or `xs` with a compatible
+3. registered `JoinCandidateSource` plug-ins;
+4. name and type heuristics: `x_id` / `xId` / `x_fk` → a table `x` or `xs` with a compatible
    key, and a column named like another table's single-column primary key in the same
    schema (at most 5 per column, same catalog only);
-4. join candidates in LLM drafts.
+5. join candidates in LLM drafts.
 
-So the way to add candidates from your own system today is to **write them as declared or
-human joins**: generate an overlay file, or put `DECLARED` join facts in the store.
+## Protocol
+
+`sg.measure.JoinCandidateSource`: a `name: str` and `candidates(store, table)`, returning
+`JoinRef`s with `table` on the left (child) side. It only reads. Register one with
+`sg.measure.register_join_candidate_source(source)`, or install it through the entry-point
+group `schemaguru.join_candidate_sources`. A proposal is measured before anything is shown;
+one that fails measurement leaves only a diagnostic, like a heuristic guess. A source that
+raises costs only its proposals.
+
+```python
+import schemaguru as sg
+from schemaguru.model import JoinRef, ObjectRef
+
+
+class Lineage:
+    name = "lineage"
+
+    def candidates(self, store, table):
+        if table.table == "ref_child":
+            yield JoinRef((ObjectRef(None, "shop", "ref_child", "parent_id"),),
+                          (ObjectRef(None, "shop", "ref_parent", "id"),))
+
+
+sg.measure.register_join_candidate_source(Lineage())
+```
+
+Joins you also want shown as human expectations (a broken one is then a contradiction, not a
+silent drop) belong in an overlay instead, as below.
 
 ## Worked example: a join the heuristics cannot see
 

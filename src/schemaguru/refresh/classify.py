@@ -24,6 +24,7 @@ from collections.abc import Collection, Iterable, Mapping
 from enum import Enum
 from typing import Any, Protocol
 
+from schemaguru import plugins
 from schemaguru.knowledge.diff import Change, subject_key
 from schemaguru.knowledge.resolve import Effective
 from schemaguru.model.facts import Fact, Provenance, Status
@@ -73,6 +74,19 @@ _CUSTOM: list[ChangeClassifier] = []
 
 def register_change_classifier(c: ChangeClassifier) -> None:
     _CUSTOM.append(c)
+
+
+def _plugin(name: str, obj: object) -> None:
+    c = plugins.instance(obj)
+    if not callable(getattr(c, "classify", None)):
+        raise TypeError("a change-classifier plugin needs classify(change, prev, new)")
+    register_change_classifier(c)
+
+
+def change_classifiers() -> tuple[ChangeClassifier, ...]:
+    """Registered classifiers, after entry points ``schemaguru.change_classifiers`` (once)."""
+    plugins.discover("change_classifiers", _plugin)
+    return tuple(_CUSTOM)
 
 
 def reset_change_classifiers() -> None:
@@ -186,7 +200,7 @@ def _classify(
         return ChangeClass.REVIEW
     if checks_run is not None and _not_measured(change, checks_run, measured):
         return ChangeClass.NOT_MEASURED
-    for c in _CUSTOM:
+    for c in change_classifiers():
         got = c.classify(change, prev, new)
         if got is not None:
             return got

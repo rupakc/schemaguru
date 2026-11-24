@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
-import factlang
 import pytest
 
 import schemaguru as sg
@@ -29,7 +28,7 @@ from schemaguru.catalog.executor import check_metadata_sql
 from schemaguru.config import Config, CrawlConfig, GraphConfig, SamplingConfig
 from schemaguru.model import Provenance, Status
 from schemaguru.pii import mask_value
-from schemaguru.render.formats import _FORMATS, register_format
+from schemaguru.render.formats import register_format
 from tests.architecture.test_denylist import find_violations, parse_denylist, tracked_files
 from tests.fixtures.shop import ShopFacts, build_shop
 from tests.unit.draft.conftest import Script, table_reply
@@ -148,91 +147,228 @@ def test_g1_three_lines_from_install_to_context(
 def test_g2_integrates_existing_connections_and_emits_every_shape(
     warehouse: tuple[Path, ShopFacts], tmp_path: Path
 ) -> None:
-    """G2: an existing DB-API connection or a plain execute callable (wrapped in FactLang's
-    connectors, spec 19), and output as text, JSON, markdown, tool specs and MCP resources."""
+    """G2: the host's own objects as they are: a raw DB-API connection, a plain one-argument
+    ``execute(sql)`` callable and a BigQuery-shaped client (``query(sql).result()``); an
+    unknown object is a ConfigError. Output as text, JSON, markdown, tool specs and MCP."""
     conn = duckdb.connect(str(warehouse[0]), read_only=True)
 
-    def execute(sql: str, params: Any) -> list[dict[str, Any]]:
+    def rows(sql: str) -> list[dict[str, Any]]:
         cur = conn.cursor()  # FactLang may run probes in parallel: one cursor per call
-        cur.execute(sql, list(params) if params else None)
+        cur.execute(sql)
         names = [d[0] for d in cur.description or ()]
         return [dict(zip(names, row, strict=True)) for row in cur.fetchall()]
 
-    connectors = {
-        "dbapi": factlang.DBAPIConnector(conn, "duckdb"),
-        "callable": factlang.CallableConnector(execute, "duckdb"),
+    class Job:
+        def __init__(self, sql: str) -> None:
+            self.sql = sql
+
+        def result(self) -> list[dict[str, Any]]:
+            return rows(self.sql)
+
+    class Client:
+        def query(self, sql: str) -> Job:
+            return Job(sql)
+
+    hosts: dict[str, tuple[Any, str | None]] = {
+        "dbapi": (conn, None),  # the dialect comes from the driver
+        "execute": (rows, "duckdb"),
+        "client": (Client(), "duckdb"),  # a real BigQuery client defaults to "bigquery"
     }
     try:
-        for name, connector in connectors.items():
-            guru = sg.Guru(connector=connector, store=str(tmp_path / f"{name}.db"))
+        for name, (host, dialect) in hosts.items():
+            guru = sg.Guru(connector=host, dialect=dialect, store=str(tmp_path / f"{name}.db"))
             assert guru.crawl().tables_seen == TABLES, name
             assert not guru.measure("shop.orders").errors, name
             text = guru.context("orders by status").text
             assert "10,000 rows (measured" in blocks(text)["shop.orders"], name
             guru.close()
+        with pytest.raises(sg.SchemaGuruError, match="SG107"):
+            sg.Guru(connector=object(), store=str(tmp_path / "bad.db"))
+
+        guru = sg.Guru(connector=conn, store=str(tmp_path / "dbapi.db"))
+        view = guru.context("orders by status")
+        as_json = json.loads(str(guru.context("orders by status", format="json")))
+        assert as_json and "shop.orders" in json.dumps(as_json)
+        assert "shop.orders" in str(guru.context("orders by status", format="markdown"))
+        specs = guru.tools()
+        assert all({"name", "description", "input_schema"} <= set(s) for s in specs)
+        result = guru.handle_tool_call("schema_context", {"question": "orders by status"})
+        assert json.loads(json.dumps(result))["text"] == view.text
+        assert resource_ref("schema://tables/shop.orders") == "shop.orders"  # MCP resources
+        guru.close()
     finally:
         conn.close()
 
-    guru = sg.Guru(connector=connectors["dbapi"], store=str(tmp_path / "dbapi.db"))
-    view = guru.context("orders by status")
-    as_json = json.loads(str(guru.context("orders by status", format="json")))
-    assert as_json and "shop.orders" in json.dumps(as_json)
-    assert "shop.orders" in str(guru.context("orders by status", format="markdown"))
-    specs = guru.tools()
-    assert all({"name", "description", "input_schema"} <= set(s) for s in specs)
-    result = guru.handle_tool_call("schema_context", {"question": "orders by status"})
-    assert json.loads(json.dumps(result))["text"] == view.text
-    assert resource_ref("schema://tables/shop.orders") == "shop.orders"  # MCP resource URIs
-    guru.close()
 
-
-def test_g3_extension_points_plug_in(
-    warehouse: tuple[Path, ShopFacts], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """G3: a new warehouse reader, a retriever, a token counter and an output format are
-    plugged in through their documented points, and the pipeline uses each of them."""
+@pytest.fixture
+def own_registries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every extension registry restored after the test (registrations are process-wide)."""
+    from schemaguru import plugins
     from schemaguru.catalog import registry
+    from schemaguru.feedback import classifiers as fb
+    from schemaguru.measure import candidates
+    from schemaguru.model import kinds
+    from schemaguru.pii import detectors
+    from schemaguru.refresh import classify
+    from schemaguru.render import profiles
 
-    monkeypatch.setattr(registry, "_FACTORIES", dict(registry._FACTORIES))
-    monkeypatch.setattr("schemaguru.render.formats._FORMATS", dict(_FORMATS))
-    built: list[str] = []
+    registry._load_builtin()
+    for module, name in [
+        (registry, "_FACTORIES"), (kinds, "_REGISTRY"), (profiles, "_PROFILES"),
+        (sys.modules["schemaguru.render.formats"], "_FORMATS"),
+    ]:  # fmt: skip
+        monkeypatch.setattr(module, name, dict(getattr(module, name)))
+    for module, name in [
+        (detectors, "_registry"), (classify, "_CUSTOM"), (fb, "_PLUGINS"),
+        (candidates, "_SOURCES"),
+    ]:  # fmt: skip
+        monkeypatch.setattr(module, name, list(getattr(module, name)))
+    monkeypatch.setattr(plugins, "_named", {p: {} for p in plugins.NAMED_POINTS})
 
-    def toy_reader(executor: Any) -> Any:
-        built.append("toy")
+
+def test_g3_every_extension_point_plugs_in(
+    warehouse: tuple[Path, ShopFacts], tmp_path: Path, own_registries: None
+) -> None:
+    """G3 (spec 21): each extension point is registered through its documented registry and
+    then called by SchemaGuru through it: catalog reader, store, retriever, embedder, token
+    counter, LLM provider, PII detector, failure classifier, fact kind, profile, format,
+    change classifier, join candidate source and server authenticator. (Discovery of the same
+    registries from ``schemaguru.<point>`` entry points: tests/unit/test_plugins.py.)"""
+    from collections import Counter
+
+    from starlette.testclient import TestClient
+
+    from schemaguru import plugins
+    from schemaguru.catalog import registry
+    from schemaguru.feedback import FeedbackRecord, register_failure_classifier
+    from schemaguru.measure import register_join_candidate_source
+    from schemaguru.model import Fact, FactKind, ObjectRef
+    from schemaguru.model.joins import JoinRef
+    from schemaguru.model.kinds import KindSpec, get_kind, register_fact_kind
+    from schemaguru.pii import register_detector
+    from schemaguru.refresh import register_change_classifier
+    from schemaguru.render import register_profile
+    from schemaguru.render.profiles import RouterProfile
+    from schemaguru.scope.embeddings import EmbeddingRetriever
+    from schemaguru.server.app import create_app
+    from schemaguru.store.sqlite import SQLiteStore
+
+    calls: Counter[str] = Counter()
+
+    def toy_reader(executor: Any) -> Any:  # a "new warehouse": the DuckDB reader, renamed
+        calls["reader"] += 1
         return registry._FACTORIES["duckdb"](executor)
 
-    sg.catalog.register_reader("toyshop", toy_reader)
-
     class Fixed:
-        def __init__(self) -> None:
-            self.questions: list[str] = []
-
-        def search(self, question: str, k: int) -> list[tuple[sg.ObjectRef, float]]:
-            self.questions.append(question)
-            return [(sg.ObjectRef(None, "shop", "payments"), 1.0)]
+        def search(self, question: str, k: int) -> list[tuple[ObjectRef, float]]:
+            calls["retriever"] += 1
+            return [(ObjectRef(None, "shop", "payments"), 1.0)]
 
     class Words:
         def count(self, text: str) -> int:
+            calls["token_counter"] += 1
             return len(text.split())
 
+    class Bag:
+        model_id = "bag-v1"
+
+        def embed(self, texts: Any) -> list[list[float]]:
+            calls["embedder"] += 1
+            return [[float(t.count("payment")), float(t.count("order")), 1.0] for t in texts]
+
+    class Sku:
+        name, category = "sku", "other"
+
+        def matches(self, value: str) -> bool:
+            calls["detector"] += 1
+            return value.startswith("SKU-") and value[4:].isdigit()
+
+    class Missing:
+        def classify(self, sql: str, error: str, dialect: str | None) -> list[Any]:
+            calls["failure_classifier"] += 1
+            return [FeedbackRecord(ObjectRef(None, "shop", "orders"), "nope", "unknown_column")]
+
+    class Seen:
+        def classify(self, change: Any, prev: Any, new: Any) -> None:
+            calls["change_classifier"] += 1
+            return None  # no opinion: the built-in rules decide
+
+    class Proposer:  # a join the heuristics cannot see (no table named "parent")
+        name = "lineage"
+
+        def candidates(self, store: Any, table: ObjectRef) -> list[JoinRef]:
+            calls["join_source"] += 1
+            if table.table != "ref_child":
+                return []
+            return [JoinRef((ObjectRef(None, "shop", "ref_child", "parent_id"),),
+                            (ObjectRef(None, "shop", "ref_parent", "id"),))]  # fmt: skip
+
+    class HeaderAuth:
+        def authenticate(self, headers: Any) -> str | None:
+            calls["authenticator"] += 1
+            return "reader" if headers.get("x-team") == "shop" else None
+
+    sg.catalog.register_reader("toyshop", toy_reader)
+    for point, name, factory in [
+        ("stores", "plain", SQLiteStore), ("retrievers", "fixed", Fixed),
+        ("embedders", "bag", Bag), ("token_counters", "words", Words),
+        ("llm_providers", "script", lambda: Script().provider()),
+        ("authenticators", "header", HeaderAuth),
+    ]:  # fmt: skip
+        plugins.register(point, name, factory)
+    register_detector(Sku())
+    register_failure_classifier(Missing())
+    carbon = KindSpec("CARBON_NOTE", "table", True, False)
+    register_fact_kind(carbon)
+    register_profile("brief", RouterProfile())
     register_format("shout", lambda v: v.text.upper())
+    register_change_classifier(Seen())
+    register_join_candidate_source(Proposer())
+
     conn = duckdb.connect(str(warehouse[0]), read_only=True)
-    retriever = Fixed()
+    store = plugins.get("stores", "plain")(str(tmp_path / "ext.db"))
     guru = sg.Guru(
+        connector=conn,
         reader=reader_for("toyshop", DBAPIExecutor(conn)),
-        store=str(tmp_path / "ext.db"),
-        dialect="duckdb",
-        retriever=retriever,
-        token_counter=Words(),
+        store=store,
+        retriever=plugins.get("retrievers", "fixed")(),
+        token_counter=plugins.get("token_counters", "words")(),
     )
-    assert built == ["toy"] and guru.crawl().tables_seen == TABLES
+    assert guru.crawl().tables_seen == TABLES
+    assert not guru.measure(["shop.ref_child", "shop.orders"]).errors
+    joins = guru.store.facts_for(None, ["JOIN"])
+    assert any(f.subject.left[0].table == "ref_child" for f in joins)  # proposed, then measured
     view = guru.context("anything at all")
-    assert retriever.questions == ["anything at all"]
-    assert list(blocks(view.text)) == ["shop.payments"]
-    assert view.tokens == len(view.text.split())  # the plugged-in counter
+    assert list(blocks(view.text)) == ["shop.payments"] and view.tokens == len(view.text.split())
     assert str(guru.context("anything at all", format="shout")) == view.text.upper()
+    assert str(guru.context("anything at all", profile="brief")).startswith("shop.payments")
+    embedded = EmbeddingRetriever(guru.store, plugins.get("embedders", "bag")())
+    embedded.index()
+    assert embedded.search("payment", 1)[0][0] == ObjectRef(None, "shop", "payments")
+    assert mask_value("SKU-12345")[1] == "other"
+    assert guru.report_error("SELECT nope FROM shop.orders", "no such column") >= 1
+    orders = ObjectRef(None, "shop", "orders")
+    note = Fact.make(
+        get_kind("CARBON_NOTE"), orders, {"text": "low"}, sg.Provenance.HUMAN, sg.Status.UNVERIFIED
+    )
+    guru.store.put_facts([note])
+    assert [f.kind for f in guru.store.facts_for([orders], ["CARBON_NOTE"])] == [carbon]
+    assert FactKind.VALUES is get_kind("VALUES")
+    guru.refresh()
+    report = guru.draft(["shop.products"], provider=plugins.get("llm_providers", "script")())
+    assert report.drafted
+    client = TestClient(create_app(guru, authenticator=plugins.get("authenticators", "header")()))
+    assert (
+        client.get("/search", params={"q": "orders"}, headers={"x-team": "shop"}).status_code == 200
+    )
+    assert client.get("/search", params={"q": "orders"}).status_code == 401
     guru.close()
     conn.close()
+    for point in (
+        "reader", "retriever", "token_counter", "embedder", "detector", "failure_classifier",
+        "change_classifier", "join_source", "authenticator",
+    ):  # fmt: skip
+        assert calls[point] > 0, point
 
 
 def test_g4_every_listed_warehouse_has_a_reader() -> None:
@@ -551,6 +687,49 @@ def test_no_unmasked_value_reaches_llm_by_default(
     assert [v for v in planted if v in opted]  # the check can fail
 
 
+def test_no_unmasked_value_in_agent_tool_results_by_default(
+    warehouse: tuple[Path, ShopFacts], tmp_path: Path
+) -> None:
+    """Anti-goal 3 over the agent surface: column_values, describe_table, search_tables,
+    schema_context and check_fact evidence (agent checks allowed) carry no personal value
+    unmasked by default, not even one the agent typed into a claim. Negative control: the raw
+    opt-in shows the same values through column_values."""
+    with duckdb.connect(str(warehouse[0]), read_only=True) as conn:
+        kinds = [
+            r[0] for r in conn.execute("SELECT DISTINCT kind FROM shop.anon_enum_t").fetchall()
+        ]
+        emails = [r[0] for r in conn.execute("SELECT email FROM shop.customers").fetchall()]
+    personal = [*kinds, *emails]
+
+    def results(cfg: Config, name: str) -> str:
+        guru = connect(warehouse, tmp_path / f"{name}.db", config=cfg)
+        guru.measure(["shop.anon_enum_t", "shop.customers"])
+        out = [
+            guru.handle_tool_call("column_values", {"column": "shop.anon_enum_t.kind"}),
+            guru.handle_tool_call("column_values", {"column": "shop.customers.email"}),
+            guru.handle_tool_call("describe_table", {"table": "shop.anon_enum_t"}),
+            guru.handle_tool_call("describe_table", {"table": "shop.customers"}),
+            guru.handle_tool_call("search_tables", {"query": "customers email anon kind"}),
+            guru.handle_tool_call("schema_context", {"question": "customer emails by kind"}),
+            guru.handle_tool_call(
+                "check_fact", {"claims": f"VALUES shop.customers.email IN ['{emails[0]}']"}
+            ),
+            guru.handle_tool_call(
+                "check_fact", {"claims": f"VALUES shop.anon_enum_t.kind IN ['{kinds[0]}']"}
+            ),
+        ]
+        guru.close()
+        assert all("text" in r for r in out)
+        return json.dumps(out)
+
+    default = results(Config(agent_checks="allow"), "masked")
+    assert "<email>" in default
+    assert [v for v in personal if v in default] == []
+    raw = SamplingConfig(llm_values="raw", store_raw_samples=True)
+    opted = results(Config(agent_checks="allow", sampling=raw), "raw")
+    assert [v for v in kinds if v in opted]  # the control: the check can fail
+
+
 def test_no_writes_on_query_path(measured: sg.Guru, monkeypatch: pytest.MonkeyPatch) -> None:
     """Anti-goal 4: 100 context() calls (plus every read-only tool and the prompt block) leave
     the store's write counter at zero. Negative control: a feedback report is counted."""
@@ -571,6 +750,7 @@ def test_no_writes_on_query_path(measured: sg.Guru, monkeypatch: pytest.MonkeyPa
 
         monkeypatch.setattr(store, name, counted)
     before = sorted(f.id for f in store.iter_facts())
+    changes = store._conn.total_changes  # every row SQLite inserted, updated or deleted
     for i in range(100):
         measured.context(f"{QUESTIONS[i % len(QUESTIONS)]} #{i}")  # distinct: no view cache
     for name, args in {
@@ -584,7 +764,12 @@ def test_no_writes_on_query_path(measured: sg.Guru, monkeypatch: pytest.MonkeyPa
     measured.prompt_block("orders per customer")
     measured.find_path("shop.orders", "shop.customers")
     assert writes == []
+    assert store._conn.total_changes == changes  # catches writes no wrapper lists (queue_pop)
     assert sorted(f.id for f in store.iter_facts()) == before
+    assert store.queue_pop(1) == []  # nothing was queued on the query path
+    store.queue_push(sg.ObjectRef(None, "shop", "orders"), "control", 0.0)
+    pushed = store._conn.total_changes
+    assert store.queue_pop(1) and store._conn.total_changes > pushed  # the control: pop counts
     measured.report_error("SELECT nope FROM shop.orders", 'column "nope" does not exist')
     assert "feedback_add" in writes  # the control: a write is seen
 
@@ -657,8 +842,25 @@ def test_sampled_marked_everywhere(warehouse: tuple[Path, ShopFacts], tmp_path: 
     cfg = Config(sampling=SamplingConfig(measurement="force"))
     guru = connect(warehouse, tmp_path / "sampled.db", config=cfg)
     report = guru.measure(all=True)
-    assert len(report.sampled_tables) == TABLES and not report.errors
+    assert not report.errors
     facts = [f for f in guru.store.iter_facts() if f.provenance is Provenance.MEASURED]
+    estimated = {
+        f.subject.table_ref()
+        for f in facts
+        if isinstance(f.subject, sg.ObjectRef)
+        and (f.method or "").startswith("sampled:")
+        and f.status in (Status.ESTIMATED, Status.CONTRADICTED)
+    }
+    # a table is reported sampled exactly when an estimate came of its sample (a 0.1% sample of
+    # a 200-row table holds no row, so it is not)
+    assert estimated and set(report.sampled_tables) == estimated
+    assert sg.ObjectRef(None, "shop", "products") not in report.sampled_tables
+    rows = {t.ref: t.row_count for t in guru.store.iter_tables()}
+    for f in facts:  # a sampled distinct count never exceeds the table's rows
+        d = f.value.get("distinct_keys")
+        if f.kind.name == "DISTINCT" and isinstance(d, int) and isinstance(f.subject, sg.ObjectRef):
+            known = rows.get(f.subject.table_ref())
+            assert known is None or d <= known, f
     sampled = [f for f in facts if (f.method or "").startswith("sampled:")]
     assert {f.subject.table for f in sampled if isinstance(f.subject, sg.ObjectRef)} >= {
         "orders", "customers", "order_items", "payments"

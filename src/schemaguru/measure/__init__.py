@@ -7,7 +7,12 @@ seam). SchemaGuru never writes measurement SQL.
 
 from schemaguru.measure.backend import CostEstimate, MeasureBackend, MeasureResult
 from schemaguru.measure.budget import BudgetGuard
-from schemaguru.measure.candidates import join_candidates
+from schemaguru.measure.candidates import (
+    JoinCandidateSource,
+    join_candidate_sources,
+    join_candidates,
+    register_join_candidate_source,
+)
 from schemaguru.measure.catalog_bridge import StoreCatalog
 from schemaguru.measure.convert import to_facts
 from schemaguru.measure.estimates import EstimatedValue, scale_count, wilson
@@ -31,6 +36,7 @@ __all__ = [
     "CostEstimate",
     "EstimatedValue",
     "Freshness",
+    "JoinCandidateSource",
     "KeyOverlapReq",
     "MeasureBackend",
     "MeasureReport",
@@ -46,7 +52,9 @@ __all__ = [
     "Uniqueness",
     "choose_sample",
     "is_large",
+    "join_candidate_sources",
     "join_candidates",
+    "register_join_candidate_source",
     "scale_count",
     "seed_for",
     "to_facts",

@@ -1,8 +1,8 @@
 # Extending: JoinCandidateSource
 
-> A join candidate source would let you plug in your own supply of "joins worth measuring", for example from a lineage tool or a query log.
-> **It is not a plug-in point in 0.1.0 yet:** the spec lists it (section 21), but the candidate list is built by a fixed function from five built-in origins.
-> This page explains what exists today and how to feed your own candidates through it.
+> A join candidate source plugs in your own supply of "joins worth measuring", for example from a lineage tool or a query log.
+> It is the protocol `schemaguru.measure.JoinCandidateSource`, registered with `register_join_candidate_source` or installed through the entry-point group `schemaguru.join_candidate_sources`.
+> Its proposals rank after the declared origins and before the name heuristics, and like a heuristic guess they are measured before anything is shown.
 
 ## What exists today
 
@@ -15,6 +15,7 @@ and de-duplicated (the first origin wins):
 | `constraint` | declared foreign keys in the catalog |
 | `overlay` | `joins:` entries in your overlay YAML |
 | `dbt` | dbt `relationships` tests (`schemaguru import-dbt`) |
+| `plugin` | registered `JoinCandidateSource` objects |
 | `heuristic` | `x_id` / `xId` / `x_fk` → a table `x`/`xs` with a single-column key of a compatible type; or a column named like another table's single-column PK in the same schema |
 | `llm` | joins suggested in an LLM draft |
 
@@ -44,11 +45,31 @@ These joins are then *human expectations* as well as candidates: they are measur
 their numbers, and a declared join that turns out broken is shown as a contradiction, not
 silently dropped. The generated file should be one you own (regenerate it, do not hand-edit it).
 
-## What the plug-in will look like
+## The plug-in
 
-The specification plans a `JoinCandidateSource` protocol discovered through an entry-point group
-(`schemaguru.<point>`), returning labelled `JoinRef` candidates for a table, ranked after the
-built-in origins. When it lands this page will describe it; until then, use the overlay route.
+```python
+from schemaguru.measure import JoinCandidateSource, register_join_candidate_source
+from schemaguru.model import JoinRef, ObjectRef
+
+
+class Lineage:
+    name = "lineage"
+
+    def candidates(self, store, table):
+        """Joins with `table` on the left (child) side; read-only."""
+        if table.table == "ref_child":
+            yield JoinRef((ObjectRef(None, "shop", "ref_child", "parent_id"),),
+                          (ObjectRef(None, "shop", "ref_parent", "id"),))
+
+
+register_join_candidate_source(Lineage())
+guru.measure("shop.ref_child")   # the proposed join is measured like any candidate
+```
+
+A source that raises, or proposes a join that does not start at `table`, costs only that
+proposal. A proposal that fails measurement leaves only a diagnostic, never a `JOIN` fact. An
+installed package declares it in the entry-point group `schemaguru.join_candidate_sources`; one
+that fails to load is skipped with `SG108`.
 
 ## Test template
 

@@ -157,5 +157,15 @@ mine.close()
 conn.close()
 ```
 
-`sg.Guru(connector=<a FactLang connector>)` builds the reader and the FactLang measurement
-backend from the connector's dialect.
+`sg.Guru(connector=...)` takes what your project already holds and builds both the catalog
+reader and the measurement backend from it: a DB-API connection (`duckdb`, `sqlite3`,
+`psycopg`, …; the dialect comes from the driver, or pass `dialect=`), a SQLAlchemy engine, a
+BigQuery client, a FactLang connector, or a plain function `execute(sql)` /
+`execute(sql, params)` returning rows as dicts (pass `dialect=`). A function that takes no
+parameters gets every value inlined as an escaped literal. Anything else raises `ConfigError`
+`SG107` naming the accepted types.
+
+```python
+conn = duckdb.connect("warehouse.duckdb", read_only=True)
+guru = sg.Guru(connector=conn, store=".schemaguru/mine.db")  # crawl, measure, context
+```

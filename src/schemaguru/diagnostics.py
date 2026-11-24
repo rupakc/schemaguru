@@ -23,6 +23,10 @@ class Severity(Enum):
 
 CODES: Mapping[str, str] = MappingProxyType(
     {
+        "SG101": "no catalog reader is registered for the requested dialect",
+        "SG102": "the crawl skipped a catalog, schema, page or batch that failed to read",
+        "SG104": "metadata SQL was refused: only a single SELECT/WITH/SHOW/DESCRIBE is allowed",
+        "SG105": "the installed FactLang does not provide the metadata-SQL capability",
         "SG201": "overlay 'version' is missing or unsupported",
         "SG202": "overlay has an unknown key (a close match is suggested)",
         "SG203": "overlay reference does not resolve to anything in the store",

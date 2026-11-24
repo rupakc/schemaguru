@@ -65,7 +65,7 @@ def run(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.fixture
 def fake_backend(monkeypatch: pytest.MonkeyPatch, shop_file: Path) -> Any:
     """Every Guru built from a URL measures through the DuckDB-backed fake."""
-    conn = duckdb.connect(str(shop_file))
+    conn = duckdb.connect(str(shop_file), read_only=True)  # the CLI opens the file read-only
     monkeypatch.setattr(Guru, "_default_backend", lambda self: FakeBackend(conn))
     yield conn
     conn.close()

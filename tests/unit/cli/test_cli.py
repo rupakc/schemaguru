@@ -238,7 +238,7 @@ def test_export_drafts(run: Run, crawled: str, tmp_path: Path) -> None:
     mine = tmp_path / "mine.yaml"
     mine.write_text("version: 1\n", encoding="utf-8")
     code, _, err = run("export-drafts", str(mine), "--store", crawled)
-    assert code == 2 and "machine-owned" in err
+    assert code == 2 and "refusing to overwrite" in err
 
 
 def test_import_dbt(run: Run, crawled: str) -> None:

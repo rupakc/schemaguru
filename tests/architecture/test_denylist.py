@@ -25,8 +25,8 @@ def term_pattern(entry: str) -> re.Pattern[str]:
 
     Word edges are letters and digits only (``_``, ``-``, ``.``, ``/`` separate words, so
     ``acme_notes`` still names ``acme``); whitespace inside a term matches any run of whitespace,
-    ``_`` or ``-``. So ``data guard`` matches ``Data  Guard`` and ``data_guard`` but never the
-    ``data guard`` inside ``metadata guard``.
+    ``_`` or ``-``. So ``zorb quax`` matches ``Zorb  Quax`` and ``zorb_quax`` but never the
+    ``zorb quax`` inside ``metazorb quax``.
     """
     words = [re.escape(w) for w in entry.split()]
     body = r"[\s_-]+".join(words)
@@ -79,20 +79,22 @@ def test_negative_control_scan_flags_text_and_paths(tmp_path: Path) -> None:
 def test_terms_match_whole_words_only(tmp_path: Path) -> None:
     """Negative control for the substring false positive: a two-word term never matches inside
     a longer word, and still matches across case and whitespace."""
-    term = "data guard"
+    term = "zorb quax"  # invented: a test file must never hold a real denylisted term
     clean = tmp_path / "clean.md"
-    clean.write_text("the metadata guard refuses writes; metadataguard too\n", encoding="utf-8")
+    clean.write_text(
+        "the metazorb quax refuses writes; metazorbquax and zorb quaxes too\n", encoding="utf-8"
+    )
     assert find_violations([clean], [term], tmp_path) == []
-    for i, text in enumerate(("Data Guard", "DATA  GUARD", "a data\nguard", "(data guard)")):
+    for i, text in enumerate(("Zorb Quax", "ZORB  QUAX", "a zorb\nquax", "(zorb quax)")):
         hit = tmp_path / f"hit{i}.md"
         hit.write_text(f"x {text} y\n", encoding="utf-8")
         assert find_violations([hit], [term], tmp_path) == [
             f"hit{i}.md: contains a denylisted term"
         ]
-    named = tmp_path / "data_guard_notes.txt"
+    named = tmp_path / "zorb_quax_notes.txt"
     named.write_text("clean\n", encoding="utf-8")
     assert find_violations([named], [term], tmp_path) == [
-        "data_guard_notes.txt: path contains a denylisted term"
+        "zorb_quax_notes.txt: path contains a denylisted term"
     ]
     assert term_pattern("a.b").search("axb") is None  # a term is text, not a regex
 

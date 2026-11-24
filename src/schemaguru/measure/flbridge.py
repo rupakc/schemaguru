@@ -383,11 +383,14 @@ def _dialect_caps(profile: Any | None) -> frozenset[str]:
 
 
 def _seed_range(profile: Any | None) -> tuple[int, int]:
-    """The non-negative part of the profile's ``sample_seed_range`` (SchemaGuru's seeds are
-    non-negative); the range every profile admits when unknown."""
+    """The profile's ``sample_seed_range`` intersected with ``[0, 2**31 - 1]``.
+
+    The profile's range is not enough on its own: DuckDB's is ``[0, 2**63 - 1]``, yet DuckDB 1.5
+    (the last release for Python 3.10) fails to parse a ``REPEATABLE`` seed above 32 bits.
+    """
     rng = getattr(profile, "sample_seed_range", None)
     if isinstance(rng, tuple) and len(rng) == 2 and all(isinstance(v, int) for v in rng):
-        lo, hi = max(rng[0], 0), rng[1]
+        lo, hi = max(rng[0], _SAFE_SEEDS[0]), min(rng[1], _SAFE_SEEDS[1])
         if lo <= hi:
             return lo, hi
     return _SAFE_SEEDS

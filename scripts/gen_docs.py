@@ -188,7 +188,10 @@ def _default_text(value: object) -> str:
 
 
 def _type_text(hint: object) -> str:
-    if isinstance(hint, type):
+    import typing
+
+    # on Python 3.10 ``tuple[str, ...]`` is also an instance of ``type``: only a bare class
+    if isinstance(hint, type) and typing.get_origin(hint) is None:
         return hint.__name__
     return str(hint).replace("typing.", "").replace("collections.abc.", "")
 

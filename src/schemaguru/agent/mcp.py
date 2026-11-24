@@ -1,8 +1,9 @@
 """The MCP server (spec 18.3, extra ``mcp``): the agent tools plus ``schema://tables/{ref}``.
 
 Built on the official ``mcp`` SDK's low-level ``Server`` (``mcp>=2``: handlers are passed to
-the constructor as ``on_*`` callables) and served over stdio. The SDK is imported lazily, so
-this module imports without the extra. Every tool call goes through
+the constructor as ``on_*`` callables) and served over stdio (``schemaguru mcp``) or, through
+:func:`streamable_http_app`, over streamable HTTP (``schemaguru serve`` mounts it at ``/mcp``).
+The SDK is imported lazily, so this module imports without the extra. Every tool call goes through
 :func:`schemaguru.agent.dispatch.handle_tool_call` (value policy, never raises); a resource
 read is ``describe_table`` of the ref.
 """
@@ -10,7 +11,9 @@ read is ``describe_table`` of the ref.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
+from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import unquote
 
@@ -145,9 +148,61 @@ async def serve_async(guru: ToolHost, *, name: str = "schemaguru") -> None:
         await server.run(read, write, server.create_initialization_options())
 
 
+class StreamableHTTPApp:
+    """An ASGI app serving the MCP server over streamable HTTP (the SDK's session manager).
+
+    The host must run :meth:`lifespan` around serving (``create_app`` puts it in the
+    Starlette lifespan): the SDK's session manager runs only inside it, and it can run once per
+    manager, so each lifespan builds a fresh one. Responses are JSON (``json_response``), and
+    sessions are stateful. Authentication is the host's: ``create_app`` wraps this app with the
+    same bearer check as every other route.
+    """
+
+    def __init__(self, guru: ToolHost, *, name: str = "schemaguru") -> None:
+        self._server = build_server(guru, name=name)
+        importlib.import_module("mcp.server.streamable_http_manager")  # fail early without it
+        self._manager: Any = None
+
+    @contextlib.asynccontextmanager
+    async def lifespan(self) -> AsyncIterator[None]:
+        managers = importlib.import_module("mcp.server.streamable_http_manager")
+        manager = managers.StreamableHTTPSessionManager(app=self._server, json_response=True)
+        async with manager.run():
+            self._manager = manager
+            try:
+                yield
+            finally:
+                self._manager = None
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        manager = self._manager
+        if manager is None:  # served without its lifespan: refuse clearly, never crash
+            from starlette.responses import JSONResponse
+
+            body = {"error": {"code": "SG812", "message": "the MCP session manager is not running"}}
+            await JSONResponse(body, status_code=503)(scope, receive, send)
+            return
+        await manager.handle_request(scope, receive, send)
+
+
+def streamable_http_app(guru: ToolHost, *, name: str = "schemaguru") -> StreamableHTTPApp:
+    """The MCP server of ``guru`` as an ASGI app for streamable HTTP (``ImportError`` without
+    the ``mcp`` extra)."""
+    _sdk()
+    return StreamableHTTPApp(guru, name=name)
+
+
 def serve(guru: ToolHost, *, name: str = "schemaguru") -> None:
     """Blocking stdio MCP server (``schemaguru mcp``)."""
     asyncio.run(serve_async(guru, name=name))
 
 
-__all__ = ["RESOURCE_TEMPLATE", "build_server", "resource_ref", "serve", "serve_async"]
+__all__ = [
+    "RESOURCE_TEMPLATE",
+    "StreamableHTTPApp",
+    "build_server",
+    "resource_ref",
+    "serve",
+    "serve_async",
+    "streamable_http_app",
+]

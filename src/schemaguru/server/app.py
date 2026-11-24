@@ -13,8 +13,9 @@ the agent surface's, already masked by the render layer) and adds no logic of it
 ``GET  /facts``            ``agent.facts.outbound_facts`` for one table or column
                            ``subject`` (``kind`` repeatable)                 reader
 ``POST /refresh``          ``Guru.refresh`` (JSON ``label``), one at a time   admin
-``*    /mcp``              streamable-HTTP MCP when ``schemaguru.agent.mcp``
-                           provides ``streamable_http_app(guru)``, else 501  reader
+``*    /mcp``              MCP over streamable HTTP (``schemaguru.agent.mcp``
+                           ``streamable_http_app``); 501 without the ``mcp``
+                           extra                                             reader
 =========================  ===============================================  ========
 
 Errors are JSON ``{"error": {"code": "SG8xx", "message": ...}}``. Refresh holds the store's
@@ -29,8 +30,8 @@ import importlib
 import json
 import logging
 import threading
-from collections.abc import Callable, Iterator, Mapping
-from contextlib import AbstractContextManager, contextmanager
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from contextlib import AbstractContextManager, asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any
 
 from schemaguru._util.redact import scrub_text
@@ -106,12 +107,13 @@ class RefreshGuard:
 
 
 def _mcp_app(guru: Guru) -> Any | None:
+    """The streamable-HTTP MCP app, or None when the ``mcp`` extra is not installed."""
     try:
         module = importlib.import_module("schemaguru.agent.mcp")
+        factory = getattr(module, "streamable_http_app", None)
+        return factory(guru) if callable(factory) else None
     except ImportError:
         return None
-    factory = getattr(module, "streamable_http_app", None)
-    return factory(guru) if callable(factory) else None
 
 
 def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
@@ -120,7 +122,7 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
         from starlette.applications import Starlette
         from starlette.concurrency import run_in_threadpool
         from starlette.responses import JSONResponse
-        from starlette.routing import Mount, Route
+        from starlette.routing import Route
     except ImportError:
         raise ImportError(
             "server mode needs Starlette; install it with: pip install 'schemaguru[server]'"
@@ -331,8 +333,8 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
         return error(
             501,
             "SG812",
-            "MCP over streamable HTTP is not available in this build: schemaguru.agent.mcp "
-            "provides no streamable_http_app; use `schemaguru mcp` (stdio) instead",
+            "MCP over streamable HTTP needs the mcp extra (pip install schemaguru[mcp]); "
+            "or use `schemaguru mcp` (stdio)",
         )
 
     routes: list[Any] = [
@@ -344,11 +346,19 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
         Route("/facts", endpoint("reader", facts), methods=["GET"]),
         Route("/refresh", endpoint("admin", refresh), methods=["POST"]),
     ]
+    lifespan: Any = None
     if mcp_app is None:
         routes.append(Route("/mcp", mcp_unavailable, methods=["GET", "POST", "DELETE"]))
     else:
-        routes.append(Mount("/mcp", app=_Authed(mcp_app, authenticator)))
-    app = Starlette(routes=routes)
+        # the same bearer check as every route; the SDK's session manager runs in the lifespan
+        routes.append(Route("/mcp", _Authed(mcp_app, authenticator)))
+
+        @asynccontextmanager
+        async def lifespan(app: Any) -> AsyncIterator[None]:
+            async with mcp_app.lifespan():
+                yield
+
+    app = Starlette(routes=routes, lifespan=lifespan)
     app.state.guru = guru
     app.state.refresh_guard = guard
     return app

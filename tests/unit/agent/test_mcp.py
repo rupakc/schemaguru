@@ -224,3 +224,70 @@ def test_mcp_tool_errors_are_credential_scrubbed(
     text = out.content[0].text + json.dumps(out.structured_content)
     assert out.is_error and "SG804" in json.dumps(out.structured_content)
     assert "p4ssw0rd" not in text and "hunter2" not in text
+
+
+# --- MCP over streamable HTTP (spec 17: ``/mcp`` on the server) -------------------------------
+
+TOKEN = "reader-token-0123456789"
+MCP_HEADERS = {
+    "Authorization": f"Bearer {TOKEN}",
+    "Accept": "application/json, text/event-stream",
+    "Content-Type": "application/json",
+}
+
+
+def _rpc(id_: int | None, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    msg: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+    if id_ is not None:
+        msg["id"] = id_
+    if params is not None:
+        msg["params"] = params
+    return msg
+
+
+def test_mcp_streamable_http_session_behind_the_token(shop_guru: Guru, no_seam_check: Any) -> None:
+    """Initialise a session at /mcp, list the tools and call one; no token gets 401."""
+    pytest.importorskip("starlette")
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from schemaguru.server import BearerTokens, create_app
+
+    app = create_app(shop_guru, authenticator=BearerTokens({TOKEN: "reader"}))
+    with TestClient(app, raise_server_exceptions=False) as c:
+        anon = c.post("/mcp", json=_rpc(1, "initialize"), headers={"Accept": "application/json"})
+        assert anon.status_code == 401 and anon.json()["error"]["code"] == "SG805"
+        init = c.post(
+            "/mcp",
+            headers=MCP_HEADERS,
+            json=_rpc(
+                1,
+                "initialize",
+                {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "0"},
+                },
+            ),
+        )
+        assert init.status_code == 200, init.text
+        assert init.json()["result"]["serverInfo"]["name"] == "schemaguru"
+        session = init.headers["mcp-session-id"]
+        headers = {**MCP_HEADERS, "mcp-session-id": session, "mcp-protocol-version": "2025-06-18"}
+        note = c.post("/mcp", headers=headers, json=_rpc(None, "notifications/initialized"))
+        assert note.status_code in (200, 202), note.text
+        listed = c.post("/mcp", headers=headers, json=_rpc(2, "tools/list"))
+        names = [t["name"] for t in listed.json()["result"]["tools"]]
+        assert names == [s["name"] for s in tool_definitions(shop_guru)]
+        called = c.post(
+            "/mcp",
+            headers=headers,
+            json=_rpc(
+                3, "tools/call", {"name": "describe_table", "arguments": {"table": "orders"}}
+            ),
+        )
+        result = called.json()["result"]
+        assert result["isError"] is False and "[shop.orders]" in result["content"][0]["text"]
+        # a wrong token cannot reuse the session (negative control)
+        stolen = {**headers, "Authorization": "Bearer wrong-token-0123456789"}
+        assert c.post("/mcp", headers=stolen, json=_rpc(4, "tools/list")).status_code == 401

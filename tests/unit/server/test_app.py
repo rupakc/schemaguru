@@ -190,9 +190,19 @@ def test_refresh_guard_uses_store_advisory_lock() -> None:
         assert got_a is True and got_b is False
 
 
-def test_mcp_without_http_factory_is_501(client: TestClient) -> None:
-    r = client.get("/mcp", headers=H_READER)
+def test_mcp_without_the_extra_is_501(guru: Guru, monkeypatch: pytest.MonkeyPatch) -> None:
+    import schemaguru.agent.mcp as mcp_mod
+
+    def missing() -> Any:
+        raise ImportError("no mcp")
+
+    monkeypatch.setattr(mcp_mod, "_sdk", missing)
+    app = create_app(guru, authenticator=BearerTokens({ADMIN: "admin", READER: "reader"}))
+    with TestClient(app, raise_server_exceptions=False) as c:
+        assert c.get("/mcp").status_code == 401  # still behind the token
+        r = c.get("/mcp", headers=H_READER)
     assert r.status_code == 501 and r.json()["error"]["code"] == "SG812"
+    assert "schemaguru[mcp]" in r.json()["error"]["message"]
 
 
 def test_internal_errors_are_generic(

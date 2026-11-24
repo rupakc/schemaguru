@@ -60,4 +60,4 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG809 | server: a refresh is already running on this store (HTTP 409) |
 | SG810 | server: unexpected internal error; details are logged, not returned (HTTP 500) |
 | SG811 | server: no usable bearer tokens configured (missing, too short, or unknown role) |
-| SG812 | server: MCP over streamable HTTP is unavailable in this build (HTTP 501) |
+| SG812 | server: MCP over streamable HTTP needs the mcp extra, or its session manager is not running (HTTP 501 / 503) |

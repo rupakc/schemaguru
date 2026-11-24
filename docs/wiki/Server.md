@@ -43,7 +43,7 @@ app = create_app(guru, authenticator=BearerTokens({"<token>": "reader"}))  # an 
 | `GET /paths` | `find_join_path` (`from`, `to`) | reader |
 | `GET /facts` | the facts of one table or column (`subject`, `kind` repeatable), through the agent value policy | reader |
 | `POST /refresh` | `Guru.refresh` (JSON `label`); one at a time | admin |
-| `/mcp` | MCP over streamable HTTP when `schemaguru.agent.mcp` provides it; **not in this build** (501) | reader |
+| `/mcp` | MCP over streamable HTTP: the agent tools and `schema://tables/{ref}` resources, JSON responses, stateful sessions bound to the token that opened them; 501 without the `mcp` extra | reader |
 
 Every route calls a public `Guru` method or `Guru.handle_tool_call`, so masking, budgets and
 determinism are exactly the library's; no logic lives only in the server. Request bodies are
@@ -119,12 +119,12 @@ HTTP 403
  }
 }
 
->>> POST /mcp
+>>> POST /mcp (without the mcp extra installed)
 HTTP 501
 {
  "error": {
   "code": "SG812",
-  "message": "MCP over streamable HTTP is not available in this build: schemaguru.agent.mcp provides no streamable_http_app; use `schemaguru mcp` (stdio) instead"
+  "message": "MCP over streamable HTTP needs the mcp extra (pip install schemaguru[mcp]); or use `schemaguru mcp` (stdio)"
  }
 }
 ```
@@ -219,7 +219,7 @@ unless the value policy is `raw`.
 | 429 | `SG301` / `SG302` | a measurement budget refused the work |
 | 500 | `SG704` | the store rejected the configured credentials (a configuration error) |
 | 500 | `SG810` | unexpected error; details are logged, never returned |
-| 501 | `SG812` | MCP over HTTP is not available in this build |
+| 501 | `SG812` | MCP over HTTP needs the `mcp` extra |
 | 503 | `SG703` | the shared store is unavailable (refused, lost, pool exhausted) |
 
 ## Replicas and refresh

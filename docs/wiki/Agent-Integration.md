@@ -181,7 +181,7 @@ A stdio MCP server (official `mcp>=2.3` SDK) exposing the tools above plus resou
 tables, any table is readable by the template). Its instructions say "call schema_context first".
 Add it to an MCP client with the command `schemaguru` and arguments `["mcp", "--store",
 "/path/to/store.db"]`. In Python: `schemaguru.agent.mcp.build_server(guru)` / `serve(guru)`.
-MCP over streamable HTTP is planned for the [[Server]]'s `/mcp` route; in this build that route answers 501 (`SG812`), so use stdio.
+The same server is reachable over streamable HTTP at the [[Server]]'s `/mcp` route (`schemaguru serve`, bearer token required); in Python, `schemaguru.agent.mcp.streamable_http_app(guru)` is the ASGI app (run its `lifespan()` around serving).
 
 ## 4. Framework adapters
 

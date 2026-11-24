@@ -22,7 +22,7 @@ schemaguru --store postgresql://sg@db/knowledge --url "$WAREHOUSE_URL" serve --p
 | `GET /paths?from=&to=` | `find_join_path` | reader |
 | `GET /facts?subject=&kind=` | stored facts of one subject, masked by the tool surface's value policy | reader |
 | `POST /refresh` | `Guru.refresh` (JSON `label`), one at a time | admin |
-| `/mcp` | MCP over streamable HTTP when the installed MCP support provides it; otherwise `501` (`SG812`) | reader |
+| `/mcp` | MCP over streamable HTTP (the same tools and `schema://tables/{ref}` resources as `schemaguru mcp`; JSON responses, stateful sessions); `501` (`SG812`) without the `mcp` extra | reader |
 
 Errors are JSON `{"error": {"code": "SG8xx", "message": …}}`: a missing or invalid token is
 `401` (`SG805`), a reader on an admin route `403` (`SG806`), a bad request `400` (`SG807`), an

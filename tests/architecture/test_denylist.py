@@ -35,14 +35,17 @@ def _edge(text: str, i: int) -> bool:
     """Is there a word edge between ``text[i - 1]`` and ``text[i]``?
 
     Yes at either end of the text, next to anything not a letter or digit (``_``, ``-``, ``.``,
-    ``/`` and spaces separate words), at a lower -> upper case change (``AcmeClient``) and between
-    a letter and a digit (``acme2``)."""
+    ``/`` and spaces separate words), at a lower -> upper case change (``AcmeClient``), where an
+    upper-case run meets a capitalised word (``ACMEClient``: before the ``C``) and between a
+    letter and a digit (``acme2``)."""
     if i <= 0 or i >= len(text):
         return True
     a, b = text[i - 1], text[i]
     if not (a.isalnum() and b.isalnum()):
         return True
     if a.islower() and b.isupper():
+        return True
+    if a.isupper() and b.isupper() and i + 1 < len(text) and text[i + 1].islower():
         return True
     return a.isalpha() != b.isalpha()
 
@@ -135,6 +138,9 @@ def test_camel_case_and_digit_edges() -> None:
         "v2zorb",
         "ZORB_API",
         "zorbHub",
+        "ZORBClient",  # an all-caps acronym before a capitalised word
+        "new ZORBClient()",
+        "MyZORBClient",
     ):
         assert contains_term(term, hit), hit
     for clean in ("zorbclient", "Metazorb", "zorbs", "ZORBA", "subzorbed", "Azorb"):

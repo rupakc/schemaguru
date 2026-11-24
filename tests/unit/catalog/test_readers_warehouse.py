@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
 import pytest
 
-from schemaguru.catalog import dialects, reader_for
+from schemaguru.catalog import ReaderCapabilities, dialects, reader_for
 from schemaguru.catalog.executor import check_metadata_sql
 from schemaguru.catalog.readers.bigquery import MIN_BILLED_BYTES, BigQueryReader
 from schemaguru.catalog.readers.databricks import DatabricksReader
@@ -798,3 +799,54 @@ def test_crawl_report_flags_estimated_bytes() -> None:
     store = SQLiteStore(":memory:")
     report = crawl(BigQueryReader(fake), store)  # type: ignore[arg-type]
     assert report.bytes_billed == 2 * MIN_BILLED_BYTES and report.bytes_billed_is_estimate
+
+
+# ---- incremental capability ---------------------------------------------------------------
+def test_redshift_ignores_changed_since_and_says_so() -> None:
+    """Redshift's views carry no reliable last-altered time, so list_tables lists everything
+    whatever ``changed_since`` says; the reader must therefore not claim to be incremental
+    (the crawl would otherwise skip changed tables)."""
+    rules = (
+        (["CURRENT_DATABASE"], [{"name": "dev"}]),
+        (
+            ["FROM SVV_ALL_TABLES"],
+            [{"table_name": "orders", "table_type": "TABLE", "remarks": None}],
+        ),
+        (["FROM SVV_TABLE_INFO"], []),
+        (["FROM SVV_EXTERNAL_TABLES"], []),
+    )
+    full, since = Fake(*rules), Fake(*rules)
+    schema = Schema("dev", "public")
+    a = RedshiftReader(full).list_tables(schema, page_token=None, changed_since=None)  # type: ignore[arg-type]
+    ts = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    b = RedshiftReader(since).list_tables(schema, page_token=None, changed_since=ts)  # type: ignore[arg-type]
+    assert a.items == b.items and [c[:2] for c in full.calls] == [c[:2] for c in since.calls]
+    assert RedshiftReader(full).capabilities().incremental is False  # type: ignore[arg-type]
+
+
+def _uses_changed_since(cls: type) -> bool:
+    """Does ``list_tables`` read ``changed_since`` beyond its signature?"""
+    import inspect
+    import re
+
+    return len(re.findall(r"\bchanged_since\b", inspect.getsource(cls.list_tables))) > 1
+
+
+def test_incremental_capability_matches_list_tables() -> None:
+    """A reader reports ``incremental`` exactly when its list_tables uses ``changed_since``.
+    Negative control: a reader claiming incremental while ignoring it is caught."""
+
+    class Nothing:
+        def run(self, sql: str, params: Any = (), *, timeout_s: float | None = None) -> list[Any]:
+            return []
+
+    for d in dialects():
+        r = reader_for(d, Nothing())
+        assert r.capabilities().incremental == _uses_changed_since(type(r)), d
+
+    class Liar(RedshiftReader):
+        def capabilities(self) -> ReaderCapabilities:
+            return replace(super().capabilities(), incremental=True)
+
+    liar = Liar(Nothing())  # type: ignore[arg-type]
+    assert liar.capabilities().incremental != _uses_changed_since(Liar)  # the check flags it

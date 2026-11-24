@@ -204,3 +204,40 @@ def test_negative_control_block_extraction() -> None:
     with pytest.raises(SyntaxError):
         ast.parse(blocks(text, "py")[0])
     assert requirements("# requires: langchain_core\nimport x\n") == ["langchain_core"]
+
+
+def test_examples_run_without_the_repository_tests() -> None:
+    """The examples need only the installed package and examples/: no module imports
+    ``tests``, and the shop builder they ship is the test fixture, byte for byte."""
+    for path in sorted(EXAMPLES.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            names: list[str] = []
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            assert not [n for n in names if n == "tests" or n.startswith("tests.")], path.name
+    copy = (EXAMPLES / "_shop_build.py").read_bytes()
+    assert copy == (ROOT / "tests" / "fixtures" / "shop" / "build.py").read_bytes(), (
+        "examples/_shop_build.py drifted from tests/fixtures/shop/build.py: copy it again"
+    )
+
+
+def test_examples_shop_builds_from_the_examples_dir_alone(tmp_path: Path) -> None:
+    """Run _shop.shop_db() in an isolated interpreter (-I) whose path holds examples/ only:
+    no repository root, no tests/ package."""
+    pytest.importorskip("duckdb")
+    import subprocess
+
+    target = tmp_path / "examples"
+    shutil.copytree(EXAMPLES, target, ignore=shutil.ignore_patterns("*.duckdb", "__pycache__"))
+    code = "import _shop; p = _shop.shop_db([]); print(p.exists())"
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {str(target)!r}); {code}"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert out.returncode == 0 and out.stdout.strip() == "True", out.stderr

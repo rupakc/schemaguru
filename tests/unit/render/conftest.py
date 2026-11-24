@@ -36,13 +36,12 @@ def fake_factlang(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         seen.update(edges=edges, dialect=dialect, filters=filters, aliases=aliases)
         return _Inline("FROM <join>")
 
-    refs = types.ModuleType("factlang.semantics.refs")
+    refs = types.ModuleType("factlang.ir")  # the public home of Ident/TableRef/ColumnRef
     refs.Ident = lambda text, quoted: text  # type: ignore[attr-defined]
     refs.TableRef = lambda *parts: tuple(parts)  # type: ignore[attr-defined]
     refs.ColumnRef = lambda table, column: (table, column)  # type: ignore[attr-defined]
     refs.EdgeRef = lambda left, right: (left, right)  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "factlang.semantics", types.ModuleType("factlang.semantics"))
-    monkeypatch.setitem(sys.modules, "factlang.semantics.refs", refs)
+    monkeypatch.setitem(sys.modules, "factlang.ir", refs)
     sql = types.ModuleType("factlang.sql")
     sql.render_join = render_join  # type: ignore[attr-defined]
     sql.JoinEdge = lambda left, right, cast_to=None: (left, right, cast_to)  # type: ignore[attr-defined]

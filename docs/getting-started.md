@@ -164,8 +164,11 @@ BigQuery client, a FactLang connector, or a plain function `execute(sql)` /
 `execute(sql, params)` returning rows as dicts (pass `dialect=`). A function that takes no
 parameters gets every value inlined as an ANSI literal. Such an `execute(sql)` or `query(sql)`
 host has no driver binding, so a probe whose text value holds a backslash (or a NUL, or is not
-a plain scalar) is refused (`SG109`) and its final SQL must pass the read-only guard; pass a
-DB-API connection or an engine for full support. Anything else raises `ConfigError` `SG107`
+a plain scalar) is refused (`SG109`) and its final SQL must pass the read-only guard. On
+BigQuery and Databricks a text value holding `'` is refused too: their string literals have no
+doubled-quote form (BigQuery rejects `'O''Brien'`, Databricks reads it as `OBrien`). Anything
+FactLang itself declines to inline is reported as `SG109` with the reason. Pass a DB-API
+connection, an engine or a BigQuery client for full support. Anything else raises `ConfigError` `SG107`
 naming the accepted types.
 
 ```python

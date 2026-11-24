@@ -133,7 +133,7 @@ def render_join_snippet(
     try:
         fl = importlib.import_module("factlang")
         sql = importlib.import_module("factlang.sql")
-        refs = importlib.import_module("factlang.semantics.refs")
+        refs = importlib.import_module("factlang.ir")  # public: Ident/TableRef/ColumnRef
         edges = []
         for hop in path.hops:
             join = hop.edge.join

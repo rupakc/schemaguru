@@ -419,6 +419,12 @@ def _as_rows(result: Any) -> list[dict[str, Any]]:
     return out
 
 
+# dialects whose lexers do not read a doubled ``''`` as a quote inside a string literal:
+# BigQuery rejects it (syntax error) and Databricks reads adjacent literals as one
+# (``'O''Brien'`` is ``OBrien``, a silently wrong value). FactLang 0.1.1 refuses them too.
+NO_DOUBLED_QUOTE = frozenset({"bigquery", "databricks"})
+
+
 class InlineConnector:
     """A FactLang connector over a host that only runs SQL text: ``fn(sql) -> rows``.
 
@@ -428,10 +434,14 @@ class InlineConnector:
     * only plain scalars (text, integers, booleans, finite numbers, decimals, dates,
       timestamps, NULL); a list, NaN or infinity is refused;
     * text holding a backslash or NUL is refused; all other text is ANSI-quoted (``'`` doubled),
-      which no server mode can read differently;
+      which no server mode can read differently -- except on BigQuery and Databricks, whose
+      lexers have no doubled-quote form, where text holding ``'`` is refused;
+    * anything FactLang itself refuses to inline (``FL500``) is reported as ``SG109`` too;
     * the final SQL must pass the read-only guard (``SG104``) right before the host runs it.
 
-    Rows are mappings (or row objects with ``keys``/``items``).
+    Rows are mappings (or row objects with ``keys``/``items``). Only FactLang's public API is
+    used: ``fl.connectors.ExecutionError``/``QueryResult``, ``fl.sql.RenderError`` and the
+    rendered probe's own ``inline()``.
     """
 
     paramstyle = "qmark"  # nominal: every value is inlined
@@ -441,16 +451,17 @@ class InlineConnector:
         self.dialect = dialect
 
     def execute(self, probe: Any, *, timeout_s: float | None) -> Any:
-        base = importlib.import_module("factlang.connectors.base")
-        render = importlib.import_module("factlang.sql.probe")
+        conns = importlib.import_module("factlang.connectors")
+        render_error = importlib.import_module("factlang.sql").RenderError
 
         def refuse(why: str) -> Any:
-            return base.ExecutionError(
+            return conns.ExecutionError(
                 f"SG109: {why}; this host takes SQL text only (pass a DB-API connection or "
                 "an engine for bound parameters)",
                 code="FL700",
             )
 
+        no_doubling = self.dialect.lower() in NO_DOUBLED_QUOTE
         params = []
         for p in probe.params:
             try:  # the exact base type, read through the base class (a subclass cannot lie)
@@ -458,25 +469,57 @@ class InlineConnector:
             except TypeError as e:
                 raise refuse(str(e)) from None
             why = inline_problem(value)
+            if why is None and no_doubling and isinstance(value, str) and "'" in value:
+                why = (
+                    f"a text value holding ' cannot be inlined for {self.dialect}: its string "
+                    "literals have no doubled-quote form"
+                )
             if why is not None:
                 raise refuse(why)
             params.append(replace(p, value=value))
+
+        def inline(template: str, ps: tuple[Any, ...]) -> str:
+            try:
+                return str(replace(probe, sql_template=template, params=ps).inline(_ansi))
+            except render_error as e:  # FactLang's FL500: a value it will not inline
+                detail = re.sub(r"^FL\d{3}\s*", "", str(e))
+                raise refuse(f"a value cannot be inlined ({detail})") from None
+
         for p in params:  # belt and braces: every rendered literal is one well-formed literal
-            lit = render.inline_template("{{" + p.name + "}}", (p,), _ansi)
+            lit = inline("{{" + p.name + "}}", (p,))
             if not _LITERAL.fullmatch(lit):
                 raise refuse(f"parameter {p.name!r} did not render as a single safe literal")
-        sql = render.inline_template(probe.sql_template, tuple(params), _ansi)
+        sql = inline(probe.sql_template, tuple(params))
         try:
             check_metadata_sql(sql)  # read-only, one statement, no comment, on the final text
         except CatalogError as e:
-            raise base.ExecutionError(f"SG104: inlined SQL refused: {e}", code="FL703") from None
+            raise conns.ExecutionError(f"SG104: inlined SQL refused: {e}", code="FL703") from None
         try:
             rows = _as_rows(self.fn(sql))
-        except base.ExecutionError:
+        except conns.ExecutionError:
             raise
         except Exception as exc:
-            raise base.map_error(exc, timeout_s=timeout_s) from exc
-        return base.QueryResult(base.normalise_rows(probe, rows))
+            raise _execution_error(conns, exc, timeout_s) from exc
+        if getattr(probe, "plan", None) is not None:
+            # FactLang's result labels are a lower-case wire format; some warehouses upper-case
+            # unquoted labels (host metadata SQL, plan None, keeps the warehouse's labels)
+            rows = [
+                {(k.lower() if isinstance(k, str) else k): v for k, v in r.items()} for r in rows
+            ]
+        return conns.QueryResult(rows)
+
+
+_TIMEOUT_TEXT = re.compile(r"(?i)\b(timed? ?out|timeout|cancell?ed|statement canceled)\b")
+
+
+def _execution_error(conns: Any, exc: Exception, timeout_s: float | None) -> Any:
+    """FactLang's ``ExecutionError`` for a host's exception: ``FL702`` for a query timeout,
+    else ``FL700`` (FactLang's own mapping is internal, so this is SchemaGuru's)."""
+    detail = f"{type(exc).__name__}: {exc}"
+    if isinstance(exc, TimeoutError) or _TIMEOUT_TEXT.search(str(exc)):
+        limit = f" after {timeout_s:g}s" if timeout_s is not None else ""
+        return conns.ExecutionError(f"query timed out{limit} ({detail})", code="FL702")
+    return conns.ExecutionError(f"query failed ({detail})", code="FL700")
 
 
 def _query_client(client: Any) -> Any:

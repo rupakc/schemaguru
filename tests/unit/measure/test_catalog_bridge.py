@@ -9,7 +9,7 @@ from schemaguru.store.sqlite import SQLiteStore
 
 
 @dataclass(frozen=True)
-class Ident:  # the shape of factlang.semantics.refs.Ident (duck-typed: no factlang import)
+class Ident:  # the shape of factlang.ir.Ident (duck-typed: no factlang import)
     text: str
     quoted: bool = False
 

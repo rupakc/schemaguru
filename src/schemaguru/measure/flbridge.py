@@ -111,13 +111,12 @@ class _IR:
 
     def __init__(self, seed_range: tuple[int, int] = _SAFE_SEEDS) -> None:
         self.seed_range = seed_range
-        ir = importlib.import_module("factlang.ir")
-        refs = importlib.import_module("factlang.semantics.refs")
+        ir = importlib.import_module("factlang.ir")  # public API (refs are re-exported here)
         self.ir = ir
         self.Metric = ir.Metric
-        self.Ident = refs.Ident
-        self.TableRef = refs.TableRef
-        self.ColumnRef = refs.ColumnRef
+        self.Ident = ir.Ident
+        self.TableRef = ir.TableRef
+        self.ColumnRef = ir.ColumnRef
 
     def ident(self, text: str) -> Any:
         # names are stored exactly as the catalog returns them: always quote (exact match)

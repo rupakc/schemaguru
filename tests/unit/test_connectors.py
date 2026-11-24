@@ -152,9 +152,8 @@ PAYLOAD = "x\\' OR 1=1 --"  # x\' OR 1=1 --  : ends the literal where \' is an e
 
 def _probe(template: str, dialect: str, **values: object) -> Any:
     """A rendered probe straight to the connector (no FactLang guard in front of it)."""
-    from factlang.connectors.base import Arity
-    from factlang.semantics.filters import Param
-    from factlang.sql import RenderedProbe
+    from factlang.ir import Arity
+    from factlang.sql import Param, RenderedProbe
 
     params = tuple(
         Param(k, v, "string" if isinstance(v, str) else "integer") for k, v in values.items()
@@ -184,16 +183,17 @@ def test_old_backslash_and_ansi_quoters_let_the_payload_escape() -> None:
     def old_backslashed(t: str) -> str:
         return "'" + t.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
-    template = "SELECT 1 AS x WHERE status = {{v}}"
-    assert _escapes(_probe(template, "snowflake", v=PAYLOAD).inline(old_ansi))
+    # quoted directly: FactLang 0.1.1 refuses a backslash before any host quoter runs
+    template = "SELECT 1 AS x WHERE status = "
+    assert _escapes(template + old_ansi(PAYLOAD))
     no_backslash_escapes = "' OR 1=1 -- "  # MySQL with NO_BACKSLASH_ESCAPES
-    assert _escapes(_probe(template, "mysql", v=no_backslash_escapes).inline(old_backslashed))
+    assert _escapes(template + old_backslashed(no_backslash_escapes))
     assert not _escapes("SELECT 1 AS x WHERE status = 'it''s'")
 
 
 @pytest.mark.parametrize("dialect", sorted({*sg.catalog.dialects(), "sqlite"}))
 def test_inline_refuses_the_injection_on_every_dialect(dialect: str) -> None:
-    from factlang.connectors.base import ExecutionError
+    from factlang.connectors import ExecutionError
 
     got: list[str] = []
     conn = InlineConnector(lambda sql: got.append(sql) or [], dialect)
@@ -236,13 +236,13 @@ def test_inline_injection_end_to_end_through_check_fact(shop_path: Path, tmp_pat
     [["a", "b"], float("nan"), float("inf"), -float("inf"), {"a": 1}, b"x", "a\x00b"],
 )
 def test_inline_refuses_non_scalars_and_non_finite(value: object) -> None:
-    from factlang.connectors.base import ExecutionError
-    from factlang.semantics.filters import Param
+    from factlang.connectors import ExecutionError
+    from factlang.sql import Param
 
     from schemaguru.catalog.executor import inline_problem
 
     assert inline_problem(value) is not None
-    from factlang.connectors.base import Arity
+    from factlang.ir import Arity
     from factlang.sql import RenderedProbe
 
     conn = InlineConnector(lambda sql: [], "duckdb")
@@ -278,7 +278,7 @@ def test_inline_scalars_ansi_doubling() -> None:
     ],
 )
 def test_inline_final_sql_goes_through_the_read_only_guard(template: str) -> None:
-    from factlang.connectors.base import ExecutionError
+    from factlang.connectors import ExecutionError
 
     got: list[str] = []
     conn = InlineConnector(lambda sql: got.append(sql) or [], "duckdb")
@@ -323,9 +323,8 @@ class PlainStr(str):  # like numpy.str_: a subclass that keeps its content
 
 
 def _raw_probe(value: object, family: str) -> Any:
-    from factlang.connectors.base import Arity
-    from factlang.semantics.filters import Param
-    from factlang.sql import RenderedProbe
+    from factlang.ir import Arity
+    from factlang.sql import Param, RenderedProbe
 
     p = (Param("v", value, family),)
     return RenderedProbe("SELECT 1 AS x WHERE a = {{v}}", p, Arity.ROW_SET, None, "duckdb", "x")
@@ -341,14 +340,14 @@ LIARS = [
 
 
 def test_lying_subclasses_inject_without_normalising() -> None:
-    """Negative control: rendering the raw subclasses (what round 2 sent) lets OR 1=1 escape."""
-    from factlang.sql.probe import inline_template
-
+    """Negative control: rendering the raw subclasses (what round 2 sent) lets OR 1=1 escape.
+    (FactLang 0.1.1 refuses LyingStr itself, for its backslashes, and formats a Decimal
+    without ``str``; a lying int still escapes through FactLang's own inlining.)"""
     from schemaguru.catalog.executor import _ansi
 
-    for value, family, _ in (LIARS[0], LIARS[1], LIARS[3]):
+    for value, family, _ in (LIARS[1],):
         probe = _raw_probe(value, family)
-        assert _escapes(inline_template(probe.sql_template, probe.params, _ansi)), value
+        assert _escapes(probe.inline(_ansi)), value
 
 
 @pytest.mark.parametrize("dialect", sorted({*sg.catalog.dialects(), "sqlite"}))
@@ -378,7 +377,7 @@ def test_literal_recheck_catches_what_normalising_would_miss(
 ) -> None:
     """Belt and braces: with normalising switched off, the per-literal re-check still refuses
     the lying subclasses (SG109) before the host runs."""
-    from factlang.connectors.base import ExecutionError
+    from factlang.connectors import ExecutionError
 
     from schemaguru.catalog import executor
 
@@ -390,3 +389,49 @@ def test_literal_recheck_catches_what_normalising_would_miss(
             conn.execute(_raw_probe(value, family), timeout_s=None)
     assert got == []
     assert executor._LITERAL.fullmatch("'a''b'") and not executor._LITERAL.fullmatch("'a\\'b'")
+
+
+# --- FactLang 0.1.1 inline rules: no doubled quote on BigQuery/Databricks; FL500 -> SG109 ------
+
+
+@pytest.mark.parametrize("dialect", ["bigquery", "databricks"])
+def test_inline_refuses_a_quote_where_doubling_is_not_an_escape(dialect: str) -> None:
+    """On BigQuery ``'O''Brien'`` is a syntax error and Databricks concatenates adjacent
+    literals (``OBrien``: a silently wrong value), so a ``'`` cannot be inlined there."""
+    from factlang.connectors import ExecutionError
+
+    got: list[str] = []
+    conn = InlineConnector(lambda sql: got.append(sql) or [], dialect)
+    with pytest.raises(ExecutionError, match=r"SG109.*'") as info:
+        conn.execute(
+            _probe("SELECT 1 AS x WHERE name = {{v}}", dialect, v="O'Brien"), timeout_s=None
+        )
+    assert "FL500" not in str(info.value).split("SG109", 1)[1]
+    assert got == []
+    # the same dialect inlines text without a quote (negative control)
+    conn.execute(_probe("SELECT 1 AS x WHERE name = {{v}}", dialect, v="Brien"), timeout_s=None)
+    assert got == ["SELECT 1 AS x WHERE name = 'Brien'"]
+
+
+def test_inline_maps_factlang_fl500_to_sg109() -> None:
+    """A value FactLang refuses to inline (here an int in the boolean family) is SG109 with a
+    clear message, never FactLang's raw FL500."""
+    from factlang.connectors import ExecutionError
+    from factlang.ir import Arity
+    from factlang.sql import Param, RenderedProbe
+
+    got: list[str] = []
+    conn = InlineConnector(lambda sql: got.append(sql) or [], "duckdb")
+    probe = RenderedProbe(
+        "SELECT 1 AS x WHERE c = {{v}}",
+        (Param("v", 1, "boolean"),),
+        Arity.ROW_SET,
+        None,
+        "duckdb",
+        "best_effort",
+    )
+    with pytest.raises(ExecutionError, match="SG109") as info:
+        conn.execute(probe, timeout_s=None)
+    msg = str(info.value)
+    assert not msg.startswith("FL500") and "FL500" not in msg.split("SG109", 1)[1]
+    assert "cannot be inlined" in msg and got == []

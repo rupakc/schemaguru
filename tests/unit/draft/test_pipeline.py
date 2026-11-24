@@ -252,7 +252,7 @@ def test_token_budget_stops_run(shop_store: SQLiteStore) -> None:
         store=shop_store,
         provider=CallableProvider(fn),
         config=Config(),
-        budget=Budget(draft_budget_tokens=1100),
+        budget=Budget(draft_budget_tokens=3000),
     )
     assert len(calls) == 1
     assert report.input_tokens == 900 and report.output_tokens == 200
@@ -276,7 +276,7 @@ def test_draft_codes_registered() -> None:
     doc = (Path(__file__).resolve().parents[3] / "docs/reference/diagnostics.md").read_text(
         encoding="utf-8"
     )
-    for code in ("SG401", "SG402", "SG403", "SG404", "SG405"):
+    for code in ("SG401", "SG402", "SG403", "SG404", "SG405", "SG406"):
         assert code in CODES and f"| {code} |" in doc
 
 
@@ -299,3 +299,90 @@ def test_drafting_never_runs_from_scoping_or_rendering() -> None:
                 )
                 offenders += [f"{py.name}: {m}" for m in mods if m.startswith("schemaguru.draft")]
     assert offenders == []
+
+
+def test_budget_reserves_max_tokens(shop_store: SQLiteStore) -> None:
+    calls: list[int] = []
+
+    def fn(system: str, user: str, schema: dict[str, Any], max_tokens: int) -> Any:
+        calls.append(max_tokens)
+        tables = json.loads(user)["tables"]
+        return {"tables": [table_reply(t["table"]) for t in tables]}, Usage(1500, 8000)
+
+    report = draft_tables(
+        [ORD, ObjectRef(None, S, "events")],
+        store=shop_store,
+        provider=CallableProvider(fn),
+        config=Config(),
+        budget=2000,
+        max_tokens=16000,
+    )
+    # a call may never be able to spend past the cap: cap 2000 leaves < 1024 output tokens
+    assert calls == []
+    assert report.tokens == 0 and "SG402" in [d.code for d in report.diagnostics]
+
+
+def test_budget_shrinks_max_tokens_to_what_is_left(shop_store: SQLiteStore) -> None:
+    seen: list[int] = []
+
+    def fn(system: str, user: str, schema: dict[str, Any], max_tokens: int) -> Any:
+        seen.append(max_tokens)
+        tables = json.loads(user)["tables"]
+        return {"tables": [table_reply(t["table"]) for t in tables]}, Usage(100, max_tokens)
+
+    cap = 16_500
+    report = draft_tables(
+        [ORD, ObjectRef(None, S, "events"), ObjectRef(None, S, "order_items")],
+        store=shop_store,
+        provider=CallableProvider(fn),
+        config=Config(),
+        budget=cap,
+        max_tokens=16000,
+    )
+    assert seen and seen[0] < 16000  # system prompt + input reserved first
+    assert report.tokens <= cap
+
+
+def test_masked_columns_get_measured_pii_facts(shop_store: SQLiteStore) -> None:
+    _emails(shop_store)
+    report = draft_tables([CUST], store=shop_store, provider=Script().provider(), config=Config())
+    email = ObjectRef(None, S, "customers", "email")
+    [pii] = [
+        f for f in shop_store.facts_for([email], ["PII"]) if f.provenance is Provenance.MEASURED
+    ]
+    assert pii.status is Status.OBSERVED and pii.method == "exact"
+    assert dict(pii.value) == {"category": "email", "detector": "email"}
+    assert pii in report.pii_facts
+
+
+def test_raw_mode_writes_no_pii_fact(shop_store: SQLiteStore) -> None:
+    _emails(shop_store)
+    cfg = Config(sampling=SamplingConfig(llm_values="raw"))
+    draft_tables([CUST], store=shop_store, provider=Script().provider(), config=cfg)
+    assert shop_store.facts_for([ObjectRef(None, S, "customers", "email")], ["PII"]) == []
+
+
+def test_error_message_is_swept(shop_store: SQLiteStore) -> None:
+    from schemaguru.draft.provider import InvalidReply
+
+    def fn(*a: Any) -> Any:
+        raise InvalidReply("model said: contact Alice Johnson at alice.j@example.com")
+
+    report = draft_tables([CUST], store=shop_store, provider=CallableProvider(fn), config=Config())
+    [err] = report.errors
+    for text in (err.value["message"], report.diagnostics[0].message):
+        assert "alice.j@example.com" not in text and "Alice Johnson" not in text
+
+
+def test_max_tokens_defaults_to_provider_setting(shop_store: SQLiteStore) -> None:
+    seen: list[int] = []
+
+    def fn(system: str, user: str, schema: dict[str, Any], max_tokens: int) -> Any:
+        seen.append(max_tokens)
+        return {"tables": [table_reply(t["table"]) for t in json.loads(user)["tables"]]}
+
+    p = CallableProvider(fn)
+    p.max_tokens = 1234  # type: ignore[attr-defined]
+    draft_tables([CUST], store=shop_store, provider=p, config=Config())
+    draft_tables([CUST], store=shop_store, provider=CallableProvider(fn), config=Config())
+    assert seen == [1234, 8192]

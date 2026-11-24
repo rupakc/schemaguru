@@ -1,11 +1,22 @@
 """``AnthropicProvider`` (extra ``anthropic``): structured output through a single tool.
 
 The reply is the ``input`` of an ``emit_draft`` ``tool_use`` block whose ``input_schema`` is the
-requested schema. Current models (incl. the default ``claude-sonnet-5-5``) reject a *forced*
-``tool_choice`` (``{"type": "tool"}`` returns HTTP 400), so the default is ``{"type": "auto"}``
-plus an instruction to answer only through the tool; a reply without the tool call is an
-:class:`InvalidReply`, which the pipeline retries once. ``force_tool=True`` restores forcing for
-models that accept it. ``usage.input_tokens`` / ``usage.output_tokens`` become ``last_usage``.
+requested schema; ``usage.input_tokens`` / ``usage.output_tokens`` become ``last_usage``.
+
+``tool_choice``: the default is ``{"type": "auto"}`` plus an instruction to answer only through
+the tool; a reply without the tool call is an :class:`InvalidReply`, which the pipeline retries
+once. Source for that default: Anthropic API reference (tool use, Sonnet 5.5) as carried in
+the bundled claude-api skill (``shared/tool-use-concepts.md``, tool_choice section), which states
+that Claude Opus 5.5 and Claude Sonnet 5.5 reject a forced ``tool_choice`` (``any``/``tool``) with
+HTTP 400. **This has not been verified with a live API call.** ``force_tool=True`` sends the
+forced form for models that accept it.
+
+``strict`` is not set on the tool: the same reference lists ``minLength`` and complex array
+constraints (``maxItems``) as unsupported for strict tool schemas, and ``DRAFT_SCHEMA`` uses
+both. The reply is validated client-side by the pipeline instead.
+
+``max_tokens`` (default 16000) is the per-call output ceiling the drafting run uses when it is not
+given one: 5.5-generation models think adaptively, and thinking counts toward output tokens.
 """
 
 from __future__ import annotations
@@ -34,8 +45,10 @@ class AnthropicProvider:
         *,
         async_client: Any = None,
         force_tool: bool = False,
+        max_tokens: int = 16000,
     ) -> None:
         self.model = model
+        self.max_tokens = max_tokens
         self.max_retries = max_retries
         self.force_tool = force_tool
         self._client = client

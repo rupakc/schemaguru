@@ -9,6 +9,16 @@
   ``OK`` -> ``VERIFIED`` with the measured numbers, ``BROKEN`` -> ``CONTRADICTED``, ``WEAK`` keeps
   ``UNVERIFIED`` (numbers attached).
 
+A drafted soft-delete predicate is LLM text pasted into a claim, so it is checked first as a
+filter expression only (:func:`check_predicate`): no comment or statement markers, no FactLang
+attribute keywords, balanced quotes/parentheses, and it must reference one of its
+``marker_columns`` (each of which must exist when a store is given). A rejected predicate is
+never sent; the draft stays ``UNVERIFIED`` with ``SG406``.
+
+What a PASS proves: ``UNIQUE`` proves the claimed *key* is unique and ``PATTERN`` proves the
+values match the *pattern*. Neither proves the prose (the entity name, what the type "means"):
+those parts are still the model's words, shown as drafted until a human accepts them.
+
 A claim the backend cannot judge (no FactLang claim capability, an empty or raising ``check``, a
 failed probe) leaves the draft ``UNVERIFIED`` and reports ``SG405``; nothing crashes. Prose
 parts and non-draft facts are returned unchanged. Ids never change: status, method and evidence
@@ -17,6 +27,7 @@ are not part of a draft's identity.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
@@ -32,8 +43,51 @@ from schemaguru.model.evidence import Evidence
 from schemaguru.model.facts import Fact, Provenance, Status
 from schemaguru.model.joins import JoinRef
 from schemaguru.model.refs import ObjectRef
+from schemaguru.overlays.schema import check_filter_syntax
+from schemaguru.store.protocol import Store
 
 PATTERN_RATE = "99%"
+# FactLang claim keywords that would end the filter and start an attribute (or a verb)
+_CLAIM_WORDS = re.compile(
+    r"\b(?:VALUE|RATE|MATCH|COVERAGE|CARD|CAST|TOLERANCE|ALLOW|SPLIT|WITH|TO|WITHIN|BETWEEN|"
+    r"MAX_PER_KEY|ROWS|NULLS|DEAD|UNIQUE|FANOUT|VALUES|RANGE|PATTERN|FRESH|JOIN|COUNT|WHERE)\b",
+    re.IGNORECASE,
+)
+_FORBIDDEN = ("--", ";", "#", "/*", "*/", "\n", "\r", "\x00")
+_QUOTED = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|`[^`]*`")
+
+
+def check_predicate(
+    predicate: object, markers: Sequence[str], columns: set[str] | None = None
+) -> str | None:
+    """Why a drafted soft-delete predicate may not be put into a claim, or ``None`` if it may.
+
+    A strict local check (the FactLang-seam ``validate_filter`` does not exist yet): the text
+    must be one filter expression. ``columns`` (the table's stored column names), when given,
+    must contain every marker column.
+    """
+    if not isinstance(predicate, str) or not predicate.strip():
+        return "the predicate is empty"
+    for bad in _FORBIDDEN:
+        if bad in predicate:
+            return f"the predicate contains {bad!r}"
+    syntax = check_filter_syntax(predicate)
+    if syntax is not None:
+        return syntax
+    bare = _QUOTED.sub("''", predicate)
+    word = _CLAIM_WORDS.search(bare)
+    if word is not None:
+        return f"the predicate contains the claim keyword {word.group(0)!r}"
+    if not markers:
+        return "the draft names no marker column"
+    if columns is not None:
+        missing = [m for m in markers if m not in columns]
+        if missing:
+            return f"marker column(s) {missing} do not exist"
+    named = {m for m in markers if re.search(rf"(?<![\w$]){re.escape(m)}(?![\w$])", bare)}
+    if not named:
+        return f"the predicate references none of its marker columns {list(markers)}"
+    return None
 
 
 def _lit(text: str) -> str:
@@ -61,11 +115,26 @@ def claims_for(f: Fact) -> list[str]:
 
 class _Verifier:
     def __init__(
-        self, backend: MeasureBackend, cfg: Config, bag: DiagnosticBag | None, now: datetime
+        self,
+        backend: MeasureBackend,
+        cfg: Config,
+        bag: DiagnosticBag | None,
+        now: datetime,
+        store: Store | None,
     ) -> None:
         self.backend, self.cfg, self.bag, self.now = backend, cfg, bag, now
+        self.store = store
 
-    def warn(self, f: Fact, why: str) -> None:
+    def predicate_problem(self, f: Fact) -> str | None:
+        columns: set[str] | None = None
+        if self.store is not None and isinstance(f.subject, ObjectRef):
+            columns = {
+                c.ref.column for c in self.store.columns(f.subject.table_ref()) if c.ref.column
+            }
+        markers = f.value.get("marker_columns") or []
+        return check_predicate(f.value.get("predicate"), [str(m) for m in markers], columns)
+
+    def warn(self, f: Fact, why: str, code: str = "SG405") -> None:
         if self.bag is not None:
             loc = (
                 f.subject.identity_key()
@@ -73,9 +142,7 @@ class _Verifier:
                 else f.subject.canonical()
             )
             self.bag.add(
-                Diagnostic(
-                    "SG405", Severity.WARNING, f"{f.kind.name} draft not checked: {why}", loc
-                )
+                Diagnostic(code, Severity.WARNING, f"{f.kind.name} draft not checked: {why}", loc)
             )
 
     def check(self, claim: str) -> Evidence | None:
@@ -136,17 +203,23 @@ def verify_drafts(
     config: Config | None = None,
     diagnostics: DiagnosticBag | None = None,
     now: datetime | None = None,
+    store: Store | None = None,
 ) -> list[Fact]:
-    """Check every checkable ``DRAFTED`` fact; returns ``facts`` in order, updated."""
-    v = _Verifier(
-        backend, config or Config(), diagnostics, utcnow() if now is None else require_aware(now)
-    )
+    """Check every checkable ``DRAFTED`` fact; returns ``facts`` in order, updated.
+
+    Pass ``store`` so soft-delete marker columns are checked against the stored columns.
+    """
+    at = utcnow() if now is None else require_aware(now)
+    v = _Verifier(backend, config or Config(), diagnostics, at, store)
     out: list[Fact] = []
     for f in facts:
         if f.provenance is not Provenance.DRAFTED or f.status is Status.ERROR:
             out.append(f)
         elif f.kind.name == "JOIN" and isinstance(f.subject, JoinRef):
             out.append(v.join(f))
+        elif f.kind.name == "SOFT_DELETE" and (problem := v.predicate_problem(f)) is not None:
+            v.warn(f, f"predicate rejected: {problem}", "SG406")
+            out.append(f)
         else:
             texts = claims_for(f)
             out.append(v.claims(f, texts) if texts else f)

@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import pytest
+
 from schemaguru.diagnostics import DiagnosticBag
 from schemaguru.draft import verify_drafts
 from schemaguru.model.evidence import Evidence
@@ -150,3 +152,36 @@ def test_join_measure_failure_keeps_unverified(shop_duckdb: Any) -> None:
         [_join_draft("orders", "customer_id", "customers", "customer_id")], be, diagnostics=bag
     )
     assert out.status is Status.UNVERIFIED and [d.code for d in bag] == ["SG405"]
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "1=1 VALUE >=0 --",
+        "deleted IS NULL; DROP TABLE x",
+        "deleted IS NULL # c",
+        "deleted IS NULL\nOR TRUE",
+        "deleted RATE >=1%",
+        "deleted MATCH >=1%",
+        "status <> 'x'",  # does not reference its marker column
+        "(deleted IS NULL",
+        "",
+    ],
+)
+def test_bad_soft_delete_predicate_is_never_checked(shop_duckdb: Any, predicate: str) -> None:
+    be = ClaimBackend(shop_duckdb[0], lambda c: "PASS")
+    bag = DiagnosticBag()
+    f = _draft(FactKind.SOFT_DELETE, ORD, {"predicate": predicate, "marker_columns": ["deleted"]})
+    [out] = verify_drafts([f], be, diagnostics=bag)
+    assert out.status is Status.UNVERIFIED and be.claims == []
+    assert [d.code for d in bag] == ["SG406"]
+
+
+def test_soft_delete_marker_must_exist_in_store(shop_store: Any, shop_duckdb: Any) -> None:
+    be = ClaimBackend(shop_duckdb[0], lambda c: "PASS")
+    f = _draft(FactKind.SOFT_DELETE, ORD, {"predicate": "NOT gone", "marker_columns": ["gone"]})
+    [out] = verify_drafts([f], be, store=shop_store)
+    assert out.status is Status.UNVERIFIED and be.claims == []
+    good = _draft(FactKind.SOFT_DELETE, ORD, SOFT)
+    [ok] = verify_drafts([good], be, store=shop_store)
+    assert ok.status is Status.VERIFIED

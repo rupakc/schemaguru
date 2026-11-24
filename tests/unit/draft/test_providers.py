@@ -173,3 +173,11 @@ def test_sdk_extras_missing_raise_helpful_import_error() -> None:
     if importlib.util.find_spec("openai") is None:
         with pytest.raises(ImportError, match="openai"):
             _ = OpenAICompatibleProvider(None, None, "m").client
+
+
+def test_anthropic_defaults_and_no_strict() -> None:
+    p = AnthropicProvider(client=NS(messages=FakeMessages(_anthropic_resp([]))))
+    assert p.max_tokens == 16000
+    req = p._request("s", "u", DRAFT_SCHEMA, 10)
+    # strict is off: DRAFT_SCHEMA uses minLength/maxItems, which strict tool schemas reject
+    assert "strict" not in req["tools"][0]

@@ -10,8 +10,12 @@
   and ``value["prompt_hash"]``. They never replace a ``HUMAN`` fact: provenance is part of a
   fact's id, so both are kept and precedence (``knowledge.resolve``) picks ``HUMAN``.
 * Token usage per call goes to the store ledger (kind ``draft``, unit ``tokens``); the run stops
-  before a call that would exceed ``draft_budget_tokens`` (``SG402``, the rest is ``skipped``).
-  A provider that reports no usage is charged an estimate of ~4 characters per token.
+  before a call that could exceed ``draft_budget_tokens``: each call reserves its estimated
+  input (3 chars/token) and gets ``max_tokens = min(max_tokens, what is left)``; below
+  ``MIN_OUTPUT_TOKENS`` the call is not made (``SG402``, the rest is ``skipped``). A provider
+  that reports no usage is charged an estimate of ~4 characters per token.
+* Columns whose values were masked get a ``PII`` fact (MEASURED, OBSERVED, method ``exact``,
+  ``detector`` = the shape category), spec 11. Error messages are masked before storing.
 
 Drafting is an explicit run: it is never called from scoping, rendering or the query path.
 """
@@ -29,7 +33,7 @@ from schemaguru._util.hashing import canonical_json, stable_hash
 from schemaguru._util.timeutil import require_aware, utcnow
 from schemaguru.config import Budget, Config
 from schemaguru.diagnostics import Diagnostic, Severity
-from schemaguru.draft.inputs import DraftInput, build_inputs
+from schemaguru.draft.inputs import DraftInput, build_inputs, mask_free_text
 from schemaguru.draft.provider import (
     DRAFT_SCHEMA,
     TABLE_DRAFT_SCHEMA,
@@ -48,7 +52,10 @@ from schemaguru.store.protocol import Store
 PROMPT_NAME = "table_v1.md"
 SMALL_TABLE_COLUMNS = 5
 BATCH_SIZE = 8
-CHARS_PER_TOKEN = 4
+CHARS_PER_TOKEN = 4  # charge estimate for providers that report no usage
+RESERVE_CHARS_PER_TOKEN = 3  # conservative input reservation before a call
+MIN_OUTPUT_TOKENS = 1024  # a call that could not write this much is not made
+DEFAULT_MAX_TOKENS = 8192
 LEDGER_KIND = "draft"
 
 
@@ -73,6 +80,7 @@ class DraftReport:
     output_tokens: int = 0
     estimated_tokens: int = 0  # charged for calls whose provider reported no usage
     pii_sweep_hits: int = 0
+    pii_facts: list[Fact] = field(default_factory=list)  # MEASURED PII of masked columns
 
     @property
     def tokens(self) -> int:
@@ -143,11 +151,20 @@ class _Run:
             r.estimated_tokens += amount
         self.store.ledger_add(LEDGER_KIND, amount, "tokens", f"{self.source} {n} table(s) {note}")
 
-    def _over_budget(self, user: str) -> bool:
+    def _allowance(self, user: str) -> int | None:
+        """``max_tokens`` for the next call, or ``None`` when the budget cannot afford one.
+
+        The input is reserved conservatively and the output is capped at what is left, so a call
+        can never be *allowed* to spend past the cap (spec 10.4). Residual risk: the reservation
+        is an estimate; an input much denser than 3 chars/token can still overshoot slightly.
+        """
         if self.cap is None:
-            return False
-        est_in = -(-(len(self.system) + len(user)) // CHARS_PER_TOKEN)
-        return self.report.tokens >= self.cap or self.report.tokens + est_in > self.cap
+            return self.max_tokens
+        est_in = -(-(len(self.system) + len(user)) // RESERVE_CHARS_PER_TOKEN)
+        left = self.cap - self.report.tokens - est_in
+        if left < MIN_OUTPUT_TOKENS:
+            return None
+        return min(self.max_tokens, left)
 
     # --- one group -----------------------------------------------------------------
     def run_group(self, group: list[DraftInput]) -> None:
@@ -155,7 +172,8 @@ class _Run:
         failures: dict[str, _Failure] = {}
         for _attempt in range(2):
             user = canonical_json({"tables": [i.payload for i in pending]})
-            if self._over_budget(user):
+            allowance = self._allowance(user)
+            if allowance is None:
                 self.stopped = True
                 self.report.skipped += [i.table for i in pending]
                 return
@@ -163,7 +181,7 @@ class _Run:
             reply: dict[str, Any] | None = None
             try:
                 reply = self.provider.complete_json(
-                    self.system, user, DRAFT_SCHEMA, max_tokens=self.max_tokens
+                    self.system, user, DRAFT_SCHEMA, max_tokens=allowance
                 )
                 outcome = self._parse(reply, pending)
             except InvalidReply as e:
@@ -192,6 +210,7 @@ class _Run:
             self._error(i, failures[i.table.canonical()])
 
     def _error(self, inp: DraftInput, f: _Failure) -> None:
+        message = mask_free_text(f.message[:500])[0]  # replies can quote personal data back
         fact = Fact.make(
             FactKind.DESCRIPTION,
             inp.table,
@@ -199,7 +218,7 @@ class _Run:
                 "text": None,
                 "reason": f.reason,
                 "code": f.code,
-                "message": f.message[:500],
+                "message": message,
                 "prompt_hash": self.phash,
             },
             Provenance.DRAFTED,
@@ -210,7 +229,7 @@ class _Run:
         self.store.put_facts([fact])
         self.report.errors.append(fact)
         self.report.diagnostics.append(
-            _diag(f.code, f"draft failed: {f.message}", inp.table.canonical())
+            _diag(f.code, f"draft failed: {message}", inp.table.canonical())
         )
 
     def _parse(self, reply: Any, pending: list[DraftInput]) -> dict[str, list[Fact] | _Failure]:
@@ -334,6 +353,24 @@ class _Run:
         return JoinRef(left, right)
 
 
+def _pii_facts(inp: DraftInput, at: datetime) -> list[Fact]:
+    """Spec 11: a column whose values were masked is tagged ``PII`` (MEASURED, by shape)."""
+    t = inp.table
+    return [
+        Fact.make(
+            FactKind.PII,
+            ObjectRef(t.catalog, t.schema, t.table, column),
+            {"category": category, "detector": category},
+            Provenance.MEASURED,
+            Status.OBSERVED,
+            method="exact",
+            source="draft:mask",
+            observed_at=at,
+        )
+        for column, category in inp.masked
+    ]
+
+
 def draft_tables(
     refs: Iterable[ObjectRef],
     *,
@@ -341,18 +378,26 @@ def draft_tables(
     provider: LLMProvider,
     config: Config | None = None,
     budget: Budget | int | None = None,
-    max_tokens: int = 8192,
+    max_tokens: int | None = None,
     now: datetime | None = None,
 ) -> DraftReport:
-    """Draft the meaning of ``refs`` and store the drafts; see the module docstring."""
+    """Draft the meaning of ``refs`` and store the drafts; see the module docstring.
+
+    ``max_tokens`` defaults to the provider's own ``max_tokens`` attribute (16000 for
+    :class:`AnthropicProvider`), else ``DEFAULT_MAX_TOKENS``; the budget may lower it per call.
+    """
     cfg = config or Config()
+    if max_tokens is None:
+        pm = getattr(provider, "max_tokens", None)
+        max_tokens = pm if isinstance(pm, int) and pm > 0 else DEFAULT_MAX_TOKENS
+    at = utcnow() if now is None else require_aware(now)
     run = _Run(
         store,
         provider,
         cfg,
         _cap(budget, cfg),
         max_tokens,
-        utcnow() if now is None else require_aware(now),
+        at,
     )
     report = run.report
     inputs: list[tuple[DraftInput, int]] = []
@@ -364,7 +409,10 @@ def draft_tables(
             continue
         inp = build_inputs(store, ref, cfg)
         report.pii_sweep_hits += inp.pii_sweep_hits
+        report.pii_facts += _pii_facts(inp, at)
         inputs.append((inp, len(store.columns(ref))))
+    if report.pii_facts:
+        store.put_facts(report.pii_facts)
     for group in _groups(inputs):
         if run.stopped:
             report.skipped += [i.table for i in group]

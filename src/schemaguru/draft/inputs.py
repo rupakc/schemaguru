@@ -1,12 +1,16 @@
 """What the LLM is shown about one table (spec 10.2) under the value policy (spec 11).
 
 * ``masked`` (default): every value goes through :func:`schemaguru.pii.mask_value`, one value
-  at a time, and a final shape sweep (:func:`schemaguru.pii.sweep`) runs over every string of
-  the assembled payload, keys included (comments, names); its hits are ``pii_sweep_hits``.
+  at a time. Free-text metadata (table and column comments) goes through
+  :func:`mask_free_text`: the shape sweep plus embedded person-name masking. Then a final shape
+  sweep (:func:`schemaguru.pii.sweep`) runs over every string of the assembled payload, keys
+  included. Identifiers are never name-masked (that would destroy table/column names). All hits
+  are counted in ``pii_sweep_hits``.
 * ``raw``: values unmasked, only when the effective :class:`~schemaguru.pii.ValuePolicy` says
   so (explicit opt-in). No sweep: the user asked for the real values.
-* ``none``: no values at all, only names, types, comments and statistics. The sweep still runs
-  (comments can hold personal data; this is stricter than the spec's masked-only sweep).
+* ``none``: no values at all, only names, types, comments and statistics. Comment masking and
+  the sweep still run (comments can hold personal data; stricter than the spec's masked-only
+  sweep).
 
 Values are only the *top observed values* already measured for low-cardinality columns (and a
 human's declared list) plus at most ``sample_values_per_column`` caller-supplied examples per
@@ -25,6 +29,7 @@ from schemaguru.model.facts import Fact, Provenance, Status
 from schemaguru.model.joins import JoinRef
 from schemaguru.model.refs import ObjectRef
 from schemaguru.pii import ValuePolicy, mask_value, sweep
+from schemaguru.pii.detectors import name_spans, names_enabled
 from schemaguru.pii.policy import Mode
 from schemaguru.store.protocol import Store
 
@@ -67,6 +72,28 @@ class _Values:
         if cat is not None:
             self.masked.add((column, cat))
         return text
+
+
+def mask_free_text(text: str) -> tuple[str, int]:
+    """Mask personal data *inside* prose (comments, messages); return ``(text, hits)``.
+
+    The outbound :func:`~schemaguru.pii.sweep` (shapes: email, IBAN, card, ...) plus the
+    embedded person-name masking ``mask_value`` uses (``name_spans`` when names are enabled).
+    Only for free text: identifiers (table/column names) never go through name masking.
+    """
+    masked, hits = sweep(text)
+    if names_enabled():
+        spans = name_spans(masked)
+        if spans:
+            out: list[str] = []
+            pos = 0
+            for a, b in spans:
+                out.append(masked[pos:a])
+                out.append("<name>")
+                pos = b
+            out.append(masked[pos:])
+            masked, hits = "".join(out), hits + len(spans)
+    return masked, hits
 
 
 def _sweep_tree(node: Any) -> tuple[Any, int]:
@@ -180,5 +207,11 @@ def build_inputs(
     }
     hits = 0
     if mode != "raw":
-        payload, hits = _sweep_tree(payload)
+        # free-text metadata first (shapes + names), then the shape sweep over everything
+        for holder in (payload, *columns):
+            if isinstance(holder.get("comment"), str):
+                holder["comment"], h = mask_free_text(holder["comment"])
+                hits += h
+        payload, swept = _sweep_tree(payload)
+        hits += swept
     return DraftInput(table, mode, payload, hits, tuple(sorted(vals.masked)))

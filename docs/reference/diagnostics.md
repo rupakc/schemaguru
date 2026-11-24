@@ -27,6 +27,7 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG403 | the LLM provider call failed; that call's tables get an ERROR draft fact |
 | SG404 | a table asked to be drafted is not in the store (crawl it first) |
 | SG405 | a drafted claim could not be checked (no verdict); the draft stays UNVERIFIED |
+| SG406 | a drafted soft-delete predicate is not a safe filter; it is never checked |
 | SG601 | a malformed join fact was skipped; only that graph edge is lost |
 | SG602 | a waypoint rule is malformed; the searches it governs are refused |
 | SG603 | a waypoint rule has more than 16 requirements; its searches are refused |

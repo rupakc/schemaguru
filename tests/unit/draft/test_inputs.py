@@ -130,3 +130,32 @@ def test_neighbours_include_join_facts(shop_store: SQLiteStore) -> None:
     sessions = build_inputs(shop_store, ObjectRef(None, "shop", "sessions"), Config())
     assert "shop.sessions" in events.payload["neighbours"]
     assert "shop.events" in sessions.payload["neighbours"]
+
+
+LEAK = "owner Alice Johnson, alice.j@example.com, IBAN DE89 3704 0044 0532 0130 00"
+
+
+def test_names_in_comments_are_masked_in_masked_and_none_modes(shop_store: SQLiteStore) -> None:
+    from schemaguru.model.structure import Column
+
+    shop_store.upsert_tables([Table(CUST, "table", LEAK, 1000)])
+    cols = shop_store.columns(CUST)
+    cols = [
+        Column(c.ref, c.ordinal, c.native_type, c.family, c.nullable, "ask Maria Garcia")
+        if c.ref.column == "segment"
+        else c
+        for c in cols
+    ]
+    shop_store.upsert_columns(CUST, cols)
+    for mode in ("masked", "none"):
+        di = build_inputs(shop_store, CUST, Config(sampling=SamplingConfig(llm_values=mode)))
+        text = di.text()
+        for secret in ("Alice", "Johnson", "alice.j", "DE89", "Maria", "Garcia"):
+            assert secret not in text, (mode, secret)
+        assert "<name>" in di.payload["comment"]
+        seg = next(c for c in di.payload["columns"] if c["name"] == "segment")
+        assert seg["comment"] == "ask <name>"
+        assert di.pii_sweep_hits >= 4  # email, iban, two names
+        # identifiers are never rewritten
+        assert di.payload["table"] == "shop.customers"
+        assert [c["name"] for c in di.payload["columns"]] == [c.ref.column for c in cols]

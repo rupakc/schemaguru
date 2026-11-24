@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 
 from schemaguru.graph.edges import Edge
-from schemaguru.graph.hubs import sinks
+from schemaguru.graph.hubs import in_edges_of_sinks
 from schemaguru.model.refs import ObjectRef
 
 
@@ -38,13 +38,11 @@ def _widest_gap(values: list[float]) -> tuple[float, float] | None:
 
 
 def calibrate_hubs(edges: Iterable[Edge]) -> list[HubCalibration]:
-    es = [e for e in edges if e.measured]
+    grouped = in_edges_of_sinks(e for e in edges if e.measured)
     out: list[HubCalibration] = []
-    for sink in sorted(sinks(es), key=lambda r: r.canonical()):
+    for sink in sorted(grouped, key=lambda r: r.canonical()):
         fans = sorted(
-            float(e.value["fan_in"])
-            for e in es
-            if e.right_table == sink and e.value.get("fan_in") is not None
+            float(e.value["fan_in"]) for e in grouped[sink] if e.value.get("fan_in") is not None
         )
         gap = _widest_gap(fans)
         proposed = None if gap is None else math.sqrt(gap[0] * gap[1])

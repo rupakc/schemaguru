@@ -59,18 +59,15 @@ class Edge:
     measured: bool = True
     estimated: bool = False
     fact_id: str | None = field(default=None)
+    # Precomputed once: search touches these millions of times (canonical strings are dear).
+    key: str = field(init=False, repr=False)
+    left_table: ObjectRef = field(init=False, repr=False)
+    right_table: ObjectRef = field(init=False, repr=False)
 
-    @property
-    def key(self) -> str:
-        return self.join.identity_key()
-
-    @property
-    def left_table(self) -> ObjectRef:
-        return self.join.left[0].table_ref()
-
-    @property
-    def right_table(self) -> ObjectRef:
-        return self.join.right[0].table_ref()
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "key", self.join.identity_key())
+        object.__setattr__(self, "left_table", self.join.left[0].table_ref())
+        object.__setattr__(self, "right_table", self.join.right[0].table_ref())
 
     def __repr__(self) -> str:
         tag = "unmeasured" if not self.measured else (self.verdict or "?")

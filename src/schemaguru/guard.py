@@ -192,6 +192,56 @@ def _declares(toks: list[Tok], i: int) -> bool:
     return j >= 0 and toks[j].text.upper() in ("WITH", "AS")
 
 
+_FROM_ENDERS = frozenset(
+    {"WHERE", "GROUP", "ORDER", "HAVING", "LIMIT", "UNION", "INTERSECT", "EXCEPT", "WINDOW"}
+    | {"QUALIFY", "OFFSET", "FETCH", "SELECT", "WITH", "RETURNING"}
+)
+
+
+def _comma_items(toks: list[Tok]) -> tuple[set[int], set[int]]:
+    """One pass over the tokens, tracking the clause at each parenthesis depth. Returns the
+    indices of (string literals that are FROM-list items after a comma, names that are CTE
+    declarations after a comma in a WITH clause: ``, name(cols) AS (``)."""
+    files: set[int] = set()
+    decls: set[int] = set()
+    stack: list[list[bool]] = [[False, False]]  # [in FROM list, in WITH clause]
+    match: dict[int, int] = {}
+    opens: list[int] = []
+    for i, t in enumerate(toks):
+        if t.text == "(":
+            opens.append(i)
+        elif t.text == ")" and opens:
+            match[opens.pop()] = i
+    for i, t in enumerate(toks):
+        st = stack[-1]
+        up = t.text.upper() if t.kind == "ident" else ""
+        if t.text == "(":
+            prev = toks[i - 1].text.upper() if i else ""
+            stack.append([st[0] and prev in ("FROM", "JOIN", ",", "("), False])  # (a, 'f') list
+        elif t.text == ")":
+            if len(stack) > 1:
+                stack.pop()
+        elif up in ("FROM", "JOIN"):
+            st[0] = True
+        elif up == "WITH":
+            st[0], st[1] = False, True
+        elif up in _FROM_ENDERS:
+            st[0] = False
+            if up == "SELECT":
+                st[1] = False
+        elif t.text == ",":
+            j = i + 1
+            while j < len(toks) and toks[j].text.upper() in ("LATERAL", "ONLY"):
+                j += 1
+            if st[0] and j < len(toks) and toks[j].kind == "str":
+                files.add(j)
+            if st[1] and j + 1 < len(toks) and toks[j + 1].text == "(" and j + 1 in match:
+                k = match[j + 1] + 1
+                if k + 1 < len(toks) and toks[k].text.upper() == "AS" and toks[k + 1].text == "(":
+                    decls.add(j)
+    return files, decls
+
+
 @dataclass(frozen=True)
 class GuardVerdict:
     ok: bool
@@ -238,8 +288,9 @@ def check_sql(
 
     banned = {b.table.casefold(): b.table_ref() for b in never_query}
     toks = tokenize(blank(sql, lexed=lexed).view)
+    comma_files, comma_decls = _comma_items(toks)
     for i, t in enumerate(toks):
-        if t.kind == "str" and _file_as_table(toks, i):
+        if t.kind == "str" and (i in comma_files or _file_as_table(toks, i)):
             add("SG801: a string literal as a table (file or URL) is not allowed")
         if t.kind not in ("ident", "qident"):
             continue
@@ -251,7 +302,7 @@ def check_sql(
                 add(f"SG802: reads never-query table {ref.canonical()}")
         followed = i + 1 < len(toks) and toks[i + 1].text == "("
         last = folded.rsplit(".", 1)[-1]  # backtick `a.b.f` names a qualified function
-        if followed and not _declares(toks, i) and _reads_by_text(last):
+        if followed and not _declares(toks, i) and i not in comma_decls and _reads_by_text(last):
             add(f"SG801: {last}() runs SQL or reads a table or file named by text")
         if followed and folded in ("identifier", "table"):
             plain = (

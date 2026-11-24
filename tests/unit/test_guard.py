@@ -569,3 +569,61 @@ def test_guard_r6_sql_json_functions_pass(sql: str) -> None:
 def test_guard_r6_declarations_are_not_calls(sql: str) -> None:
     v = check_sql(sql)
     assert v.ok, v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM t, 'x.csv'",
+        "SELECT * FROM t AS a, '/etc/passwd' b",
+        "SELECT * FROM (SELECT 1 FROM t, 'x.csv') q",
+        "SELECT * FROM (t, 'x.csv')",
+        "SELECT * FROM t, LATERAL 'x.csv'",
+        "SELECT * FROM t JOIN u ON t.a = u.a, 'x.csv'",
+    ],
+)
+def test_guard_r6b_comma_file_as_table_refused(sql: str) -> None:
+    v = check_sql(sql)
+    assert not v.ok and any("string literal as a table" in r for r in v.reasons), v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 'a', 'b', f(x, 'c') FROM t",
+        "SELECT a FROM t WHERE x IN ('a', 'b')",
+        "SELECT * FROM (VALUES ('a'), ('b')) v(x)",
+        "SELECT * FROM t, u WHERE u.k = 'a' GROUP BY 'a', 'b' ORDER BY 'c', 'd'",
+        "SELECT a FROM t WHERE b = 1 LIMIT 1 OFFSET 2",
+        "SELECT * FROM t, f('x', 'y')",
+        "SELECT x FROM t UNION SELECT 'a', 'b'",
+    ],
+)
+def test_guard_r6b_commas_elsewhere_pass(sql: str) -> None:
+    v = check_sql(sql)
+    assert v.ok, v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "WITH a AS (SELECT 1), file(x) AS (SELECT 1) SELECT * FROM file",
+        "WITH a AS (SELECT 1), b AS (SELECT 2), read_x(x, y) AS (SELECT 1, 2) SELECT * FROM a",
+    ],
+)
+def test_guard_r6b_comma_cte_declaration_passes(sql: str) -> None:
+    v = check_sql(sql)
+    assert v.ok, v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "WITH a AS (SELECT 1), file(x) SELECT * FROM a",
+        "WITH a AS (SELECT 1) SELECT read_csv('x'), file('y') FROM a",
+        "SELECT 1, file('/etc/passwd')",
+    ],
+)
+def test_guard_r6b_comma_calls_still_refused(sql: str) -> None:
+    v = check_sql(sql)
+    assert not v.ok and any("named by text" in r for r in v.reasons), v.reasons

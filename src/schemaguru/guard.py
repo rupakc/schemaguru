@@ -2,11 +2,13 @@
 
 This is a conservative DENY-LIST over text, NOT a sandbox. It is dialect-agnostic and refuses
 whatever it cannot read the same way in every dialect: the code/string/comment segmentation of
-the SQL must be identical under the baseline lexer and under each single dialect option (``#`` or
+the SQL, reduced to "inside a string or comment or not" (identifier-quoted regions count as code,
+so array subscripts like ``x[1]`` and ``arr[OFFSET(0)]`` are fine), must be identical under the
+baseline lexer and under each single dialect option (``#`` or
 ``//`` comments, ``--`` needing a space, a lone CR ending a comment, ``$tag$`` strings, triple
 quotes, nested ``/* */``, backslash escapes, ``[ident]``); otherwise the SQL is refused as
 "ambiguous across SQL dialects". By design this refuses dialect-specific constructs whose meaning
-differs across dialects (``#`` comments, ``$$`` strings, ``[ident]``, triple quotes), so some valid
+differs across dialects (``#`` comments, ``$$`` strings, ``[ident]`` holding a quote or comment marker, triple quotes), so some valid
 SQL is refused. ``U&`` escapes, backslashes in quoted identifiers and ``/*!`` comments are
 refused outright. Everything else is checked once, on the agreed segmentation: one statement,
 SELECT/WITH first, no DML/DDL keyword, no function that runs SQL from text.

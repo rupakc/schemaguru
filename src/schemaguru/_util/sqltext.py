@@ -225,15 +225,27 @@ def lex(sql: str, o: Opts) -> Lexed:
     return Lexed("".join(out), terminated, bang)
 
 
+_HIDDEN = str.maketrans("qmcidD", "xxcccc")
+
+
+def _membership(lx: Lexed) -> tuple[str, bool, bool]:
+    return lx.kinds.translate(_HIDDEN), lx.terminated, lx.bang
+
+
 def agreed_lex(sql: str) -> tuple[Lexed, bool]:
     """Baseline segmentation and whether every single-option variant agrees with it.
 
-    A variant whose trigger text does not occur in ``sql`` cannot differ, so it is skipped.
+    Segmentations are compared only on "inside a string or comment" membership: an
+    identifier-quoted region (``"..."``, backticks, ``[...]``) counts as code, because it cannot
+    hide anything from the baseline (a ``;`` or keyword inside ``[;]`` is still code to the
+    baseline's checks). A variant whose trigger text does not occur in ``sql`` cannot differ, so
+    it is skipped.
     """
     base = lex(sql, Opts())
+    base_sig = _membership(base)
     agreed = True
     for o, triggers in _VARIANTS:
-        if any(t in sql for t in triggers) and lex(sql, o) != base:
+        if any(t in sql for t in triggers) and _membership(lex(sql, o)) != base_sig:
             agreed = False
             break
     return base, agreed

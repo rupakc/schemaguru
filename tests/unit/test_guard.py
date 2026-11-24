@@ -197,3 +197,30 @@ def test_guard_performance_at_cap() -> None:
         check_sql(sql, never_query=nq)
         best = min(best, time.perf_counter() - t0)
     assert best < 0.5
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT x[1] FROM t",
+        "SELECT arr[OFFSET(0)] FROM t",
+        "SELECT arr[SAFE_ORDINAL(1)] FROM t",
+        "SELECT a[1:2] FROM t",
+        'SELECT "col[1]" FROM t',
+    ],
+)
+def test_guard_array_subscripts_pass(sql: str) -> None:
+    v = check_sql(sql)
+    assert v.ok, v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 1 AS [']; DROP TABLE t; --']",
+        "SELECT [-- ]\n; DROP TABLE t",
+        "SELECT 1 FROM t WHERE x = [--]; DROP TABLE t",
+    ],
+)
+def test_guard_bracket_quote_bypasses_stay_rejected(sql: str) -> None:
+    assert not check_sql(sql).ok

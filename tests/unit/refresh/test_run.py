@@ -206,12 +206,17 @@ class NoJoinScheduler(Scheduler):
 
 
 def _clocked(
-    store: SQLiteStore, conn: Any, clock: list[datetime], cls: type = Scheduler, **kw: Any
+    store: SQLiteStore,
+    conn: Any,
+    clock: list[datetime],
+    cls: type = Scheduler,
+    cfg: Config | None = None,
+    **kw: Any,
 ) -> Any:
     def now() -> datetime:
         return clock[0]
 
-    cfg = Config()
+    cfg = cfg or Config()
     reader = DuckDBReader(DBAPIExecutor(conn))
     return refresh(
         store, reader, cls(store, FakeBackend(conn, **kw), cfg, now=now), config=cfg, now=now
@@ -366,3 +371,75 @@ def test_kind_ran_elsewhere_does_not_vouch_for_a_dropped_probe(
     assert flagged and all(k is ChangeClass.NOT_MEASURED for _, k in flagged)
     assert all("orders" in j and "lines" not in j for j, _ in flagged)
     assert "JOIN" in r.missing_checks and r.exit_code == 0
+
+
+def _not_measured(r: Any) -> list[str]:
+    return [
+        f"{c.kind.name} {subject_key(c.subject)}"
+        for c, k in r.changes
+        if k is ChangeClass.NOT_MEASURED and c.change == "removed"
+    ]
+
+
+def test_error_then_recovery_reports_nothing_missing(store: SQLiteStore, conn: Any) -> None:
+    t0 = datetime.now(timezone.utc)
+    clock = [t0]
+    _clocked(store, conn, clock)
+    clock[0] = t0 + timedelta(days=30)
+    bad = _clocked(store, conn, clock, fail=lambda req: isinstance(req, Uniqueness))
+    assert bad.measure.errors
+    clock[0] = t0 + timedelta(days=60)
+    ok = _clocked(store, conn, clock)  # the probe recovered
+    assert ok.missing_checks == [] and _not_measured(ok) == []
+    clock[0] = t0 + timedelta(days=90)
+    again = _clocked(store, conn, clock)
+    assert again.missing_checks == [] and _not_measured(again) == []
+
+
+def test_exact_then_sampled_does_not_flag_the_exact_fact(store: SQLiteStore, conn: Any) -> None:
+    from schemaguru.config import SamplingConfig
+
+    t0 = datetime.now(timezone.utc)
+    clock = [t0]
+    _clocked(store, conn, clock)
+    clock[0] = t0 + timedelta(days=30)
+    forced = Config(sampling=SamplingConfig(measurement="force"))
+    r = _clocked(store, conn, clock, cfg=forced)
+    sampled = [f for f in store.iter_facts() if (f.method or "").startswith("sampled:")]
+    assert sampled  # the table really switched to sampling
+    # every re-measured fact superseded its exact twin; only enum discovery (which a sampled
+    # run does not produce for these tables) is genuinely absent
+    assert set(r.missing_checks) <= {"VALUES"}
+    assert all(x.startswith("VALUES") for x in _not_measured(r))
+
+
+def test_withdrawn_table_is_not_also_not_measured(store: SQLiteStore, conn: Any) -> None:
+    t0 = datetime.now(timezone.utc)
+    clock = [t0]
+    _clocked(store, conn, clock)
+    conn.execute("DROP TABLE shop.orders")
+    clock[0] = t0 + timedelta(days=30)  # customers is due again; orders is gone
+    r = _clocked(store, conn, clock)
+    assert [c for c, _ in r.changes if c.kind.name == "TABLE_WITHDRAWN"]
+    assert [x for x in _not_measured(r) if "orders" in x] == []
+
+
+def test_carried_error_fact_is_superseded_not_missing() -> None:
+    from schemaguru.model.facts import Fact, Provenance, Status
+    from schemaguru.model.kinds import FactKind
+    from schemaguru.refresh.run import _carried_unmeasured
+
+    t = datetime(2026, 11, 24, tzinfo=timezone.utc)
+    ref = ObjectRef(None, "shop", "orders", "c")
+
+    def nr(st: Status) -> Fact:
+        return Fact.make(
+            FactKind.NULL_RATE, ref, {"rate": None if st is Status.ERROR else 0.0},
+            Provenance.MEASURED, st, method="exact", observed_at=t,
+        )  # fmt: skip
+
+    due = [ref.table_ref()]
+    err = nr(Status.ERROR)
+    assert _carried_unmeasured([err], [err], due, True) == []
+    ok = nr(Status.OBSERVED)
+    assert len(_carried_unmeasured([ok], [ok], due, True)) == 1

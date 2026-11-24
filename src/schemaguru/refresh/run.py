@@ -10,11 +10,11 @@ from schemaguru.catalog.crawl import CrawlReport, crawl
 from schemaguru.catalog.protocol import CatalogReader
 from schemaguru.config import Config
 from schemaguru.diagnostics import Diagnostic, Severity
-from schemaguru.knowledge.diff import Change, diff
+from schemaguru.knowledge.diff import Change, diff, subject_key
 from schemaguru.knowledge.resolve import resolve
 from schemaguru.knowledge.snapshot import take
 from schemaguru.measure.scheduler import MeasureReport, Scheduler
-from schemaguru.model.facts import Fact, Provenance
+from schemaguru.model.facts import Fact, Provenance, Status
 from schemaguru.model.joins import JoinRef
 from schemaguru.model.refs import ObjectRef
 from schemaguru.refresh.classify import (
@@ -106,18 +106,27 @@ def _carried_unmeasured(
     new_facts: list[Fact],
     targets: Collection[ObjectRef],
     catalog_ran: bool,
+    withdrawn: Collection[ObjectRef] = (),
 ) -> list[Change]:
     """Measured facts carried unchanged from the previous snapshot on tables that were due.
 
     The store never deletes facts, so a narrower run leaves the old ones in place and a plain
-    diff sees nothing. The rule is strict and per fact: ANY carried MEASURED fact (same id,
-    ``observed_at`` not advanced) on a DUE table is not measured, whether its kind ran on other
-    tables or not. The scheduler re-stamps ``observed_at`` on everything it re-measures, so this
-    is exact. A table that was not due is never reported (its facts are still fresh). Carried
-    CATALOG facts are reported only when this run's crawl had errors.
+    diff sees nothing. A carried MEASURED fact (same id, ``observed_at`` not advanced) on a DUE
+    table is not measured, whether its kind ran on other tables or not, with three exceptions:
+    a fact is superseded, not missing, when ANY fact of the same (kind, subject) was re-stamped
+    this run, whatever its method class (exact, sampled or error: ``method_class`` is part of the
+    id, so a table that switched to sampling or a probe that recovered leaves the old fact
+    behind); a carried ERROR fact is never reported; and facts on a withdrawn table are covered by
+    ``TABLE_WITHDRAWN``. A table that was not due is never reported (its facts are still fresh).
+    Carried CATALOG facts are reported only when this run's crawl had errors.
     """
     prev_at = {f.id: f.observed_at for f in prev_facts}
-    due = set(targets)
+    due, gone = set(targets), set(withdrawn)
+    restamped = {
+        (f.kind.name, subject_key(f.subject))
+        for f in new_facts
+        if f.id not in prev_at or f.observed_at != prev_at[f.id]
+    }
     out: list[Change] = []
     for f in new_facts:
         if f.id not in prev_at or f.observed_at != prev_at[f.id]:
@@ -125,7 +134,13 @@ def _carried_unmeasured(
         if f.provenance is Provenance.CATALOG:
             skipped = not catalog_ran
         elif f.provenance is Provenance.MEASURED and f.kind.name in MEASURED_KINDS:
-            skipped = bool(_tables_of(f) & due)
+            tables = _tables_of(f)
+            skipped = (
+                bool(tables & due)
+                and not tables & gone
+                and f.status is not Status.ERROR
+                and (f.kind.name, subject_key(f.subject)) not in restamped
+            )
         else:
             continue
         if skipped:
@@ -205,7 +220,13 @@ def refresh(
 
     changes: list[Change] = diff(prev_facts, new_facts)
     changes += [Change(TABLE_WITHDRAWN, r, None, None, "removed") for r in withdrawn]
-    carried = _carried_unmeasured(prev_facts, new_facts, targets, CATALOG_CHECK in run_checks)
+    carried = _carried_unmeasured(
+        prev_facts,
+        new_facts,
+        targets,
+        CATALOG_CHECK in run_checks,
+        list(_currently_withdrawn_keys(store, prev_facts).values()),
+    )
     missing = sorted(
         {
             CATALOG_CHECK if c.before and c.before.provenance is Provenance.CATALOG else c.kind.name

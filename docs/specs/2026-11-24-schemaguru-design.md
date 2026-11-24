@@ -584,9 +584,17 @@ rows-per-key in the predecessor) and exists because nothing measured replaces it
   hop count is part of the key so a cheap long route cannot block a short one under
   the hop bound.
 - `HOP_LIMIT = 6` (configurable).
-- **Thin support is a preference, not a ban.** Pass 1 prunes intermediate hops with
-  support < `THIN_SUPPORT = 0.05`; if pass 1 finds nothing, pass 2 drops that pruning
-  and the path is labelled `provisional` with its narrowest support.
+- A route may revisit a non-hub table only when the waypoint rules force it (rendered as a
+  self-join with aliases); the search's state key is exactly the one above, with no
+  visited-set pruning (which would make the label-setting search incomplete).
+- Unknown fan-out (`distinct_left = None`) is priced at the graph's worst known
+  fan-out term (`ln(1 + max known distinct_left)`), so unknown is never cheaper than known.
+- **Thin support is a preference, not a ban.** Pass 1 prunes every hop (first,
+  intermediate or last) with support < `THIN_SUPPORT = 0.05`; pass 2 drops that pruning.
+  Pass-2 routes are always labelled `provisional` with their narrowest support and are
+  appended to the k results after the pass-1 routes (de-duplicated), so a thin direct
+  join is still offered — labelled — when a longer well-supported route exists.
+  *(Amended 2026-11-24 after review: "intermediate" made a one-hop thin join unlabelled.)*
 - `k` best paths (default 3) via Yen's algorithm **[call]**.
 - `Path.coverage` = narrowest support over hops; `None` if any hop is unmeasured.
 

@@ -13,6 +13,7 @@ import threading
 from collections.abc import Sequence
 from typing import Any, Protocol
 
+from schemaguru._util.sqltext import Opts
 from schemaguru._util.sqltext import scan as _scan
 from schemaguru.catalog.protocol import CatalogError
 
@@ -21,6 +22,13 @@ _FORBIDDEN = re.compile(
     r"\b(INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|COPY|CALL|EXECUTE"
     r"|INTO)\b",
     re.IGNORECASE,
+)
+_Q = "'\""
+_METADATA_VARIANTS = (
+    Opts(quotes=_Q, comments=False),
+    Opts(quotes=_Q, comments=False, backslash=True),
+    Opts(quotes=_Q, comments=False, dollar=True),
+    Opts(quotes=_Q, comments=False, triple=True),
 )
 _PARAMSTYLES = ("qmark", "format", "pyformat", "numeric", "named")
 
@@ -36,12 +44,12 @@ def check_metadata_sql(sql: str) -> None:
 
     Judged under both backslash interpretations: a violation under either is a refusal.
     """
-    for backslash in (False, True):
-        _check_metadata(sql, backslash)
+    for o in _METADATA_VARIANTS:
+        _check_metadata(sql, o)
 
 
-def _check_metadata(sql: str, backslash: bool) -> None:
-    chars = _scan(sql, backslash=backslash)
+def _check_metadata(sql: str, o: Opts) -> None:
+    chars = _scan(sql, o)
     code = "".join(" " if lit else c for c, lit in chars)
     if ";" in code:
         raise CatalogError("SG104", "metadata SQL must be a single statement without ';'")

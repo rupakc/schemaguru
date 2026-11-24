@@ -72,3 +72,20 @@ def test_report_error_survives_broken_store_and_classifier(tmp_path: Path) -> No
             raise RuntimeError("down")
 
     assert report_error(BrokenStore(), "SELECT a FROM t", "no such column: a") == 0  # type: ignore[arg-type]
+
+
+def test_reprobe_priority_accumulates(shop_store: Any) -> None:
+    for _ in range(3):
+        assert report_error(shop_store, "SELECT nope FROM orders", "no such column: nope") == 1
+    (prio,) = [r[0] for r in shop_store._conn.execute("SELECT priority FROM queue")]
+    assert prio >= 3.0
+
+
+def test_intake_refuses_non_identifier_column_from_custom_classifier(shop_store: Any) -> None:
+    class Evil:
+        def classify(self, sql: str, error: str, dialect: str | None) -> list[FeedbackRecord]:
+            ref = ObjectRef(None, "shop", "customers")
+            return [FeedbackRecord(ref, "Jane Doe", "unknown_column")]
+
+    assert report_error(shop_store, "SELECT 1", "x", classifiers=[Evil()]) == 0
+    assert shop_store.feedback_summary() == []

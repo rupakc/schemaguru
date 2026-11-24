@@ -135,9 +135,24 @@ def _uses(sql: str) -> list[TableUse]:
     return table_uses(sql)
 
 
+_IDENT = re.compile(r"[A-Za-z_][\w$]{0,127}\Z")
+
+
+def _valid_column(sql: str, column: str) -> bool:
+    """A column name is stored only if it is a plain identifier that the SQL itself uses as one
+    (a Postgres error can quote a double-quoted VALUE, which is user data, not a name)."""
+    if not _IDENT.match(column):
+        return False
+    want = column.casefold()
+    return any(
+        t.kind in ("ident", "qident") and t.text.strip('"`').casefold() == want
+        for t in tokenize(_view(sql))
+    )
+
+
 def _attribute(sql: str, name: Sequence[str]) -> tuple[ObjectRef | None, str] | None:
     """Table + column for a possibly qualified column name, per the attribution rules."""
-    if not name:
+    if not name or not _valid_column(sql, name[-1]):
         return None
     column = name[-1]
     qual = [q.casefold() for q in name[:-1]]
@@ -159,7 +174,7 @@ def _attribute(sql: str, name: Sequence[str]) -> tuple[ObjectRef | None, str] | 
 
 
 def _view(sql: str) -> str:
-    return blank(sql, blank_quotes="'")[0]
+    return blank(sql).view
 
 
 def _offset(sql: str, line: int, col: int) -> int | None:
@@ -323,7 +338,7 @@ class UnknownColumnClassifier:
         if m:
             ref = _ref(_split_name(m.group(2)), None)
             col = _split_name(m.group(1))
-            if ref is not None and col:
+            if ref is not None and col and _valid_column(sql, col[-1]):
                 return [FeedbackRecord(ref, col[-1], "unknown_column")]
             return []
         text = _first(_UNKNOWN_COL, error)

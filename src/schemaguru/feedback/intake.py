@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -13,7 +14,7 @@ from schemaguru.feedback.classifiers import (
 from schemaguru.model.refs import ObjectRef
 from schemaguru.store.protocol import Store
 
-_REPROBE_PRIORITY = 1.0
+_IDENT = re.compile(r"[A-Za-z_][\w$]{0,127}\Z")
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,9 @@ def report_error_detailed(
                     skipped += 1
                     continue
                 col = rec.column
+                if col is not None and not _IDENT.match(col):
+                    skipped += 1
+                    continue
                 if col is not None and rec.failure_class != "unknown_column":
                     # ambiguity / type errors name a column that must exist on the table
                     if not _has_column(store, table, col):
@@ -86,7 +90,14 @@ def report_error_detailed(
                     continue
                 seen.add(key)
                 store.feedback_add(table, col, rec.failure_class)
-                store.queue_push(table, f"feedback:{rec.failure_class}", _REPROBE_PRIORITY)
+                # +1.0 per failure: the queue keeps the MAX of pushes, so push the running total
+                # of this table's failures of this class (the feedback log is the counter)
+                total = sum(
+                    int(str(r["count"]))
+                    for r in store.feedback_summary()
+                    if r["table"] == table.canonical() and r["failure_class"] == rec.failure_class
+                )
+                store.queue_push(table, f"feedback:{rec.failure_class}", float(total))
                 written += 1
             except Exception:
                 skipped += 1

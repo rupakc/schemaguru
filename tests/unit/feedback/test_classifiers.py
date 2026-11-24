@@ -73,7 +73,9 @@ def test_unknown_column_variants() -> None:
     assert run(sql, "Unknown column 'nope' in 'field list'") == exp
     assert run(sql, "no such column: nope") == exp
     assert run("SELECT o.nope FROM orders o", "column o.nope does not exist") == exp
-    assert run("SELECT 1", 'column "nope" of relation "orders" does not exist') == exp
+    assert (
+        run("SELECT nope FROM orders", 'column "nope" of relation "orders" does not exist') == exp
+    )
 
 
 def test_unknown_table_and_ambiguous() -> None:
@@ -94,3 +96,20 @@ def test_unknown_table_and_ambiguous() -> None:
 
 def test_builtin_registry_nonempty() -> None:
     assert len(BUILTIN_CLASSIFIERS) >= 4
+
+
+def test_unknown_column_refuses_quoted_values_and_odd_names() -> None:
+    # a Postgres double-quoted VALUE reported as a missing column is user data: never stored
+    assert (
+        run('SELECT 1 FROM customers WHERE "Jane Doe" = 1', 'column "Jane Doe" does not exist')
+        == []
+    )
+    assert run('SELECT "jane@x" FROM customers', 'column "jane@x" does not exist') == []
+    assert (
+        run("SELECT 1 FROM customers", 'column "ghost" of relation "customers" does not exist')
+        == []
+    )
+    cust = ObjectRef(None, None, "customers")  # negative control: a real identifier is accepted
+    assert run("SELECT ghost FROM customers", 'column "ghost" does not exist') == [
+        FeedbackRecord(cust, "ghost", "unknown_column")
+    ]

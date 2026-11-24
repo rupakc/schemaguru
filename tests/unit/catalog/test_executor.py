@@ -150,3 +150,9 @@ def test_metadata_guard_backslash_escape_cannot_hide_a_statement() -> None:
     with pytest.raises(CatalogError):
         check_metadata_sql("SELECT 'a\\'' ; DROP TABLE x --")
     check_metadata_sql("SELECT 'it''s'")
+
+
+def test_metadata_guard_dollar_and_triple_quotes_cannot_hide_a_statement() -> None:
+    for bad in ("SELECT $$'$$; DROP TABLE x; -- '", "SELECT '''it's'''; DROP TABLE t; -- '"):
+        with pytest.raises(CatalogError):
+            check_metadata_sql(bad)

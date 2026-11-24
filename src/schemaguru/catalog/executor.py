@@ -8,6 +8,7 @@ runs it and converts the placeholders to its driver's paramstyle. Only this modu
 from __future__ import annotations
 
 import importlib
+import re
 import threading
 from collections.abc import Sequence
 from typing import Any, Protocol
@@ -15,6 +16,11 @@ from typing import Any, Protocol
 from schemaguru.catalog.protocol import CatalogError
 
 _ALLOWED_FIRST = frozenset({"SELECT", "WITH", "SHOW", "DESCRIBE", "DESC"})
+_FORBIDDEN = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|COPY|CALL|EXECUTE"
+    r"|INTO)\b",
+    re.IGNORECASE,
+)
 _PARAMSTYLES = ("qmark", "format", "pyformat", "numeric", "named")
 
 
@@ -51,11 +57,14 @@ def _scan(sql: str) -> list[tuple[str, bool]]:
 def check_metadata_sql(sql: str) -> None:
     """Refuse anything but one read-only metadata statement (SG104); mirrors FactLang's guard."""
     chars = _scan(sql)
-    code = "".join(c for c, lit in chars if not lit)
+    code = "".join(" " if lit else c for c, lit in chars)
     if ";" in code:
         raise CatalogError("SG104", "metadata SQL must be a single statement without ';'")
     if "--" in code or "/*" in code:
         raise CatalogError("SG104", "comments are not allowed in metadata SQL")
+    bad = _FORBIDDEN.search(code)
+    if bad:
+        raise CatalogError("SG104", f"metadata SQL must be read-only; found {bad.group(0).upper()}")
     words = code.split()
     first = words[0].upper() if words else ""
     if first not in _ALLOWED_FIRST:

@@ -36,9 +36,16 @@ def _pairs(tables: Sequence[ObjectRef]) -> tuple[str, list[str]]:
 class DuckDBReader:
     dialect = "duckdb"
 
-    def __init__(self, executor: MetadataExecutor, *, page_size: int = 1000) -> None:
+    def __init__(
+        self,
+        executor: MetadataExecutor,
+        *,
+        page_size: int = 1000,
+        timeout_s: float | None = None,
+    ) -> None:
         self._ex = executor
         self.page_size = page_size
+        self.timeout_s = timeout_s
 
     def list_catalogs(self) -> Iterator[str]:
         return iter(())
@@ -49,6 +56,7 @@ class DuckDBReader:
             "WHERE database_name = current_database() "
             "AND schema_name NOT IN (?, ?) ORDER BY schema_name",
             _SYSTEM_SCHEMAS,
+            timeout_s=self.timeout_s,
         )
         return Page([Schema(None, r["schema_name"], r["comment"]) for r in rows], None)
 
@@ -65,6 +73,7 @@ class DuckDBReader:
             "WHERE database_name = current_database() AND schema_name = ? "
             "AND (CAST(? AS VARCHAR) IS NULL OR table_name > ?) ORDER BY table_name LIMIT ?",
             (schema.name, page_token, page_token, self.page_size + 1),
+            timeout_s=self.timeout_s,
         )
         more = len(rows) > self.page_size
         rows = rows[: self.page_size]
@@ -90,6 +99,7 @@ class DuckDBReader:
             f"WHERE database_name = current_database() AND ({clause}) "
             "ORDER BY schema_name, table_name, column_index",
             params,
+            timeout_s=self.timeout_s,
         )
         for r in rows:
             tref = ObjectRef(None, r["schema_name"], r["table_name"])
@@ -118,6 +128,7 @@ class DuckDBReader:
             "AND constraint_type IN ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY') "
             "ORDER BY schema_name, table_name, constraint_index",
             params,
+            timeout_s=self.timeout_s,
         )
         for r in rows:
             kind = _KINDS[r["constraint_type"]]

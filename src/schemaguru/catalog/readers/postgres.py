@@ -39,9 +39,16 @@ def _pairs(tables: Sequence[ObjectRef], schema_col: str, table_col: str) -> tupl
 class PostgresReader:
     dialect = "postgres"
 
-    def __init__(self, executor: MetadataExecutor, *, page_size: int = 1000) -> None:
+    def __init__(
+        self,
+        executor: MetadataExecutor,
+        *,
+        page_size: int = 1000,
+        timeout_s: float | None = None,
+    ) -> None:
         self._ex = executor
         self.page_size = page_size
+        self.timeout_s = timeout_s
 
     def list_catalogs(self) -> Iterator[str]:
         return iter(())
@@ -50,10 +57,11 @@ class PostgresReader:
         rows = self._ex.run(
             "SELECT n.nspname AS name, obj_description(n.oid, 'pg_namespace') AS comment, "
             "(SELECT count(*) FROM pg_class c WHERE c.relnamespace = n.oid "
-            " AND c.relkind IN ('r', 'p', 'v', 'm', 'f')) AS table_count "
+            " AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND NOT c.relispartition) AS table_count "
             "FROM pg_namespace n "
             "WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg\\_%' "
-            "ORDER BY n.nspname"
+            "ORDER BY n.nspname",
+            timeout_s=self.timeout_s,
         )
         return Page([Schema(None, r["name"], r["comment"], int(r["table_count"])) for r in rows])
 
@@ -61,8 +69,10 @@ class PostgresReader:
         self, schema: Schema, *, page_token: str | None, changed_since: datetime | None
     ) -> Page[Table]:
         rows = self._ex.run(
-            "SELECT c.relname AS name, c.relkind AS relkind, c.reltuples AS reltuples, "
-            "CASE WHEN c.relkind IN ('r', 'p', 'm') THEN pg_total_relation_size(c.oid) END "
+            "SELECT c.relname AS name, c.relkind AS relkind, "
+            "CASE WHEN c.relkind IN ('r', 'm') AND NOT (c.relpages = 0 AND c.reltuples = 0) "
+            " THEN c.reltuples END AS reltuples, "
+            "CASE WHEN c.relkind IN ('r', 'm') THEN pg_total_relation_size(c.oid) END "
             " AS size_bytes, "
             "CASE WHEN c.relkind = 'p' THEN pg_get_partkeydef(c.oid) END AS partitioning, "
             "d.description AS comment "
@@ -74,6 +84,7 @@ class PostgresReader:
             'AND (CAST(? AS text) IS NULL OR c.relname COLLATE "C" > CAST(? AS text)) '
             'ORDER BY c.relname COLLATE "C" LIMIT ?',
             (schema.name, page_token, page_token, self.page_size + 1),
+            timeout_s=self.timeout_s,
         )
         more = len(rows) > self.page_size
         rows = rows[: self.page_size]
@@ -109,6 +120,7 @@ class PostgresReader:
             f"WHERE a.attnum > 0 AND NOT a.attisdropped AND ({clause}) "
             "ORDER BY n.nspname, c.relname, a.attnum",
             params,
+            timeout_s=self.timeout_s,
         )
         for r in rows:
             tref = ObjectRef(None, r["schema_name"], r["table_name"])
@@ -148,6 +160,7 @@ class PostgresReader:
             f"WHERE con.contype IN ('p', 'u', 'f') AND ({clause}) "
             "ORDER BY n.nspname, c.relname, con.contype DESC, con.conname",
             params,
+            timeout_s=self.timeout_s,
         )
         for r in rows:
             kind = _CONSTRAINT_KINDS[r["contype"]]

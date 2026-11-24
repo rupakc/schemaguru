@@ -38,6 +38,14 @@ def conn() -> Iterator[Any]:
     c.execute("COMMENT ON COLUMN sg_test.customers.email IS 'login address'")
     c.execute("INSERT INTO sg_test.customers VALUES (1, 'a@x', 'n', 1.5, NULL)")
     c.execute("ANALYZE sg_test.customers")
+    c.execute("CREATE TABLE sg_test.events(id integer, at date) PARTITION BY RANGE (at)")
+    c.execute(
+        "CREATE TABLE sg_test.events_2026 PARTITION OF sg_test.events "
+        "FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')"
+    )
+    c.execute("INSERT INTO sg_test.events VALUES (1, '2026-02-02')")
+    c.execute("CREATE TABLE sg_test.fresh(id integer)")  # never analysed
+    c.execute("INSERT INTO sg_test.fresh SELECT generate_series(1, 1000)")
     yield c
     c.execute("DROP SCHEMA sg_test CASCADE")
     c.close()
@@ -47,15 +55,21 @@ def test_reader_postgres(conn: Any) -> None:
     r = PostgresReader(DBAPIExecutor(conn, "format"))
     assert list(r.list_catalogs()) == []
     schemas = {s.name: s for s in r.list_schemas(None, page_token=None).items}
-    assert schemas["sg_test"] == Schema(None, "sg_test", "test schema", 3)
+    assert schemas["sg_test"] == Schema(None, "sg_test", "test schema", 5)
     assert "information_schema" not in schemas and "pg_catalog" not in schemas
 
     page = r.list_tables(Schema(None, "sg_test"), page_token=None, changed_since=None)
     by = {t.ref.table: t for t in page.items}
-    assert set(by) == {"customers", "Order Items", "v_customers"}
+    assert set(by) == {"customers", "Order Items", "v_customers", "events", "fresh"}
     assert by["customers"].kind == "table" and by["customers"].comment == "people who buy"
     assert by["customers"].row_count == 1 and (by["customers"].bytes or 0) > 0
     assert by["v_customers"].kind == "view" and by["v_customers"].bytes is None
+    assert by["v_customers"].row_count is None
+    # a partitioned parent has no storage of its own: size and rows are unknown, not 0
+    assert by["events"].kind == "table" and "RANGE" in (by["events"].partitioning or "")
+    assert by["events"].bytes is None and by["events"].row_count is None
+    # never analysed: reltuples is -1 (PG14+) or 0 with relpages 0 (older) -> unknown
+    assert by["fresh"].row_count is None
 
     cust = by["customers"].ref
     oi = by["Order Items"].ref
@@ -87,6 +101,6 @@ def test_postgres_paging_and_crawl(conn: Any, tmp_path: Any) -> None:
     try:
         report = crawl(r, store, config=CrawlConfig(page_size=2, include=("sg_test.*",)))
         assert not report.errors
-        assert len(list(store.iter_tables())) == 8
+        assert len(list(store.iter_tables())) == 10
     finally:
         store.close()

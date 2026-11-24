@@ -5,17 +5,24 @@ worker pool, writes each page and its checkpoint in one store transaction, and s
 tables that a complete listing no longer shows. Failures are isolated per page/batch and
 reported, never raised; ``BaseException`` (e.g. ``KeyboardInterrupt``) propagates and leaves the
 last checkpoint intact, so a later ``crawl(..., resume=True)`` continues from it.
+
+Memory is bounded by the page size and the number of *schemas*, never by the number of tables:
+the names seen this run live in a throw-away on-disk SQLite file, and the checkpoint is one small
+cursor (the schema in progress and its page token), not a growing list.
 """
 
 from __future__ import annotations
 
 import hashlib
+import sqlite3
+import tempfile
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from schemaguru._util.timeutil import to_iso, utcnow
@@ -29,6 +36,7 @@ from schemaguru.store.protocol import Store
 
 STATE_KEY = "crawl"
 LAST_KEY = "crawl_last"
+_NO_CATALOG = "\x00"
 
 
 @dataclass(frozen=True)
@@ -43,7 +51,17 @@ class CrawlReport:
 
 
 def _h(ref: ObjectRef) -> int:
-    return int.from_bytes(hashlib.blake2b(ref.canonical().encode(), digest_size=8).digest(), "big")
+    d = hashlib.blake2b(ref.canonical().encode(), digest_size=8).digest()
+    return int.from_bytes(d, "big", signed=True)
+
+
+def _cat(catalog: str | None) -> str:
+    return _NO_CATALOG if catalog is None else catalog
+
+
+def _scope_hash(cfg: CrawlConfig) -> str:
+    text = repr((tuple(cfg.include), tuple(cfg.exclude)))
+    return hashlib.blake2b(text.encode(), digest_size=8).hexdigest()
 
 
 def _parse_ts(value: object) -> datetime | None:
@@ -52,6 +70,46 @@ def _parse_ts(value: object) -> datetime | None:
 
 def _chunks(items: Sequence[Table], n: int) -> list[Sequence[Table]]:
     return [items[i : i + n] for i in range(0, len(items), max(1, n))]
+
+
+class _Seen:
+    """Names seen this run, on disk: memory does not grow with the number of tables."""
+
+    def __init__(self, directory: Path) -> None:
+        self._c = sqlite3.connect(str(directory / "seen.db"), isolation_level=None)
+        self._c.execute("PRAGMA journal_mode=OFF")
+        self._c.execute("PRAGMA synchronous=OFF")
+        self._c.execute("CREATE TABLE t(h INTEGER PRIMARY KEY) WITHOUT ROWID")
+        self._c.execute(
+            "CREATE TABLE s(cat TEXT, name TEXT, complete INTEGER, PRIMARY KEY(cat, name)) "
+            "WITHOUT ROWID"
+        )
+
+    def add_tables(self, hashes: Iterable[int]) -> None:
+        self._c.execute("BEGIN")
+        self._c.executemany("INSERT OR IGNORE INTO t VALUES (?)", ((h,) for h in hashes))
+        self._c.execute("COMMIT")
+
+    def has_table(self, h: int) -> bool:
+        return self._c.execute("SELECT 1 FROM t WHERE h = ?", (h,)).fetchone() is not None
+
+    def add_schema(self, catalog: str | None, name: str) -> None:
+        self._c.execute("INSERT OR IGNORE INTO s VALUES (?, ?, 0)", (_cat(catalog), name))
+
+    def complete_schema(self, catalog: str | None, name: str) -> None:
+        self._c.execute(
+            "UPDATE s SET complete = 1 WHERE cat = ? AND name = ?", (_cat(catalog), name)
+        )
+
+    def schema_state(self, catalog: str | None, name: str) -> int | None:
+        """``None`` unseen, ``0`` seen but not completely listed this run, ``1`` complete."""
+        row = self._c.execute(
+            "SELECT complete FROM s WHERE cat = ? AND name = ?", (_cat(catalog), name)
+        ).fetchone()
+        return None if row is None else int(row[0])
+
+    def close(self) -> None:
+        self._c.close()
 
 
 class _Crawl:
@@ -63,8 +121,9 @@ class _Crawl:
         resume: bool,
         incremental: bool,
         now: Callable[[], datetime],
+        seen: _Seen,
     ) -> None:
-        self.reader, self.store, self.cfg, self.now = reader, store, config, now
+        self.reader, self.store, self.cfg, self.now, self.seen = reader, store, config, now, seen
         self.filter = ScopeFilter(config.include, config.exclude)
         self.caps = reader.capabilities()
         self.errors: list[Diagnostic] = []
@@ -72,30 +131,32 @@ class _Crawl:
         self.queries = 0
         self.tables_seen = 0
         self.tables_written = 0
-        self.seen: set[int] = set()
-        self.seen_schemas: set[tuple[str | None, str]] = set()
-        self.complete_schemas: set[tuple[str | None, str]] = set()
         self.complete_catalogs: set[str | None] = set()
         self.listed_catalogs: list[str | None] = []
         self.catalogs_ok = True
         self.started = now()
-        self.completed: list[list[str | None]] = []
-        self.current: dict[str, Any] | None = None
         self.changed_since: datetime | None = None
+        self.scope = _scope_hash(config)
+        # resume cursor: the schema that was in progress (or last completed) when interrupted
+        self.cursor: dict[str, Any] | None = None
+        self._skipping = False
 
         state = store.crawl_state_get(STATE_KEY) if resume else None
         if state is not None and state.get("status") == "running":
-            done = state.get("completed_schemas")
-            self.completed = [list(x) for x in done] if isinstance(done, list) else []
-            cur = state.get("current")
-            self.current = dict(cur) if isinstance(cur, dict) else None
+            cur = state.get("cursor")
+            self.cursor = dict(cur) if isinstance(cur, dict) else None
             self.changed_since = _parse_ts(state.get("changed_since"))
             self.started = _parse_ts(state.get("started_at")) or self.started
         else:
             last = store.crawl_state_get(LAST_KEY)
-            if incremental and self.caps.incremental and last is not None:
+            if (
+                incremental
+                and self.caps.incremental
+                and last is not None
+                and last.get("scope") == self.scope  # a changed scope invalidates the baseline
+            ):
                 self.changed_since = _parse_ts(last.get("started_at"))
-        self._done = {(c, s) for c, s in self.completed}
+        self._skipping = self.cursor is not None
         self._checkpoint()
 
     # -- bookkeeping -------------------------------------------------------------------------
@@ -121,8 +182,8 @@ class _Crawl:
                 "status": "running",
                 "started_at": to_iso(self.started),
                 "changed_since": None if self.changed_since is None else to_iso(self.changed_since),
-                "completed_schemas": self.completed,
-                "current": self.current,
+                "scope": self.scope,
+                "cursor": self.cursor,
             },
         )
 
@@ -137,11 +198,24 @@ class _Crawl:
             self._error("list_catalogs", e)
             self.catalogs_ok = False
         self.listed_catalogs = list(catalogs) if catalogs else [None]
+        cursor_catalog = self.cursor.get("catalog") if self.cursor else None
         for catalog in self.listed_catalogs:
+            if self._skipping and catalog != cursor_catalog:
+                self._crawl_catalog(catalog, pool, mark_only=True)
+                continue
             self._crawl_catalog(catalog, pool)
+            if self._skipping:  # the cursor's schema is gone: redo this catalog from the top
+                self._skipping = False
+                self._crawl_catalog(catalog, pool)
+        if self._skipping:  # the cursor's catalog is gone: nothing was crawled, so crawl it all
+            self._skipping = False
+            for catalog in self.listed_catalogs:
+                self._crawl_catalog(catalog, pool)
         return self._withdraw() if self.catalogs_ok else 0
 
-    def _crawl_catalog(self, catalog: str | None, pool: ThreadPoolExecutor) -> None:
+    def _crawl_catalog(
+        self, catalog: str | None, pool: ThreadPoolExecutor, *, mark_only: bool = False
+    ) -> None:
         token: str | None = None
         while True:
             try:
@@ -151,25 +225,29 @@ class _Crawl:
                 self._error(f"schemas of {catalog or 'default catalog'}", e)
                 return
             for schema in page.items:
-                self._crawl_schema(schema, pool)
+                if mark_only:
+                    if not self.filter.excludes_schema(schema.catalog, schema.name):
+                        self.seen.add_schema(schema.catalog, schema.name)
+                else:
+                    self._crawl_schema(schema, pool)
             token = page.next_token
             if token is None:
                 self.complete_catalogs.add(catalog)
                 return
 
     def _crawl_schema(self, schema: Schema, pool: ThreadPoolExecutor) -> None:
-        key = (schema.catalog, schema.name)
         if self.filter.excludes_schema(schema.catalog, schema.name):
             return
-        self.seen_schemas.add(key)
-        if key in self._done:
-            return
+        self.seen.add_schema(schema.catalog, schema.name)
         resume_token: str | None = None
-        if (
-            self.current is not None
-            and (self.current.get("catalog"), self.current.get("schema")) == key
-        ):
-            resume_token = self.current.get("page_token")
+        if self._skipping:
+            cur = self.cursor or {}
+            if (cur.get("catalog"), cur.get("schema")) != (schema.catalog, schema.name):
+                return  # listed before the cursor: done in the interrupted run
+            self._skipping = False
+            if cur.get("done"):
+                return
+            resume_token = cur.get("page_token")
         incremental = self.changed_since is not None
         self.store.upsert_schemas([schema])
         ok = self._walk(
@@ -180,12 +258,15 @@ class _Crawl:
             names_ok = self._walk(schema, None, None, pool, process=False, count_seen=True)
         if not ok:
             return
-        self.completed.append([schema.catalog, schema.name])
-        self._done.add(key)
-        self.current = None
+        self.cursor = {
+            "catalog": schema.catalog,
+            "schema": schema.name,
+            "page_token": None,
+            "done": True,
+        }
         self._checkpoint()
         if names_ok and (incremental or resume_token is None):
-            self.complete_schemas.add(key)
+            self.seen.complete_schema(schema.catalog, schema.name)
 
     def _walk(
         self,
@@ -210,20 +291,32 @@ class _Crawl:
             tables = [t for t in page.items if self.filter.allows(t.ref)]
             if count_seen:
                 self.tables_seen += len(tables)
-                self.seen.update(_h(t.ref) for t in tables)
+                self.seen.add_tables(_h(t.ref) for t in tables)
             if process:
                 with self.store.transaction():
                     self._write_page(tables, loc, pool)
-                    self.current = {
-                        "catalog": schema.catalog,
-                        "schema": schema.name,
-                        "page_token": page.next_token,
-                    }
                     if page.next_token is not None:
+                        self.cursor = {
+                            "catalog": schema.catalog,
+                            "schema": schema.name,
+                            "page_token": page.next_token,
+                            "done": False,
+                        }
                         self._checkpoint()
+            else:
+                # name-only walk of an incremental run: an unchanged table the store lacks or
+                # holds withdrawn (schema reappeared, scope widened, table restored) is re-read
+                missing = [t for t in tables if self._needs_restore(t.ref)]
+                if missing:
+                    with self.store.transaction():
+                        self._write_page(missing, loc, pool)
             token = page.next_token
             if token is None:
                 return True
+
+    def _needs_restore(self, ref: ObjectRef) -> bool:
+        stored = self.store.table(ref)
+        return stored is None or stored.withdrawn_at is not None
 
     # -- per-page writes ---------------------------------------------------------------------
 
@@ -264,14 +357,17 @@ class _Crawl:
     # -- withdrawal --------------------------------------------------------------------------
 
     def _withdraw(self) -> int:
+        """One streaming pass over the store: only schemas listed completely this run are judged
+        by name; a schema/catalog that vanished (or fell out of scope) is withdrawn whole; a
+        schema whose listing failed or was resumed mid-way is left alone."""
         gone: list[ObjectRef] = []
         for t in self.store.iter_tables():
             ref = t.ref
-            key = (ref.catalog, ref.schema or "")
-            if key in self.complete_schemas:
-                if _h(ref) not in self.seen:
+            state = self.seen.schema_state(ref.catalog, ref.schema or "")
+            if state == 1:
+                if not self.seen.has_table(_h(ref)):
                     gone.append(ref)
-            elif key not in self.seen_schemas and (
+            elif state is None and (
                 ref.catalog in self.complete_catalogs or ref.catalog not in self.listed_catalogs
             ):
                 gone.append(ref)
@@ -291,22 +387,32 @@ def crawl(
 ) -> CrawlReport:
     """Crawl ``reader`` into ``store``.
 
-    ``resume`` continues an interrupted crawl from its checkpoint (completed schemas are skipped,
-    the in-progress one restarts at its saved page). ``incremental`` re-reads only tables the
-    reader reports as changed since the last crawl that finished without errors, plus a name-only
-    listing per schema to detect drops. A table is withdrawn only when a complete listing of its
-    schema (from the first page, this run) omits it, or its schema/catalog is gone or now out of
-    scope. If the reader has a ``page_size`` attribute it is set from ``config.page_size``.
+    ``resume`` continues an interrupted crawl from its checkpoint: schemas listed before the
+    saved cursor are skipped (readers must list schemas in a stable order; both shipped readers
+    sort by name), the in-progress one restarts at its saved page. ``incremental`` re-reads only
+    tables the reader reports as changed since the last crawl that finished without errors, plus a
+    name-only listing per schema that detects drops and restores tables the store lacks or holds
+    withdrawn; it is ignored when the include/exclude scope differs from that crawl's. A table is
+    withdrawn only when a complete listing of its schema (from the first page, this run) omits
+    it, or its schema/catalog is gone or now out of scope. If the reader has a ``page_size`` /
+    ``timeout_s`` attribute it is set from ``config``.
     """
     cfg = config or CrawlConfig()
     t0 = time.monotonic()
     if isinstance(getattr(reader, "page_size", None), int):
         reader.page_size = cfg.page_size  # type: ignore[attr-defined]
-    run = _Crawl(reader, store, cfg, resume, incremental, now)
-    with ThreadPoolExecutor(max_workers=max(1, cfg.workers)) as pool:
-        withdrawn = run.run(pool)
+    if hasattr(reader, "timeout_s"):
+        reader.timeout_s = cfg.timeout_s
+    with tempfile.TemporaryDirectory(prefix="schemaguru-crawl-") as tmp:
+        seen = _Seen(Path(tmp))
+        try:
+            run = _Crawl(reader, store, cfg, resume, incremental, now, seen)
+            with ThreadPoolExecutor(max_workers=max(1, cfg.workers)) as pool:
+                withdrawn = run.run(pool)
+        finally:
+            seen.close()
     if not run.errors:
-        store.crawl_state_set(LAST_KEY, {"started_at": to_iso(run.started)})
+        store.crawl_state_set(LAST_KEY, {"started_at": to_iso(run.started), "scope": run.scope})
     store.crawl_state_set(
         STATE_KEY,
         {

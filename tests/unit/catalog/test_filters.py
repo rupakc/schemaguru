@@ -46,3 +46,14 @@ def test_excludes_schema_only_for_schema_wide_patterns() -> None:
     assert f.excludes_schema(None, "sys")
     assert not f.excludes_schema(None, "shop")  # include is never used to skip a schema
     assert not ScopeFilter((), ()).excludes_schema(None, "shop")
+
+
+def test_table_level_exclude_never_skips_a_whole_schema() -> None:
+    f = ScopeFilter((), ("*e",))
+    assert not f.excludes_schema(None, "shop")
+    assert not f.allows(R("shop", "table_e")) and f.allows(R("shop", "orders_x"))
+    assert not ScopeFilter((), ("shop.*e",)).excludes_schema(None, "shop")
+    assert ScopeFilter((), ("shop.*",)).excludes_schema(None, "shop")
+    assert ScopeFilter((), ("main.shop.*",)).excludes_schema("main", "shop")
+    assert not ScopeFilter((), ("main.shop.*",)).excludes_schema("other", "shop")
+    assert ScopeFilter((), ("*",)).excludes_schema(None, "x")

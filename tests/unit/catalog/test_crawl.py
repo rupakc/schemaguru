@@ -39,7 +39,12 @@ def test_crawl_pages_and_checkpoints(store: SQLiteStore) -> None:
     assert len(live(store)) == 1000
     state = store.crawl_state_get("crawl")
     assert state is not None and state["status"] == "running"
-    assert state["current"] == {"catalog": None, "schema": "s0000", "page_token": "1000"}
+    assert state["cursor"] == {
+        "catalog": None,
+        "schema": "s0000",
+        "page_token": "1000",
+        "done": False,
+    }
 
     report = crawl(reader, store, config=cfg, now=lambda: NOW)
     names = live(store)
@@ -139,7 +144,9 @@ def test_incremental_uses_changed_since(store: SQLiteStore) -> None:
     reader.column_batches.clear()
     cut = BASE + timedelta(seconds=27)  # tables 28, 29 changed after the cut
     reader.altered = lambda n: BASE + timedelta(seconds=n)
-    store.crawl_state_set("crawl_last", {"started_at": "2026-01-01T00:00:27.000000Z"})
+    last = dict(store.crawl_state_get("crawl_last") or {})
+    last["started_at"] = "2026-01-01T00:00:27.000000Z"
+    store.crawl_state_set("crawl_last", last)
     reader.dropped = {5}
     report = crawl(reader, store, config=CrawlConfig(), now=lambda: NOW + timedelta(days=1))
     calls = reader.table_calls
@@ -215,3 +222,94 @@ def test_crawl_memory_bounded() -> None:
         tracemalloc.stop()
     assert report.tables_written == 200_000 and ns.tables == 200_000
     assert peak < 64 * 1024 * 1024, f"peak {peak / 2**20:.1f} MiB"
+
+
+def test_incremental_restores_unchanged_table_missing_or_withdrawn(store: SQLiteStore) -> None:
+    reader = FakeReader(10, tables_per_schema=10, incremental=True)
+    crawl(reader, store, config=CrawlConfig(), now=lambda: NOW)
+    gone = ObjectRef(None, "s0000", "t0000004")
+    store.mark_withdrawn([gone], NOW)  # e.g. dropped by an older crawl, restored with old metadata
+    assert store.table(gone).withdrawn_at is not None  # type: ignore[union-attr]
+    reader.table_calls.clear()
+    report = crawl(reader, store, config=CrawlConfig(), now=lambda: NOW + timedelta(days=1))
+    assert reader.table_calls[0]["changed_since"] is not None
+    assert report.tables_written == 1  # nothing changed, only the withdrawn table is re-read
+    assert store.table(gone).withdrawn_at is None  # type: ignore[union-attr]
+    assert len(store.columns(gone)) == 2
+
+
+def test_scope_widened_reads_new_tables_even_when_unchanged(store: SQLiteStore) -> None:
+    reader = FakeReader(10, tables_per_schema=10, incremental=True)
+    narrow = CrawlConfig(exclude=("s0000.t000000[5-9]",))
+    crawl(reader, store, config=narrow, now=lambda: NOW)
+    assert len(live(store)) == 5
+    report = crawl(reader, store, config=CrawlConfig(), now=lambda: NOW + timedelta(days=1))
+    assert all(c["changed_since"] is None for c in reader.table_calls[-2:])  # baseline dropped
+    assert len(live(store)) == 10 and report.tables_written == 10
+
+
+def test_scope_change_drops_changed_since(store: SQLiteStore) -> None:
+    reader = FakeReader(10, tables_per_schema=10, incremental=True)
+    crawl(reader, store, config=CrawlConfig(), now=lambda: NOW)
+    reader.table_calls.clear()
+    crawl(reader, store, config=CrawlConfig(exclude=("x.*",)), now=lambda: NOW)
+    assert all(c["changed_since"] is None for c in reader.table_calls)
+    reader.table_calls.clear()
+    crawl(reader, store, config=CrawlConfig(exclude=("x.*",)), now=lambda: NOW)
+    assert reader.table_calls[0]["changed_since"] is not None  # same scope -> incremental again
+
+
+def test_schema_reappears_is_restored(store: SQLiteStore) -> None:
+    reader = FakeReader(20, tables_per_schema=10, incremental=True)
+    crawl(reader, store, config=CrawlConfig(), now=lambda: NOW)
+    reader.n_tables = 10
+    assert crawl(reader, store, config=CrawlConfig(), now=lambda: NOW).withdrawn == 10
+    reader.n_tables = 20
+    report = crawl(reader, store, config=CrawlConfig(), now=lambda: NOW)
+    assert report.tables_written == 10 and len(live(store)) == 20
+
+
+def test_timeout_reaches_reader_from_config(store: SQLiteStore) -> None:
+    from schemaguru.catalog import DBAPIExecutor
+    from schemaguru.catalog.readers.duckdb import DuckDBReader
+
+    class Recorder:
+        def __init__(self) -> None:
+            self.timeouts: list[float | None] = []
+            self.inner = DBAPIExecutor(__import__("duckdb").connect())
+
+        def run(self, sql: str, params: Sequence[object] = (), *, timeout_s: float | None = None):  # type: ignore[no-untyped-def]
+            self.timeouts.append(timeout_s)
+            return self.inner.run(sql, params, timeout_s=timeout_s)
+
+    ex = Recorder()
+    ex.inner._conn.execute("CREATE TABLE t(id INTEGER PRIMARY KEY)")
+    reader = DuckDBReader(ex)  # type: ignore[arg-type]
+    assert reader.timeout_s is None
+    crawl(reader, store, config=CrawlConfig(timeout_s=7.5), now=lambda: NOW)
+    assert ex.timeouts and all(t == 7.5 for t in ex.timeouts)
+
+
+def test_many_schemas_resume_and_bounded_checkpoint(store: SQLiteStore) -> None:
+    reader = FakeReader(6000, tables_per_schema=2, page_size=10)  # 3,000 schemas
+    reader.interrupt_at_call = 1501
+    with pytest.raises(KeyboardInterrupt):
+        crawl(reader, store, config=CrawlConfig(), now=lambda: NOW)
+    state = store.crawl_state_get("crawl")
+    assert state is not None and len(str(state)) < 400  # one cursor, not a growing list
+    assert len(live(store)) == 3000
+    report = crawl(reader, store, config=CrawlConfig(), now=lambda: NOW)
+    assert len(live(store)) == 6000 and report.withdrawn == 0 and not report.errors
+    assert report.tables_written == 3000
+
+
+def test_resume_whose_cursor_schema_vanished_recrawls(store: SQLiteStore) -> None:
+    reader = FakeReader(30, tables_per_schema=10, page_size=5)
+    reader.interrupt_at_call = 4  # second page of s0001
+    with pytest.raises(KeyboardInterrupt):
+        crawl(reader, store, config=CrawlConfig(page_size=5), now=lambda: NOW)
+    reader.fail_schemas = set()
+    reader.n_tables = 10  # s0001 (the cursor) and s0002 are gone
+    report = crawl(reader, store, config=CrawlConfig(page_size=5), now=lambda: NOW)
+    assert report.tables_written == 10 and not report.errors
+    assert {t.ref.schema for t in store.iter_tables()} == {"s0000"}

@@ -19,6 +19,9 @@ from schemaguru.catalog.executor import _convert, check_metadata_sql
         "DESCRIBE t",
         "DESC t",
         'SELECT "a;b" FROM t',
+        "SELECT 'DELETE FROM t' AS q, 'insert into x' AS r FROM t",
+        'SELECT "drop", "into" FROM t WHERE created_at > updated_at',
+        "SELECT executed, creator FROM t WHERE note = 'a INTO b'",
     ],
 )
 def test_guard_allows(sql: str) -> None:
@@ -40,6 +43,12 @@ def test_guard_allows(sql: str) -> None:
         "",
         "COPY t TO 'x'",
         "PRAGMA writable_schema=1",
+        "WITH d AS (DELETE FROM t RETURNING 1) SELECT 1",
+        "SELECT 1 INTO newt",
+        "SELECT * FROM t; ",
+        "with x as (insert into t values (1) returning 1) select * from x",
+        "CALL do_things()",
+        "SELECT 1 FROM t WHERE a IN (SELECT 1) UNION SELECT 1 INTO x",
     ],
 )
 def test_guard_refuses_with_sg104(sql: str) -> None:

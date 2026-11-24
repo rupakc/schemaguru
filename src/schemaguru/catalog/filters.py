@@ -7,8 +7,6 @@ from fnmatch import fnmatchcase
 
 from schemaguru.model.refs import ObjectRef
 
-_PROBE = "\x00probe"
-
 
 def _names(ref: ObjectRef) -> list[str]:
     out: list[str] = []
@@ -38,5 +36,20 @@ class ScopeFilter:
         return not self._matches(self.exclude, names)
 
     def excludes_schema(self, catalog: str | None, schema: str) -> bool:
-        """True when an exclude pattern removes *every* table of the schema (safe to skip it)."""
-        return self._matches(self.exclude, _names(ObjectRef(catalog, schema, _PROBE)))
+        """True when an exclude pattern removes *every* table of the schema (safe to skip it).
+
+        Only a pattern whose table part is exactly ``*`` qualifies (``sys.*``, ``main.sys.*``);
+        a table-level glob such as ``*e`` or ``*tmp*`` never excludes a whole schema.
+        """
+        qualified = None if catalog is None else f"{catalog}.{schema}"
+        for pattern in self.exclude:
+            head, dot, last = pattern.rpartition(".")
+            if last != "*":
+                continue
+            if not dot:  # a bare "*" matches everything
+                return True
+            if fnmatchcase(schema, head) or (
+                qualified is not None and fnmatchcase(qualified, head)
+            ):
+                return True
+        return False

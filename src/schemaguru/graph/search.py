@@ -412,10 +412,12 @@ def find_paths(
             "(broken joins are refused; unmeasured candidates need include_unmeasured)",
         )
     if automaton is not None and automaton.is_empty():
+        why_fn = getattr(automaton, "why_empty", None)  # optional: name the blocking rule
+        why = why_fn() if callable(why_fn) else None
         return PathResult(
             (),
             Refusal.WAYPOINT_UNSATISFIABLE,
-            "the waypoint rules for this pair can never be satisfied",
+            "the waypoint rules for this pair can never be satisfied" + (f": {why}" if why else ""),
         )
     if graph.component(s) != graph.component(d):
         return PathResult(

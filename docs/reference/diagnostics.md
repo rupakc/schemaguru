@@ -22,6 +22,7 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG303 | a measurement probe failed (fact ERROR for that subject only) |
 | SG304 | the installed FactLang does not provide a needed measurement capability |
 | SG305 | a table asked to be measured is not in the store (crawl it first) |
+| SG601 | a malformed join fact was skipped; only that graph edge is lost |
 | SG701 | SQLite FTS5 is unavailable; search falls back to a slower LIKE scan |
 | SG702 | the store was written by a newer schema version than this library supports |
 | SG801 | guard refused the SQL: not a single read-only SELECT/WITH statement |

@@ -24,11 +24,22 @@ def _tok(token: str) -> Callable[[str], str]:
     return lambda _m: token
 
 
+# ``key=value`` credentials. The key may be glued to a word (``db_password``, ``x_api_key``):
+# the prefix stays in the text, only the value is masked. Values need a token-like shape
+# (``_kv_ok``); ``password=`` is :data:`_KV_PASSWORD`.
 _KV = re.compile(
-    r"\b(?P<key>api[_-]?key|access[_-]?key|key|token|secret|password|passwd|bearer|authorization)"
+    r"(?:(?<=[_-])|(?<![\w-]))"  # a key glued by '_'/'-' to a word, or a whole word (linear)
+    r"(?P<key>api[_-]?key|access[_-]?key|key|token|secret|password|passwd|bearer|authorization)"
     r"(?P<sep>[ \t]{0,3}[:=][ \t]{0,3}|[ \t]{1,3})(?P<val>\S{8,})",
     re.I,
 )
+# ``password=<value>`` (``=`` only): masked whatever the value's length (``password=a``)
+_KV_PASSWORD = re.compile(
+    r"(?:(?<=[_-])|(?<![\w-]))(?P<key>password|passwd)(?P<sep>[ \t]{0,3}=[ \t]{0,3})"
+    r"(?P<val>[^\s<][^\s]*)",
+    re.I,
+)
+_PASSWORD_KEYS = ("password", "passwd")
 _PROVIDER_KEY = re.compile(r"\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}")
 
 
@@ -68,13 +79,13 @@ def _kv_ok(text: str) -> bool:
     if m is None or m["val"].startswith("<"):
         return False
     v = m["val"].strip("\"'`.,;)]}")
-    if m["key"].lower() in ("password", "passwd") and any(c.isdigit() for c in v):
+    if m["key"].lower() in _PASSWORD_KEYS and any(c.isdigit() for c in v):
         return any(c.isalpha() for c in v)  # a password with digits and letters, any length
     return _token_like(m["val"])
 
 
 def _kv_sub(text: str) -> str:
-    m = _KV.fullmatch(text)
+    m = _KV.fullmatch(text) or _KV_PASSWORD.fullmatch(text)
     assert m is not None
     return m["key"] + m["sep"] + "<secret>"
 
@@ -102,6 +113,7 @@ def _iban_sub(text: str) -> str:
 
 _RULES: tuple[_Rule, ...] = (
     ("secret", _b(d.JWT_RE.pattern), d.jwt_ok, _tok("<secret>")),
+    ("secret", _KV_PASSWORD, lambda _m: True, _kv_sub),
     ("secret", _KV, _kv_ok, _kv_sub),
     ("secret", _PROVIDER_KEY, lambda _m: True, _tok("<secret>")),
     *[("secret", _b(pat), lambda _m: True, _tok("<secret>")) for pat in _CREDENTIAL_SHAPES],

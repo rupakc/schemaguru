@@ -33,6 +33,10 @@ or incomparable (`shop.*` vs `*.customers`), the **most restrictive** mode wins
 touches several tables (a join path, a tool result) uses the most restrictive mode of the tables
 involved; `raw` only when every one of them is opted in.
 
+Globs match **case-insensitively** (`hr.*` covers `DB.HR.EMPLOYEES`): a case-sensitive miss
+would fail open. A glob that matches no stored table is a warning, `SG507`, from
+`guru.load_overlays()` and `schemaguru lint`.
+
 ## What gets masked, with examples
 
 Real output of `schemaguru.pii.mask_value` and `sweep` (SchemaGuru 0.1.0, 2026-11-24):

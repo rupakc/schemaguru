@@ -94,3 +94,40 @@ def test_class_and_nested_narrowing() -> None:
     assert mode("shop.orders", cfg) == "none"
     assert mode("shop.customers", cfg) == "masked"
     assert mode("shop.items", cfg) == "raw"
+
+
+# --- final fix wave: globs match case-insensitively (fail closed), unmatched globs linted ---
+
+
+def test_glob_matches_case_insensitively() -> None:
+    """``hr.*: none`` must cover Snowflake's upper-cased ``DB.HR.EMPLOYEES``: a case-sensitive
+    match failed OPEN (the table fell back to the default, or to a wider glob)."""
+    cfg = SamplingConfig(llm_values="raw", per_glob={"hr.*": "none"})
+    for ref in (
+        ObjectRef("DB", "HR", "EMPLOYEES"),
+        ObjectRef(None, "Hr", "Employees"),
+        ObjectRef(None, "hr", "employees"),
+    ):
+        assert ValuePolicy.for_table(ref, cfg) == "none", ref
+    upper = SamplingConfig(per_glob={"DB.HR.*": "raw", "*.PAYMENTS": "none"})
+    assert ValuePolicy.for_table(ObjectRef("db", "hr", "x"), upper) == "raw"
+    assert ValuePolicy.for_table(ObjectRef(None, "shop", "payments"), upper) == "none"
+    # negative control: a different name still does not match
+    assert ValuePolicy.for_table(ObjectRef("DB", "FINANCE", "X"), cfg) == "raw"
+
+
+def test_case_variants_of_one_glob_resolve_to_the_most_restrictive() -> None:
+    cfg = SamplingConfig(per_glob={"shop.*": "raw", "SHOP.*": "none"})
+    assert ValuePolicy.for_table(ObjectRef(None, "shop", "orders"), cfg) == "none"
+
+
+def test_lint_per_glob_flags_globs_matching_no_table() -> None:
+    from schemaguru.diagnostics import Severity
+    from schemaguru.pii.policy import lint_per_glob
+
+    tables = [ObjectRef("DB", "SHOP", "ORDERS"), ObjectRef("DB", "HR", "EMPLOYEES")]
+    cfg = SamplingConfig(per_glob={"hr.*": "none", "shop.orders": "raw", "hrr.*": "none"})
+    diags = lint_per_glob(cfg, tables)
+    assert [d.code for d in diags] == ["SG507"]
+    assert diags[0].severity is Severity.WARNING and "hrr.*" in diags[0].message
+    assert lint_per_glob(SamplingConfig(), tables) == []

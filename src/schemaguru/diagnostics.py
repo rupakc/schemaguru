@@ -63,6 +63,8 @@ CODES: Mapping[str, str] = MappingProxyType(
         "SG505": "info: how many values or text spans the value policy masked in a view",
         "SG506": "a filter names a column matching several catalog columns that differ only in "
         "case: left unquoted",
+        "SG507": "a sampling.per_glob entry matches no stored table (case-insensitive): its value "
+        "mode applies to nothing; check the glob for a typo",
         "SG601": "a malformed join fact was skipped; only that graph edge is lost",
         "SG602": "a waypoint rule is malformed; the searches it governs are refused",
         "SG603": "a waypoint rule has more than 16 requirements; its searches are refused",

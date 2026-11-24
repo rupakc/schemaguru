@@ -408,6 +408,22 @@ def test_block_mode_spends_through_the_shared_period_guard(
     g.close()
 
 
+def test_load_overlays_lints_per_glob_matching_nothing(
+    tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts]
+) -> None:
+    from schemaguru.config import SamplingConfig
+
+    sampling = SamplingConfig(per_glob={"SHOP.CUSTOMERS": "none", "shpo.*": "none"})
+    g = make_guru(tmp_path, shop_duckdb[0], config=Config(sampling=sampling))
+    g.crawl()
+    overlay = tmp_path / "o.yaml"
+    overlay.write_text("version: 1\n", encoding="utf-8")
+    found = [d for d in g.load_overlays(overlay) if d.code == "SG507"]
+    assert [d.location for d in found] == ["sampling.per_glob['shpo.*']"]  # not SHOP.CUSTOMERS
+    assert any(d.code == "SG507" for d in g.diagnostics)
+    g.close()
+
+
 def test_one_retrieval_per_render(guru: Guru) -> None:
     calls: list[int] = []
     real = guru.retriever.search

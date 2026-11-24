@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from fnmatch import fnmatchcase
 from functools import lru_cache
 from typing import Literal, cast
 
 from schemaguru.config import SamplingConfig
+from schemaguru.diagnostics import Diagnostic, Severity
 from schemaguru.errors import ConfigError
 from schemaguru.model.refs import ObjectRef
 
@@ -116,12 +118,48 @@ def _contains(a: str, b: str) -> bool:
 _RESTRICTION = {"none": 0, "masked": 1, "raw": 2}  # lower is more restrictive
 
 
+def glob_matches(glob: str, ref: ObjectRef) -> bool:
+    """Whether a ``per_glob`` key covers ``ref``'s table (case-insensitive; see ValuePolicy)."""
+    table = ref.table_ref()
+    names = [table.canonical()]
+    if table.catalog is not None:
+        names.append(ObjectRef(None, table.schema, table.table).canonical())
+    if "." not in glob:
+        names.append(table.table)
+    folded = glob.casefold()
+    return any(fnmatchcase(n.casefold(), folded) for n in names)
+
+
+def lint_per_glob(cfg: SamplingConfig, tables: Iterable[ObjectRef]) -> list[Diagnostic]:
+    """``SG507`` (warning) for every ``per_glob`` key that matches none of ``tables``: a typo
+    there silently leaves the tables it meant to restrict on the default mode."""
+    pending = dict.fromkeys(cfg.per_glob)
+    for ref in tables:
+        if not pending:
+            break
+        for glob in [g for g in pending if glob_matches(g, ref)]:
+            del pending[glob]
+    return [
+        Diagnostic(
+            "SG507",
+            Severity.WARNING,
+            f"sampling.per_glob[{glob!r}] matches no stored table; its mode "
+            f"{cfg.per_glob[glob]!r} applies to nothing (globs are case-insensitive)",
+            location=f"sampling.per_glob[{glob!r}]",
+            hint="check the glob against `schemaguru search` or the crawled names",
+        )
+        for glob in pending
+    ]
+
+
 class ValuePolicy:
     """Resolve the value mode for a table.
 
-    ``cfg.per_glob`` maps a glob to a mode. A glob is tested (case-sensitive ``fnmatch``,
-    ``*`` crossing dots) against the table's canonical name and, when a catalog is present,
-    against ``schema.table``; the bare table name is tested only by globs that contain no dot.
+    ``cfg.per_glob`` maps a glob to a mode. A glob is tested (``fnmatch``, ``*`` crossing dots,
+    **case-insensitive**: both sides are case-folded, so ``hr.*`` covers Snowflake's
+    ``DB.HR.EMPLOYEES``; a case-sensitive match would fail open) against the table's canonical
+    name and, when a catalog is present, against ``schema.table``; the bare table name is
+    tested only by globs that contain no dot.
 
     Among matching globs, A is *narrower* than B when A's language is strictly contained in
     B's (``shop.cust*`` is narrower than ``shop.*``; decided by a real containment check, not
@@ -133,24 +171,20 @@ class ValuePolicy:
 
     @staticmethod
     def for_table(ref: ObjectRef, cfg: SamplingConfig) -> Mode:
-        table = ref.table_ref()
-        qualified = [table.canonical()]
-        if table.catalog is not None:
-            qualified.append(ObjectRef(None, table.schema, table.table).canonical())
         matched: list[str] = []
         for glob, mode in cfg.per_glob.items():
             if mode not in _MODES:
                 raise ConfigError(
                     f"sampling.per_glob[{glob!r}]: {mode!r} is not one of {list(_MODES)}"
                 )
-            names = qualified if "." in glob else [*qualified, table.table]
-            if any(fnmatchcase(n, glob) for n in names):
+            if glob_matches(glob, ref):
                 matched.append(glob)
         if not matched:
             return cfg.llm_values
 
         def narrower(a: str, b: str) -> bool:
-            return a != b and _contains(a, b) and not _contains(b, a)
+            fa, fb = a.casefold(), b.casefold()
+            return fa != fb and _contains(fa, fb) and not _contains(fb, fa)
 
         top = [g for g in matched if not any(narrower(o, g) for o in matched)]
         return cast(Mode, min((cfg.per_glob[g] for g in top), key=_RESTRICTION.__getitem__))

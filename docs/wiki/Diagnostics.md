@@ -117,6 +117,7 @@ holds the same list, and a test keeps that file equal to the codes the source em
 | `SG503` | filter text was checked for syntax only: FactLang lacks parse_filter |
 | `SG504` | a context view exceeds its token budget: the always-on blocks do not fit |
 | `SG505` | info: how many values or text spans the value policy masked in a view |
+| `SG507` | a `sampling.per_glob` entry matches no stored table (globs are case-insensitive): its value mode applies to nothing; check the glob for a typo |
 
 ### SG6xx: Graph
 

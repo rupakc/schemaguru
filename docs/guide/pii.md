@@ -31,6 +31,12 @@ for t in ("orders", "customers"):
     print(t, ValuePolicy.for_table(sg.ObjectRef(None, "shop", t), cfg))
 ```
 
+Globs match **case-insensitively**: `hr.*` covers Snowflake's upper-cased
+`DB.HR.EMPLOYEES` as well as `hr.employees`, because a case-sensitive miss would fail open
+(the table would fall back to the default mode). A glob that matches no stored table is
+reported by `guru.load_overlays()` and `schemaguru lint` as warning `SG507`: a typo there
+would otherwise leave the tables it meant to restrict on the default mode.
+
 Raw samples are written to the store only in `raw` mode **and** with
 `store_raw_samples=True` (default `False`).
 

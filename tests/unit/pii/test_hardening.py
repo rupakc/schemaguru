@@ -355,3 +355,34 @@ def test_common_word_names_are_in_the_list() -> None:
     names = name_list()
     for n in ("smith", "brown", "miller", "bob", "james", "wilson", "taylor", "white", "king"):
         assert n in names, n
+
+
+# --- final fix wave: a short password=, and keys glued to a word ------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "password=hunter2",
+        "password=a",
+        "login failed (passwd=x9)",
+        "db_password=abc",
+        "x_password=hunter2",
+        "x_api_key=Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5aa",
+        "conn_secret=AKIAZx9Qm2Lp8Rt4Vb7",
+        "MY-TOKEN=ghp_Zx9Qm2Lp8Rt4Vb7Nc1Kd6",
+    ],
+)
+def test_short_and_glued_credentials_are_masked(text: str) -> None:
+    out, n = sweep(text)
+    assert n >= 1 and "<secret>" in out, out
+    for leaked in ("hunter2", "abc", "x9", "Zx9", "AKIA", "ghp_"):
+        assert leaked not in out.split("=", 1)[1], out
+    assert sweep(out) == (out, 0)  # idempotent
+
+
+def test_glued_key_keeps_its_prefix_and_prose_stays() -> None:
+    assert sweep("db_password=abc")[0] == "db_password=<secret>"
+    # negative controls: schema prose and empty values are untouched
+    for prose in ("customer_key = 12345678", "password: required_field_here", "password="):
+        assert sweep(prose) == (prose, 0), prose

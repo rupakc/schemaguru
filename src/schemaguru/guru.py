@@ -85,6 +85,7 @@ from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays.loader import load_overlays as _load_overlays
 from schemaguru.overlays.loader import retract_removed
 from schemaguru.overlays.schema import WaypointSpec
+from schemaguru.pii.policy import lint_per_glob
 from schemaguru.refresh.report import RefreshReport
 from schemaguru.refresh.run import refresh as _refresh
 from schemaguru.render.fingerprint import fingerprint_views as _fingerprint_views
@@ -737,6 +738,8 @@ class Guru:
             self._invalidate()
             graph = self._current_graph(out)
             out += lint_rules(self._waypoints, graph.edges)
+            # a per_glob typo silently leaves its tables on the default mode (spec 11)
+            out += lint_per_glob(self._config.sampling, (t.ref for t in self.store.iter_tables()))
             for d in out:
                 self._note(d)
         return out

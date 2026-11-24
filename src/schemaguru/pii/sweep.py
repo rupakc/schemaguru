@@ -32,14 +32,18 @@ _KV = re.compile(
 _PROVIDER_KEY = re.compile(r"\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}")
 
 
-_KNOWN_PREFIX = re.compile(r"(?:sk|pk|rk)_(?:live|test)_|gh[pousr]_|AKIA[0-9A-Z]|xox[abprs]-|eyJ")
+_KNOWN_PREFIX = re.compile(
+    r"(?:sk|pk|rk)_(?:live|test)_|gh[pousr]_|github_pat_|AKIA[0-9A-Z]|xox[abprs]-|xapp-|eyJ"
+)
 
 
 # Bare credentials in prose, by their published shapes (fixed or bounded lengths: linear time).
 _CREDENTIAL_SHAPES = (
     r"(?:AKIA|ASIA)[0-9A-Z]{16}",  # AWS access key id
     r"gh[pousr]_[A-Za-z0-9]{36,255}",  # GitHub tokens
+    r"github_pat_[A-Za-z0-9_]{40,255}",  # GitHub fine-grained tokens
     r"xox[abposr]-[A-Za-z0-9\-]{10,255}",  # Slack tokens
+    r"xapp-[A-Za-z0-9\-]{20,255}",  # Slack app-level tokens
     r"AIza[0-9A-Za-z_\-]{35}",  # Google API key
 )
 

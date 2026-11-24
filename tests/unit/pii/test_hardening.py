@@ -41,6 +41,8 @@ ADVERSARIAL = {
     "AIza": "AIza" * (N // 4),
     "AIza-long": "AI" + "za" + "a" * N,
     "sk_": "sk_test_" * (N // 8),
+    "github_pat_long": "git" + "hub_pat_" + "a" * N,
+    "xapp-long": "xa" + "pp-" + "a" * N + "!",
 }
 
 
@@ -66,12 +68,20 @@ def _best(fn: Callable[[str], object], arg: str) -> float:
 
 
 def _assert_scales_linearly(fn: Callable[[str], object], text: str, label: object) -> None:
-    """Assert fn on the 50k input is an absolute-fast, linear-scaling operation."""
+    """Assert fn scales linearly from the 12.5k to the 50k input (a ratio, so it holds on a slow
+    or loaded runner; the absolute ceiling is the ``benchmark`` test below)."""
     t_small = _best(fn, text[:SMALL_N])
     t_large = _best(fn, text)
     ratio = t_large / max(t_small, NOISE_FLOOR_S)
-    assert t_large < ABS_CEILING_S, (label, t_large)
     assert ratio < MAX_SCALING_RATIO, (label, t_small, t_large, round(ratio, 2))
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize("key", sorted(ADVERSARIAL))
+def test_benchmark_mask_and_sweep_under_ceiling(key: str) -> None:
+    text = ADVERSARIAL[key]
+    for fn in (mask_value, sweep):
+        assert _best(fn, text) < ABS_CEILING_S, (key, fn.__name__)
 
 
 @pytest.mark.parametrize("key", sorted(ADVERSARIAL))
@@ -286,9 +296,14 @@ _AWS = "AK" + "IA" + "ZX9QM2LP8RT4VB7N"
 _GH = "gh" + "p_" + "Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5Wy0Ue4Ra7Bc"
 _SLACK = "xo" + "xb-" + "1234567890-Zx9Qm2Lp8Rt4Vb7Nc1"
 _GOOG = "AI" + "za" + "Sy" + "Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5Wy0Ue4"
+_GH_PAT = "git" + "hub_pat_" + "11AZX9QM2" + "0" * 13 + "_Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5Wy0Ue4Ra7Bc"
+_SLACK_APP = "xa" + "pp-" + "1-A0ZX9QM2LP8-1234567890-" + "a1b2c3d4" * 4
 
 
-@pytest.mark.parametrize("secret", [_AWS, _GH, _SLACK, _GOOG, "AS" + "IA" + "ZX9QM2LP8RT4VB7N"])
+@pytest.mark.parametrize(
+    "secret",
+    [_AWS, _GH, _SLACK, _GOOG, "AS" + "IA" + "ZX9QM2LP8RT4VB7N", _GH_PAT, _SLACK_APP],
+)
 def test_bare_credentials_masked_in_prose(secret: str) -> None:
     assert len(secret) > 15
     text, n = sweep(f"leaked {secret} here, ok")

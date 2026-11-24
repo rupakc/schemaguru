@@ -31,10 +31,18 @@ functions that read files, URLs or foreign databases are refused whatever their 
 because they reach data without naming it as a catalog table. They are denied by name FAMILY,
 not instance: a call whose last name part (after quoting and qualification) is ``read_*``,
 ``query_*``, ``dblink*``, ``*_scan``, ``*_execute``, ``*_query``, ``*_metadata``, ``glob``,
-``external_query``, a ClickHouse table function (``file``, ``url``, ``s3``, ``remote``,
-``postgresql``, ``jdbc``, ``odbc``, ``executable``, ``merge``, ...) or a listed name
-(``pg_read_file``, ``lo_import``, ``ts_stat``, ...). A user UDF whose name matches a family is
-refused by design; the same names used as columns or aliases (not called) are fine. The
+``external_query``, ``*cluster`` (``urlCluster``, ``s3Cluster``, ``icebergCluster``, ...),
+``iceberg*``, ``deltalake*``, ``hudi*``, ``paimon*``, ``*_attach`` (``postgres_attach``), a
+ClickHouse/DuckDB table function (``file``, ``url``, ``s3``, ``remote``, ``postgresql``, ``jdbc``,
+``odbc``, ``executable``, ``merge``, ``cosn``, ``oss``, ...), an environment/secret reader
+(``getenv``, ``duckdb_secrets``, ``which_secret``, ``current_setting``) or a listed name
+(``pg_read_file``, ``lo_import``, ``ts_stat``, ...). The standard SQL/JSON functions
+``json_query``, ``json_value`` and ``json_exists`` are carved out. A user UDF whose name matches
+a family is refused by design; the same names used as columns or aliases (not called), or
+declared (``WITH file(a) AS``, ``t AS input(a, b)``), are fine. A string literal directly after
+``FROM`` or ``JOIN`` (DuckDB's file/URL-as-table, ``FROM '/etc/passwd'``) is refused. The
+deny-list stays BEST-EFFORT: an unlisted vendor function passes, and adversarial isolation needs
+warehouse permissions (a read-only role). The
 ``dialect`` argument is reserved.
 """
 
@@ -44,7 +52,7 @@ import re
 from collections.abc import Collection
 from dataclasses import dataclass
 
-from schemaguru._util.sqltext import agreed_lex, blank, tokenize
+from schemaguru._util.sqltext import Tok, agreed_lex, blank, tokenize
 from schemaguru.model.refs import ObjectRef
 
 MAX_SQL_CHARS = 100_000  # [call] generous for generated SQL, small enough to bound scanning
@@ -92,8 +100,10 @@ _TEXT_SQL_FUNCTIONS = frozenset(
     }
 )
 # Families, not instances: a CALL whose last name part matches is refused (user UDFs too).
-_TEXT_SQL_PREFIXES = ("dblink", "read_", "query_")
-_TEXT_SQL_SUFFIXES = ("_scan", "_execute", "_query", "_metadata")
+_TEXT_SQL_PREFIXES = ("dblink", "read_", "query_", "iceberg", "deltalake", "hudi", "paimon")
+_TEXT_SQL_SUFFIXES = ("_scan", "_execute", "_query", "_metadata", "cluster", "_attach")
+# standard SQL/JSON functions that match a family (``*_query``) but read nothing outside the row
+_SQL_JSON_FUNCTIONS = frozenset({"json_query", "json_value", "json_exists"})
 _TABLE_FUNCTIONS = frozenset(
     {
         "glob",
@@ -122,12 +132,21 @@ _TABLE_FUNCTIONS = frozenset(
         "mongodb",
         "redis",
         "sqlite",
+        "cosn",
+        "oss",
+        # reach the environment, secrets or settings of the server process
+        "getenv",
+        "duckdb_secrets",
+        "which_secret",
+        "current_setting",
     }
 )
 _LITERAL_GLUE = re.compile(r"(?:\s|\|\|)*")
 
 
 def _reads_by_text(name: str) -> bool:
+    if name in _SQL_JSON_FUNCTIONS:
+        return False
     return (
         name in _TEXT_SQL_FUNCTIONS
         or name in _TABLE_FUNCTIONS
@@ -152,6 +171,25 @@ def _joined_literals(sql: str, kinds: str) -> list[str]:
             out.append(sql[m.start() : m.end()])
         prev_end = m.end()
     return out
+
+
+def _file_as_table(toks: list[Tok], i: int) -> bool:
+    """A string literal directly after FROM/JOIN (optionally LATERAL/ONLY): DuckDB reads it as a
+    file or URL."""
+    j = i - 1
+    while j >= 0 and toks[j].kind == "ident" and toks[j].text.upper() in ("LATERAL", "ONLY"):
+        j -= 1
+    return j >= 0 and toks[j].kind == "ident" and toks[j].text.upper() in ("FROM", "JOIN")
+
+
+def _declares(toks: list[Tok], i: int) -> bool:
+    """``WITH name(cols) AS`` / ``t AS name(cols)``: a name right after WITH, WITH RECURSIVE or AS
+    that is followed by ``(`` is declared, not called."""
+    j = i - 1
+    if j >= 0 and toks[j].text.upper() == "RECURSIVE":
+        j -= 1
+        return j >= 0 and toks[j].text.upper() == "WITH"
+    return j >= 0 and toks[j].text.upper() in ("WITH", "AS")
 
 
 @dataclass(frozen=True)
@@ -201,6 +239,8 @@ def check_sql(
     banned = {b.table.casefold(): b.table_ref() for b in never_query}
     toks = tokenize(blank(sql, lexed=lexed).view)
     for i, t in enumerate(toks):
+        if t.kind == "str" and _file_as_table(toks, i):
+            add("SG801: a string literal as a table (file or URL) is not allowed")
         if t.kind not in ("ident", "qident"):
             continue
         text_ = t.text.strip('"`')
@@ -211,7 +251,7 @@ def check_sql(
                 add(f"SG802: reads never-query table {ref.canonical()}")
         followed = i + 1 < len(toks) and toks[i + 1].text == "("
         last = folded.rsplit(".", 1)[-1]  # backtick `a.b.f` names a qualified function
-        if followed and _reads_by_text(last):
+        if followed and not _declares(toks, i) and _reads_by_text(last):
             add(f"SG801: {last}() runs SQL or reads a table or file named by text")
         if followed and folded in ("identifier", "table"):
             plain = (

@@ -484,3 +484,88 @@ def test_guard_r5_weakened_comparison_is_caught_by_the_property() -> None:
             strict_misses += 1
     assert weak_misses > 0
     assert strict_misses == 0
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM urlCluster('http://h/x', 'CSV')",
+        "SELECT * FROM fileCluster('c', 'x')",
+        "SELECT * FROM hdfsCluster('c', 'x')",
+        "SELECT * FROM deltaLakeCluster('c', 'x')",
+        "SELECT * FROM icebergCluster('c', 'x')",
+        "SELECT * FROM s3Cluster('c', 'x')",
+        "SELECT * FROM iceberg('s3://b/t')",
+        "SELECT * FROM iceberg_scan('s3://b/t')",
+        "SELECT * FROM deltalake('s3://b/t')",
+        "SELECT * FROM hudi('s3://b/t')",
+        "SELECT * FROM paimon('s3://b/t')",
+        "SELECT * FROM cosn('cosn://b/t')",
+        "SELECT * FROM OSS('oss://b/t')",
+        "SELECT postgres_attach('host=x')",
+        "SELECT sqlite_attach('x.db')",
+        "SELECT getenv('AWS_SECRET_ACCESS_KEY')",
+        "SELECT * FROM duckdb_secrets()",
+        "SELECT which_secret('s3://b', 's3')",
+        "SELECT current_setting('x')",
+    ],
+)
+def test_guard_r6_more_function_families_refused(sql: str) -> None:
+    v = check_sql(sql)
+    assert not v.ok and any("named by text" in r for r in v.reasons), v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM '/etc/passwd'",
+        "SELECT * FROM 'http://169.254.169.254/x.csv'",
+        "SELECT a FROM t JOIN 'x.parquet' USING (a)",
+        "SELECT * FROM LATERAL 'x.csv'",
+        "SELECT * FROM ONLY 'x.csv'",
+        "SELECT * FROM t LEFT JOIN LATERAL 'x.csv' ON true",
+    ],
+)
+def test_guard_r6_file_as_table_refused(sql: str) -> None:
+    v = check_sql(sql)
+    assert not v.ok and any("string literal as a table" in r for r in v.reasons), v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM t WHERE x = 'a'",
+        "SELECT 'a' AS from_x FROM t",
+        "SELECT a FROM t WHERE b IN ('from', 'join') AND c = 'x'",
+        "SELECT a FROM t JOIN u ON u.k = 'a'",
+    ],
+)
+def test_guard_r6_string_literals_elsewhere_pass(sql: str) -> None:
+    v = check_sql(sql)
+    assert v.ok, v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT json_query(j, '$.a'), json_value(j, '$.b') FROM t WHERE json_exists(j, '$.c')",
+        "SELECT JSON_QUERY(j, '$.a' RETURNING text) FROM t",
+    ],
+)
+def test_guard_r6_sql_json_functions_pass(sql: str) -> None:
+    v = check_sql(sql)
+    assert v.ok, v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "WITH file(a) AS (SELECT 1) SELECT * FROM file",
+        "WITH RECURSIVE input(a) AS (SELECT 1) SELECT * FROM input",
+        "SELECT * FROM t AS input(a, b)",
+        "WITH read_x(a) AS (SELECT 1) SELECT a FROM read_x",
+    ],
+)
+def test_guard_r6_declarations_are_not_calls(sql: str) -> None:
+    v = check_sql(sql)
+    assert v.ok, v.reasons

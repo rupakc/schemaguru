@@ -9,7 +9,6 @@ import importlib
 import importlib.util
 import json
 import os
-import re
 import shutil
 import sqlite3
 import sys
@@ -21,7 +20,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from schemaguru.catalog.executor import redact_url
+from schemaguru.catalog.executor import redact_url, scrub_text
 from schemaguru.config import Config
 from schemaguru.diagnostics import Diagnostic, DiagnosticBag, Severity
 from schemaguru.errors import SchemaGuruError
@@ -37,46 +36,7 @@ _DRAFT_ONLY_KEYS = ("prompt_hash", "candidate")
 _REJECTED_KEY = "review.rejected"
 
 
-_URL_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
-_TRAILING = "'\")>]},.;:"
-
-
-def scrub(text: str, known: Sequence[str | None] = ()) -> str:
-    """``text`` with credentials removed from every URL in it and the rest left intact.
-
-    The exact strings in ``known`` (the ``--url`` value) are replaced by their redacted form
-    first; then every URL-shaped token is redacted. Never redacts a whole message.
-    """
-    for url in sorted({u for u in known if u}, key=len, reverse=True):
-        text = text.replace(url, redact_url(url))
-    parts = re.split(r"(\s+)", text)  # tokens at even indexes, whitespace at odd ones
-    out: list[str] = []
-    i = 0
-    while i < len(parts):
-        tok = parts[i]
-        m = _URL_TOKEN.search(tok)
-        if m is None:
-            out.append(tok)
-            i += 1
-            continue
-        body = m.group(0).rstrip(_TRAILING)
-        authority = body.partition("://")[2].split("/", 1)[0]
-        if "@" not in body and re.search(r":\D", authority):
-            # userinfo with a space in the password: the '@' is in a later token (fail closed)
-            j = i + 2
-            while j < len(parts) and j <= i + 16 and "://" not in parts[j]:
-                if "@" in parts[j]:
-                    out.append(tok[: m.start()] + body.split("://")[0] + "://***")
-                    i = j + 1
-                    break
-                j += 2
-            else:
-                out.append(tok[: m.start()] + redact_url(body) + tok[m.start() + len(body) :])
-                i += 1
-            continue
-        out.append(tok[: m.start()] + redact_url(body) + tok[m.start() + len(body) :])
-        i += 1
-    return "".join(out)
+scrub = scrub_text  # the shared implementation (catalog.executor); kept for callers
 
 
 class UsageError(Exception):

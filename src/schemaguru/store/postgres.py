@@ -28,7 +28,6 @@ Same model and contract as :class:`~schemaguru.store.sqlite.SQLiteStore`, so sev
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
@@ -42,7 +41,7 @@ from schemaguru._util.hashing import canonical_json
 from schemaguru._util.text import name_tokens
 from schemaguru._util.timeutil import to_iso, utcnow
 from schemaguru.diagnostics import DiagnosticBag
-from schemaguru.errors import SchemaGuruError, StoreVersionError
+from schemaguru.errors import SchemaGuruError, StoreUnavailableError, StoreVersionError
 from schemaguru.model.facts import Fact
 from schemaguru.model.joins import JoinRef
 from schemaguru.model.refs import ObjectRef
@@ -103,10 +102,26 @@ def _lexeme(token: str) -> str:
     return quoted + ":*" if len(token) >= 3 else quoted
 
 
-def _lock_key(*parts: str) -> int:
-    """A stable signed 64-bit advisory-lock key."""
-    digest = hashlib.blake2b("\x1f".join(parts).encode("utf-8"), digest_size=8).digest()
-    return int.from_bytes(digest, "big", signed=True)
+# An advisory-lock key computed by the server from what identifies the store there: the database
+# and the schema (the named one, else the connection's current schema). Advisory locks are
+# per database, so every replica agrees on the key however its DSN is spelled.
+_LOCK_KEY_SQL = (
+    "hashtextextended(%(purpose)s || chr(31) || current_database() || chr(31) || "
+    "COALESCE(%(schema)s, current_schema()) || chr(31) || %(name)s, 0)"
+)
+
+
+@contextmanager
+def _unavailable(where: str) -> Iterator[None]:
+    """Turn a lost or refused connection into ``StoreUnavailableError`` (``SG703``)."""
+    import psycopg
+
+    try:
+        yield
+    except psycopg.OperationalError as e:
+        raise StoreUnavailableError(
+            f"SG703: the Postgres store at {where} is unavailable: {type(e).__name__}"
+        ) from None
 
 
 def _where(dsn: str) -> str:
@@ -123,15 +138,24 @@ def _where(dsn: str) -> str:
 class _Pool:
     """A bounded set of autocommit connections; broken or mid-transaction ones are discarded."""
 
-    def __init__(self, connect: Callable[[], Any], max_size: int) -> None:
+    def __init__(
+        self, connect: Callable[[], Any], max_size: int, timeout_s: float, where: str
+    ) -> None:
         self._connect = connect
+        self._timeout_s = timeout_s
+        self._where = where
         self._sem = threading.BoundedSemaphore(max_size)
+        self._max = max_size
         self._lock = threading.Lock()
         self._free: list[Any] = []
         self._closed = False
 
     def acquire(self) -> Any:
-        self._sem.acquire()
+        if not self._sem.acquire(timeout=self._timeout_s):
+            raise StoreUnavailableError(
+                f"SG703: no Postgres store connection free at {self._where} within "
+                f"{self._timeout_s:g} s (all {self._max} in use)"
+            )
         try:
             with self._lock:
                 if self._closed:
@@ -173,11 +197,22 @@ class PostgresStore:
     connection's default ``search_path``; several stores can then share one database.
     """
 
-    def __init__(self, dsn: str, *, schema: str | None = None, max_connections: int = 8) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        schema: str | None = None,
+        max_connections: int = 8,
+        acquire_timeout_s: float = 30.0,
+        connect_timeout_s: int = 10,
+    ) -> None:
         if schema is not None and not _SCHEMA_NAME.match(schema):
             raise ValueError(f"invalid Postgres schema name {schema!r}")
         if max_connections < 1:
             raise ValueError("max_connections must be at least 1")
+        if acquire_timeout_s <= 0 or connect_timeout_s <= 0:
+            raise ValueError("timeouts must be positive")
+        self._connect_timeout_s = connect_timeout_s
         try:
             import psycopg  # noqa: F401
         except ImportError:
@@ -190,7 +225,7 @@ class PostgresStore:
         self.path = f"postgres://{_where(dsn)}" + (f" schema {schema}" if schema else "")
         self.diagnostics = DiagnosticBag()
         self._local = threading.local()
-        self._pool = _Pool(self._new_connection, max_connections)
+        self._pool = _Pool(self._new_connection, max_connections, acquire_timeout_s, _where(dsn))
         try:
             self._migrate()
         except BaseException:
@@ -204,15 +239,21 @@ class PostgresStore:
         from psycopg import sql
 
         try:
-            conn = psycopg.connect(self.dsn, autocommit=True)
+            conn = psycopg.connect(
+                self.dsn, autocommit=True, connect_timeout=self._connect_timeout_s
+            )
         except psycopg.OperationalError as e:
-            raise SchemaGuruError(
+            raise StoreUnavailableError(
                 f"SG703: cannot connect to the Postgres store at {_where(self.dsn)}: "
                 f"{str(e).strip()}"
             ) from None
         if self.schema is not None:
-            conn.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(self.schema)))
+            with _unavailable(_where(self.dsn)):
+                conn.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(self.schema)))
         return conn
+
+    def _key_params(self, purpose: str, name: str = "") -> dict[str, Any]:
+        return {"purpose": purpose, "schema": self.schema, "name": name}
 
     def close(self) -> None:
         self._pool.close()
@@ -223,16 +264,14 @@ class PostgresStore:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    def _namespace(self) -> str:
-        return self.schema or "<search_path>"
-
     def _migrate(self) -> None:
         from psycopg import sql
 
         with self.transaction():
             conn = self._local.conn
             conn.execute(
-                "SELECT pg_advisory_xact_lock(%s)", (_lock_key("schemaguru-migrate", self.dsn),)
+                f"SELECT pg_advisory_xact_lock({_LOCK_KEY_SQL})",
+                self._key_params("schemaguru-migrate"),
             )
             if self.schema is not None:
                 conn.execute(
@@ -274,7 +313,8 @@ class PostgresStore:
             return
         conn = self._pool.acquire()
         try:
-            yield conn
+            with _unavailable(_where(self.dsn)):
+                yield conn
         finally:
             self._pool.release(conn)
 
@@ -291,7 +331,7 @@ class PostgresStore:
         conn = self._pool.acquire()
         self._local.conn, self._local.depth = conn, 1
         try:
-            with conn.transaction():
+            with _unavailable(_where(self.dsn)), conn.transaction():
                 yield
         finally:
             self._local.conn, self._local.depth = None, 0
@@ -305,7 +345,7 @@ class PostgresStore:
         with self._conn() as conn:
             conn.execute(query, params)
 
-    def _many(self, query: str, rows: Sequence[Sequence[Any]]) -> None:
+    def _many(self, query: str, rows: Sequence[Sequence[Any] | Mapping[str, Any]]) -> None:
         if not rows:
             return
         with self._conn() as conn, conn.cursor() as cur:
@@ -319,13 +359,18 @@ class PostgresStore:
         for the duration of the block, so it is released even if that connection dies.
         """
         conn = self._new_connection()
-        key = _lock_key("schemaguru-lock", self.dsn, self._namespace(), name)
         try:
-            got = bool(conn.execute("SELECT pg_try_advisory_lock(%s)", (key,)).fetchone()[0])
+            with _unavailable(_where(self.dsn)):
+                key = int(
+                    conn.execute(
+                        f"SELECT {_LOCK_KEY_SQL}", self._key_params("schemaguru-lock", name)
+                    ).fetchone()[0]
+                )
+                got = bool(conn.execute("SELECT pg_try_advisory_lock(%s)", (key,)).fetchone()[0])
             try:
                 yield got
             finally:
-                if got and not conn.closed:
+                if got and not conn.closed and not conn.broken:
                     conn.execute("SELECT pg_advisory_unlock(%s)", (key,))
         finally:
             conn.close()
@@ -345,25 +390,36 @@ class PostgresStore:
             yield Schema.from_dict(json.loads(data))
 
     def upsert_tables(self, items: Iterable[Table]) -> None:
+        """One ``executemany`` and one reindex pass per page of ``_PAGE`` tables."""
         with self.transaction():
+            page: dict[str, tuple[str, str, str, str, str | None]] = {}
             for t in items:
                 d = t.to_dict()
                 del d["withdrawn_at"]
                 key = t.ref.canonical()
-                self._x(
-                    "INSERT INTO tables(ref, ref_lower, name_lower, data, withdrawn_at) "
-                    "VALUES (%s, %s, %s, %s, %s) "
-                    "ON CONFLICT(ref) DO UPDATE SET data=excluded.data, "
-                    "withdrawn_at=excluded.withdrawn_at",
-                    (
-                        key,
-                        key.lower(),
-                        t.ref.table.lower(),
-                        _dumps(d),
-                        None if t.withdrawn_at is None else to_iso(t.withdrawn_at),
-                    ),
+                page[key] = (
+                    key,
+                    key.lower(),
+                    t.ref.table.lower(),
+                    _dumps(d),
+                    None if t.withdrawn_at is None else to_iso(t.withdrawn_at),
                 )
-                self._reindex(key)
+                if len(page) >= _PAGE:
+                    self._upsert_table_page(page)
+                    page = {}
+            self._upsert_table_page(page)
+
+    def _upsert_table_page(self, page: Mapping[str, tuple[Any, ...]]) -> None:
+        if not page:
+            return
+        self._many(
+            "INSERT INTO tables(ref, ref_lower, name_lower, data, withdrawn_at) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT(ref) DO UPDATE SET data=excluded.data, "
+            "withdrawn_at=excluded.withdrawn_at",
+            list(page.values()),
+        )
+        self._reindex_many(sorted(page))
 
     def table(self, ref: ObjectRef) -> Table | None:
         rows = self._q(
@@ -498,8 +554,7 @@ class PostgresStore:
                 "subject_key=excluded.subject_key, data=excluded.data",
                 list(rows.values()),
             )
-            for key in sorted(touched):
-                self._reindex(key)
+            self._reindex_many(sorted(touched))
 
     def iter_facts(self) -> Iterator[Fact]:
         last = ""
@@ -598,43 +653,62 @@ class PostgresStore:
     # ----- search ------------------------------------------------------------------------
 
     def _reindex(self, key: str) -> None:
-        """Rebuild the search document of one table (caller holds the write transaction)."""
-        rows = self._q("SELECT data FROM tables WHERE ref=%s", (key,))
-        if not rows:
+        self._reindex_many([key])
+
+    def _reindex_many(self, keys: Sequence[str]) -> None:
+        """Rebuild the search documents of ``keys`` in one pass (caller holds the transaction):
+        one query each for tables, columns and meaning facts, one ``executemany`` for docs."""
+        if not keys:
             return
-        t = json.loads(rows[0][0])
-        ref = ObjectRef.from_dict(t["ref"])
-        col_tokens: list[str] = []
-        text: list[str] = [*name_tokens(ref.schema or ""), t.get("comment") or ""]
-        for (cdata,) in self._q(
-            "SELECT data FROM columns WHERE table_ref=%s ORDER BY ordinal", (key,)
+        tables = dict(self._q("SELECT ref, data FROM tables WHERE ref = ANY(%s)", (list(keys),)))
+        if not tables:
+            return
+        cols: dict[str, list[str]] = {}
+        for ref, cdata in self._q(
+            "SELECT table_ref, data FROM columns WHERE table_ref = ANY(%s) "
+            "ORDER BY table_ref, ordinal",
+            (list(tables),),
         ):
-            c = json.loads(cdata)
-            col_tokens.extend(name_tokens(c["ref"]["column"]))
-            if c.get("comment"):
-                text.append(c["comment"])
+            cols.setdefault(ref, []).append(cdata)
+        meaning: dict[str, list[str]] = {}
         # table-level and column-level meaning facts (column keys extend the table key by ".col")
-        for (fdata,) in self._q(
-            "SELECT data FROM facts WHERE subject_key >= %s AND subject_key < %s "
-            "AND kind = ANY(%s)",
-            (key, key + "/", list(_MEANING_KINDS)),
+        for key, fdata in self._q(
+            "SELECT k.key, f.data FROM unnest(%s::text[]) AS k(key) JOIN facts f "
+            "ON f.subject_key >= k.key COLLATE \"C\" AND f.subject_key < (k.key || '/') "
+            'COLLATE "C" WHERE f.kind = ANY(%s) ORDER BY k.key, f.id',
+            (list(tables), list(_MEANING_KINDS)),
         ):
-            fact = json.loads(fdata)
-            subj = fact["subject"]
-            if "table" in subj and ObjectRef.from_dict(subj).table_ref().canonical() == key:
-                text.extend(_strings(fact["value"]))
-        doc = {
-            "r": key,
-            "n": " ".join(name_tokens(ref.table)),
-            "c": " ".join(col_tokens),
-            "t": " ".join(x for x in text if x),
-        }
-        self._x(
+            meaning.setdefault(key, []).append(fdata)
+        docs = []
+        for key in sorted(tables):
+            t = json.loads(tables[key])
+            ref = ObjectRef.from_dict(t["ref"])
+            col_tokens: list[str] = []
+            text: list[str] = [*name_tokens(ref.schema or ""), t.get("comment") or ""]
+            for cdata in cols.get(key, []):
+                c = json.loads(cdata)
+                col_tokens.extend(name_tokens(c["ref"]["column"]))
+                if c.get("comment"):
+                    text.append(c["comment"])
+            for fdata in meaning.get(key, []):
+                fact = json.loads(fdata)
+                subj = fact["subject"]
+                if "table" in subj and ObjectRef.from_dict(subj).table_ref().canonical() == key:
+                    text.extend(_strings(fact["value"]))
+            docs.append(
+                {
+                    "r": key,
+                    "n": " ".join(name_tokens(ref.table)),
+                    "c": " ".join(col_tokens),
+                    "t": " ".join(x for x in text if x),
+                }
+            )
+        self._many(
             "INSERT INTO docs(ref, name_tokens, columns, text, doc) "
             f"VALUES (%(r)s, %(n)s, %(c)s, %(t)s, {_DOC_SQL}) "
             "ON CONFLICT(ref) DO UPDATE SET name_tokens=excluded.name_tokens, "
             "columns=excluded.columns, text=excluded.text, doc=excluded.doc",
-            doc,
+            docs,
         )
 
     def search(self, query: str, k: int) -> list[tuple[ObjectRef, float]]:

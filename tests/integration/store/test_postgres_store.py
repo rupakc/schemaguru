@@ -235,3 +235,130 @@ def test_cli_opens_postgres_store_url(
         monkeypatch.delenv(var)  # test-harness variables are not config keys
     assert main(["--format", "json", "report", "--store", url]) == 0
     assert '"tables": 1' in capsys.readouterr().out
+
+
+# ----- review round 1: lock keys, pool limits, connectivity, batching --------------------------
+
+
+def _spellings(dsn: str) -> list[str]:
+    """The same database, spelled three ways (URL, key/value, URL with extra parameters)."""
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    info = {k: v for k, v in conninfo_to_dict(dsn).items() if v is not None}
+    kv = make_conninfo(**info)
+    sep = "&" if "?" in dsn else "?"
+    return [dsn, kv, dsn + sep + "application_name=sg-replica"]
+
+
+def test_advisory_lock_key_ignores_dsn_spelling(pg_schema: tuple[str, str]) -> None:
+    from schemaguru.store.postgres import PostgresStore
+
+    dsn, schema = pg_schema
+    a_dsn, b_dsn, c_dsn = _spellings(dsn)
+    with (
+        PostgresStore(a_dsn, schema=schema) as a,
+        PostgresStore(b_dsn, schema=schema) as b,
+        PostgresStore(c_dsn, schema=schema) as c,
+        a.advisory_lock("refresh") as got_a,
+        b.advisory_lock("refresh") as got_b,
+        c.advisory_lock("refresh") as got_c,
+    ):
+        assert got_a is True and got_b is False and got_c is False
+
+
+def test_advisory_lock_is_per_schema(pg_schema: tuple[str, str]) -> None:
+    from schemaguru.store.postgres import PostgresStore
+
+    dsn, schema = pg_schema
+    other = schema + "_b"
+    try:
+        with (
+            PostgresStore(dsn, schema=schema) as a,
+            PostgresStore(dsn, schema=other) as b,
+            a.advisory_lock("refresh") as got_a,
+            b.advisory_lock("refresh") as got_b,
+        ):
+            assert got_a is True and got_b is True
+    finally:
+        _drop_schema(dsn, other)
+
+
+def test_concurrent_mixed_dsn_opens_migrate_once(pg_schema: tuple[str, str]) -> None:
+    from schemaguru.store.postgres import PostgresStore
+
+    dsn, schema = pg_schema
+    spellings = _spellings(dsn)
+    errors: list[BaseException] = []
+    stores: list[Any] = []
+    start = threading.Barrier(8)
+
+    def open_one(i: int) -> None:
+        try:
+            start.wait()
+            stores.append(PostgresStore(spellings[i % len(spellings)], schema=schema))
+        except BaseException as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=open_one, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    try:
+        assert errors == []
+        assert {s.schema_version() for s in stores} == {schema_sql.LATEST_PG_VERSION}
+    finally:
+        for s in stores:
+            s.close()
+
+
+def test_pool_acquire_times_out(pg_schema: tuple[str, str]) -> None:
+    from schemaguru.errors import StoreUnavailableError
+    from schemaguru.store.postgres import PostgresStore
+
+    dsn, schema = pg_schema
+    with PostgresStore(dsn, schema=schema, max_connections=1, acquire_timeout_s=0.3) as s:
+        held, release = threading.Event(), threading.Event()
+
+        def hold() -> None:
+            with s.transaction():
+                held.set()
+                release.wait(10)
+
+        t = threading.Thread(target=hold)
+        t.start()
+        held.wait(10)
+        caught: list[BaseException] = []
+
+        def read() -> None:
+            try:
+                s.table(tref("orders"))
+            except BaseException as e:
+                caught.append(e)
+
+        r = threading.Thread(target=read)
+        r.start()
+        r.join()
+        release.set()
+        t.join()
+        assert len(caught) == 1 and isinstance(caught[0], StoreUnavailableError)
+        assert "SG703" in str(caught[0])
+        assert s.table(tref("orders")) is None  # the pool works again once released
+
+
+def test_unreachable_store_is_unavailable() -> None:
+    from schemaguru.errors import StoreUnavailableError
+    from schemaguru.store.postgres import PostgresStore
+
+    require_driver("postgres", "psycopg")
+    with pytest.raises(StoreUnavailableError, match="SG703") as info:
+        PostgresStore("postgresql://sg:s3cret-pw@127.0.0.1:1/none", connect_timeout_s=2)
+    assert "s3cret" not in str(info.value)
+
+
+def test_bulk_upsert_pages_are_indexed(store: Any) -> None:
+    store.upsert_tables([tbl(f"t{i:04d}", f"filler {i}") for i in range(2300)])
+    store.upsert_tables([tbl("t2299", "the refunds ledger")])
+    assert [r.table for r, _ in store.search("refunds", 3)] == ["t2299"]
+    assert [r.table for r, _ in store.search("t1500", 3)][:1] == ["t1500"]
+    assert sum(1 for _ in store.iter_tables()) == 2300

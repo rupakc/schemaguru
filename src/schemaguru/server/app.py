@@ -10,8 +10,8 @@ the agent surface's, already masked by the render layer) and adds no logic of it
 ``GET  /search``           ``search_tables`` (``q``, ``k``)                   reader
 ``GET  /tables/{ref}``     ``describe_table``                                 reader
 ``GET  /paths``            ``find_join_path`` (``from``, ``to``)              reader
-``GET  /facts``            stored facts of one ``subject`` (``kind`` repeatable),
-                           masked by the tool surface's value policy    reader
+``GET  /facts``            ``agent.facts.outbound_facts`` for one table or column
+                           ``subject`` (``kind`` repeatable)                 reader
 ``POST /refresh``          ``Guru.refresh`` (JSON ``label``), one at a time   admin
 ``*    /mcp``              streamable-HTTP MCP when ``schemaguru.agent.mcp``
                            provides ``streamable_http_app(guru)``, else 501  reader
@@ -33,10 +33,14 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING, Any
 
-from schemaguru.agent.dispatch import outbound_mode
-from schemaguru.errors import SchemaGuruError
+from schemaguru._util.text import name_tokens
+from schemaguru.agent.dispatch import error_text
+from schemaguru.agent.facts import outbound_facts
+from schemaguru.agent.tools import MAX_NAME, MAX_TEXT, tool_definitions
+from schemaguru.catalog.executor import scrub_text
+from schemaguru.errors import SchemaGuruError, StoreUnavailableError
 from schemaguru.guru import Guru
-from schemaguru.render.table_block import outbound
+from schemaguru.model.refs import ObjectRef
 from schemaguru.server.auth import Authenticator
 
 if TYPE_CHECKING:
@@ -46,8 +50,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("schemaguru.server")
 
-_VALUE_KINDS = frozenset({"VALUES"})
-_MAX_BODY = 1 << 20
+MAX_BODY = 1 << 20  # bytes of a request body
+MAX_TERMS = 64  # words in a question or search query
+_CHALLENGE = {"WWW-Authenticate": 'Bearer realm="schemaguru"'}
+_UNAVAILABLE = "the knowledge store is unavailable; retry later"
 
 
 class _Fail(Exception):
@@ -56,17 +62,16 @@ class _Fail(Exception):
         self.status, self.code, self.message = status, code, message
 
 
-def _outbound_tree(node: Any, mode: str) -> Any:
-    if isinstance(node, str):
-        return outbound(node, mode)[0]
-    if isinstance(node, list):
-        return [_outbound_tree(v, mode) for v in node]
-    if isinstance(node, dict):
-        return {outbound(str(k), mode)[0]: _outbound_tree(v, mode) for k, v in node.items()}
-    return node
+_STATUS = {"SG803": 400, "SG804": 500, "SG301": 429, "SG302": 429, "SG703": 503}
 
 
-_STATUS = {"SG803": 400, "SG804": 500, "SG301": 429, "SG302": 429}
+def _budget_range(guru: Guru) -> tuple[int, int]:
+    """``schema_context``'s own ``budget_tokens`` bounds, so HTTP and the tool agree."""
+    for spec in tool_definitions(guru):
+        if spec["name"] == "schema_context":
+            prop = spec["input_schema"]["properties"]["budget_tokens"]
+            return int(prop.get("minimum", 0)), int(prop.get("maximum", 100_000))
+    return 0, 100_000
 
 
 class RefreshGuard:
@@ -118,8 +123,17 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
     guard = RefreshGuard(guru.store)
     mcp_app = _mcp_app(guru)
 
+    budget_min, budget_max = _budget_range(guru)
+
     def error(status: int, code: str, message: str) -> Response:
-        return JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
+        """Every message leaves scrubbed (URL credentials) and masked like a tool's error."""
+        try:
+            text = error_text(guru, scrub_text(message))
+        except Exception:
+            text = "request failed"
+        headers = _CHALLENGE if status == 401 else None
+        body = {"error": {"code": code, "message": text}}
+        return JSONResponse(body, status_code=status, headers=headers)
 
     def role_of(headers: Mapping[str, str]) -> str:
         role = authenticator.authenticate(headers)
@@ -127,24 +141,45 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
             raise _Fail(401, "SG805", "missing or invalid bearer token")
         return role
 
+    async def read_body(request: Request) -> bytes:
+        if request.method != "POST":
+            return b""
+        declared = request.headers.get("content-length")
+        if declared is not None:
+            if not declared.isdigit():
+                raise _Fail(400, "SG807", "invalid Content-Length")
+            if int(declared) > MAX_BODY:
+                raise _Fail(413, "SG807", f"request body over {MAX_BODY} bytes")
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > MAX_BODY:
+                raise _Fail(413, "SG807", f"request body over {MAX_BODY} bytes")
+            chunks.append(chunk)
+        return b"".join(chunks)
+
     def endpoint(need: str, fn: Callable[[Request, bytes], Any]) -> Callable[[Request], Any]:
         async def handle(request: Request) -> Response:
             try:
                 role = role_of(request.headers)
                 if need == "admin" and role != "admin":
                     raise _Fail(403, "SG806", "this route needs an admin token")
-                body = await request.body() if request.method == "POST" else b""
-                if len(body) > _MAX_BODY:
-                    raise _Fail(413, "SG807", "request body too large")
+                body = await read_body(request)
                 payload = await run_in_threadpool(fn, request, body)
                 err = payload.get("error") if isinstance(payload, dict) else None
                 if err is not None:  # a tool-level refusal: keep its (masked) code and message
                     code = str(err.get("code", "SG803")) if isinstance(err, dict) else "SG803"
                     msg = str(err.get("message", "")) if isinstance(err, dict) else str(err)
+                    if code == "SG703":
+                        msg = _UNAVAILABLE
                     raise _Fail(_STATUS.get(code, 400), code, msg)
                 return JSONResponse(payload)
             except _Fail as f:
                 return error(f.status, f.code, f.message)
+            except StoreUnavailableError:
+                log.warning("SG703 store unavailable on %s %s", request.method, request.url.path)
+                return error(503, "SG703", _UNAVAILABLE)
             except SchemaGuruError as e:
                 return error(400, "SG807", str(e))
             except Exception:
@@ -164,10 +199,19 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
             raise _Fail(400, "SG807", "the request body must be a JSON object")
         return data
 
-    def need_param(request: Request, name: str) -> str:
+    def need_param(request: Request, name: str, cap: int = MAX_NAME) -> str:
         value = request.query_params.get(name)
         if not value:
             raise _Fail(400, "SG807", f"missing query parameter {name!r}")
+        if len(value) > cap:
+            raise _Fail(400, "SG807", f"{name} is longer than {cap} characters")
+        return value
+
+    def text_arg(value: str, name: str) -> str:
+        if len(value) > MAX_TEXT:
+            raise _Fail(400, "SG807", f"{name} is longer than {MAX_TEXT} characters")
+        if len(name_tokens(value)) > MAX_TERMS:
+            raise _Fail(400, "SG807", f"{name} has more than {MAX_TERMS} words")
         return value
 
     def int_param(raw: Any, name: str, default: int) -> int:
@@ -180,6 +224,11 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
         except (TypeError, ValueError):
             raise _Fail(400, "SG807", f"{name} must be an integer") from None
 
+    def not_found(e: SchemaGuruError) -> _Fail:
+        if isinstance(e, StoreUnavailableError):
+            raise e
+        return _Fail(404, "SG808", str(e))
+
     # ----- routes (each runs in the thread pool; Guru is thread-safe) ------------------------
 
     def context(request: Request, body: bytes) -> dict[str, Any]:
@@ -187,9 +236,10 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
         question = data.get("question")
         if not isinstance(question, str) or not question.strip():
             raise _Fail(400, "SG807", "'question' must be a non-empty string")
+        text_arg(question, "question")
         budget = int_param(data.get("budget_tokens"), "budget_tokens", 4000)
-        if budget < 0:
-            raise _Fail(400, "SG807", "budget_tokens must be >= 0")
+        if not budget_min <= budget <= budget_max:
+            raise _Fail(400, "SG807", f"budget_tokens must be in {budget_min}..{budget_max}")
         profile = str(data.get("profile", "agent"))
         fmt = str(data.get("format", "text"))
         try:
@@ -206,37 +256,46 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
 
     def search(request: Request, body: bytes) -> dict[str, Any]:
         k = int_param(request.query_params.get("k"), "k", 10)
-        return guru.handle_tool_call("search_tables", {"query": need_param(request, "q"), "k": k})
+        query = text_arg(need_param(request, "q", MAX_TEXT), "q")
+        return guru.handle_tool_call("search_tables", {"query": query, "k": k})
 
     def table(request: Request, body: bytes) -> dict[str, Any]:
         name = str(request.path_params["ref"])
+        if len(name) > MAX_NAME:
+            raise _Fail(400, "SG807", f"the table name is longer than {MAX_NAME} characters")
         try:
             ref = guru.table_ref(name)
         except SchemaGuruError as e:
-            raise _Fail(404, "SG808", str(e)) from None
+            raise not_found(e) from None
         return guru.handle_tool_call("describe_table", {"table": ref.canonical()})
 
     def paths(request: Request, body: bytes) -> dict[str, Any]:
         args = {"from": need_param(request, "from"), "to": need_param(request, "to")}
         return guru.handle_tool_call("find_join_path", args)
 
-    def facts(request: Request, body: bytes) -> dict[str, Any]:
-        subject = need_param(request, "subject")
+    def subject_of(text: str) -> ObjectRef:
+        """A table or a column: the store's own resolution first (it keeps the column), then
+        the façade's bare-name rules."""
+        ref, cands = guru.store.resolve(text)
+        if ref is not None:
+            return ref
+        if cands:
+            listed = ", ".join(c.canonical() for c in cands[:20])
+            raise _Fail(400, "SG807", f"{text!r} is ambiguous: {listed}")
         try:
-            ref = guru.table_ref(subject)
-        except SchemaGuruError:
-            try:
-                ref = guru.column_ref(subject)
-            except SchemaGuruError as e:
-                raise _Fail(404, "SG808", str(e)) from None
+            return guru.table_ref(text)
+        except SchemaGuruError as e:
+            if isinstance(e, StoreUnavailableError):
+                raise
+        try:
+            return guru.column_ref(text)
+        except SchemaGuruError as e:
+            raise not_found(e) from None
+
+    def facts(request: Request, body: bytes) -> dict[str, Any]:
+        ref = subject_of(need_param(request, "subject"))
         kinds = request.query_params.getlist("kind") or None
-        mode = outbound_mode(guru, [ref.table_ref()])  # the tool surface's own value policy
-        out: list[dict[str, Any]] = []
-        for f in guru.store.facts_for([ref], kinds):
-            if mode == "none" and f.kind.name in _VALUE_KINDS:
-                continue
-            out.append(_outbound_tree(json.loads(json.dumps(f.to_dict(), default=str)), mode))
-        return {"subject": ref.canonical(), "facts": out, "text": f"{len(out)} fact(s)"}
+        return outbound_facts(guru, ref, kinds)
 
     def refresh(request: Request, body: bytes) -> dict[str, Any]:
         label = json_body(body).get("label")
@@ -296,6 +355,6 @@ class _Authed:
                 from starlette.responses import JSONResponse
 
                 body = {"error": {"code": "SG805", "message": "missing or invalid bearer token"}}
-                await JSONResponse(body, status_code=401)(scope, receive, send)
+                await JSONResponse(body, status_code=401, headers=_CHALLENGE)(scope, receive, send)
                 return
         await self._app(scope, receive, send)

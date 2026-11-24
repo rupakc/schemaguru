@@ -246,3 +246,169 @@ def test_codes_registered_and_documented() -> None:
     )
     for code in ("SG703", "SG805", "SG806", "SG807", "SG808", "SG809", "SG810", "SG811", "SG812"):
         assert code in CODES and f"| {code} |" in doc, code
+
+
+# ----- review round 1: /facts through the agent outbound policy, masked errors, limits ---------
+
+PLANTED = ("Bartholomew Kipling", "Quentin Shapeless", "wholesale_xq_secret", "Yolanda Brightwater",
+           "kipling@example.com")  # fmt: skip
+
+
+def g_now() -> Any:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc)
+
+
+def _plant(guru: Guru) -> None:
+    from schemaguru.model.facts import Fact, Provenance, Status
+    from schemaguru.model.kinds import FactKind as F
+    from schemaguru.model.refs import ObjectRef
+
+    t = ObjectRef(None, "shop", "orders")
+    email = ObjectRef(None, "shop", "customers", "email")
+
+    def human(kind: Any, subject: ObjectRef, value: dict[str, Any]) -> Fact:
+        return Fact.make(kind, subject, value, Provenance.HUMAN, Status.UNVERIFIED, source="o")
+
+    guru.store.put_facts(
+        [
+            human(F.SOFT_DELETE, t, {"predicate": "note <> 'Quentin Shapeless'",
+                                     "marker_columns": ["note"]}),
+            human(F.PITFALL, t, {"rule": "rows where name = 'Yolanda Brightwater' are fake",
+                                 "fix": None, "severity": "critical"}),
+            Fact.make(F.FRESHNESS, t, {"column": "status", "max_value": "wholesale_xq_secret",
+                                       "age_seconds": 10}, Provenance.MEASURED, Status.OBSERVED,
+                      method="exact", observed_at=g_now()),
+            human(F.PII, email, {"category": "email", "detector": "email"}),
+            human(F.VALUES, email, {"values": ["Bartholomew Kipling", "kipling@example.com"],
+                                    "case_sensitive": True, "split": None}),
+            human(F.DESCRIPTION, email, {"text": "write to kipling@example.com"}),
+        ]
+    )  # fmt: skip
+
+
+def _client_for(shop_store: Any, mode: str) -> tuple[Guru, TestClient]:
+    from schemaguru.config import Config, SamplingConfig
+
+    g = Guru(store=shop_store, config=Config(sampling=SamplingConfig(llm_values=mode)))  # type: ignore[arg-type]
+    _plant(g)
+    app = create_app(g, authenticator=BearerTokens({ADMIN: "admin", READER: "reader"}))
+    return g, TestClient(app, raise_server_exceptions=False)
+
+
+def _tool_views(g: Guru) -> str:
+    """Everything the agent tools show about the planted tables (the policy /facts must match)."""
+    parts = [
+        g.handle_tool_call("describe_table", {"table": "shop.orders"}),
+        g.handle_tool_call("describe_table", {"table": "shop.customers"}),
+        g.handle_tool_call("column_values", {"column": "shop.customers.email"}),
+    ]
+    return json.dumps(parts)
+
+
+@pytest.mark.parametrize("mode", ["masked", "none"])
+def test_facts_planted_secrets_never_leave(shop_store: Any, mode: str) -> None:
+    g, cl = _client_for(shop_store, mode)
+    try:
+        tools = _tool_views(g)
+        # values on a PII column and e-mail shapes never leave; in none mode no value at all
+        never = ["Bartholomew Kipling", "kipling@example.com"]
+        if mode == "none":
+            never += ["Quentin Shapeless", "wholesale_xq_secret", "Yolanda Brightwater"]
+        for subject in ("shop.orders", "shop.customers.email", "customers.email"):
+            r = cl.get("/facts", params={"subject": subject}, headers=H_READER)
+            assert r.status_code == 200, (subject, r.text)
+            assert not any(p in r.text for p in never), (mode, subject, r.text)
+            # no drift: whatever /facts shows of a planted value, the tools show too
+            assert all(p in tools for p in PLANTED if p in r.text), (mode, subject, r.text)
+        col = cl.get("/facts", params={"subject": "shop.customers.email"}, headers=H_READER).json()
+        assert col["subject"] == "shop.customers.email"  # the column is kept, not dropped
+        assert {"VALUES", "PII", "DESCRIPTION"} <= {f["kind"] for f in col["facts"]}
+        stored = {f.id for f in g.store.iter_facts()}
+        assert all(f["id"] in stored for f in col["facts"])  # ids are not masked
+        orders = cl.get("/facts", params={"subject": "shop.orders"}, headers=H_READER).json()
+        sd = next(
+            f["value"]["predicate"]
+            for f in orders["facts"]
+            if f["kind"] == "SOFT_DELETE" and "note" in f["value"]["predicate"]
+        )
+        assert sd == ("note <> ?" if mode == "none" else "note <> 'Quentin Shapeless'")
+        # VALUES come out exactly as the column_values tool presents them
+        tool = g.handle_tool_call("column_values", {"column": "shop.customers.email"})
+        values = next(f for f in col["facts"] if f["kind"] == "VALUES")["value"]
+        assert values == tool["entries"][0]
+    finally:
+        g.close()
+
+
+@pytest.mark.parametrize("mode", ["masked", "none"])
+def test_error_messages_are_masked_and_scrubbed(shop_store: Any, mode: str) -> None:
+    g, cl = _client_for(shop_store, mode)
+    try:
+        r = cl.get("/tables/nope.Bartholomew Kipling", headers=H_READER)
+        tool = g.handle_tool_call("describe_table", {"table": "nope.Bartholomew Kipling"})
+        assert r.status_code == 404
+        assert r.json()["error"]["message"] in tool["error"]["message"]  # masked like the tool
+        if mode == "none":
+            assert "Bartholomew" not in r.text
+        r = cl.get("/facts", params={"subject": "postgres://u:s3cret-pw@db/x"}, headers=H_READER)
+        assert r.status_code in (400, 404) and "s3cret" not in r.text
+        r = cl.get("/tables/postgres://u:s3cret-pw@db/x", headers=H_READER)
+        assert "s3cret" not in r.text
+    finally:
+        g.close()
+
+
+def test_store_outage_is_503(
+    client: TestClient, guru: Guru, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from schemaguru.errors import StoreUnavailableError
+
+    def down(*a: Any, **k: Any) -> Any:
+        raise StoreUnavailableError("SG703: cannot connect to the Postgres store at h:5432/db")
+
+    monkeypatch.setattr(guru, "table_ref", down)
+    r = client.get("/tables/shop.orders", headers=H_READER)
+    assert r.status_code == 503 and r.json()["error"]["code"] == "SG703"
+    assert "5432" not in r.text
+    monkeypatch.setattr(guru.store, "search", down)
+    r = client.get("/search?q=orders", headers=H_READER)
+    assert r.status_code == 503 and r.json()["error"]["code"] == "SG703"
+
+
+def test_401_carries_bearer_challenge(client: TestClient) -> None:
+    r = client.get("/search?q=x")
+    assert r.status_code == 401 and r.headers["www-authenticate"].startswith("Bearer")
+    assert "www-authenticate" not in client.get("/search?q=x", headers=H_READER).headers
+
+
+def test_body_size_capped_before_and_while_reading(client: TestClient) -> None:
+    from schemaguru.server.app import MAX_BODY
+
+    r = client.post(
+        "/context", headers={**H_READER, "content-length": str(MAX_BODY + 1)}, content=b"{}"
+    )
+    assert r.status_code == 413
+    big = json.dumps({"question": "x" * (MAX_BODY + 10)}).encode()
+
+    def chunks() -> Iterator[bytes]:  # no Content-Length: streamed
+        for i in range(0, len(big), 65536):
+            yield big[i : i + 65536]
+
+    r = client.post("/context", headers=H_READER, content=chunks())
+    assert r.status_code == 413 and r.json()["error"]["code"] == "SG807"
+
+
+def test_request_caps_match_the_tools(client: TestClient) -> None:
+    for budget in (199, 100_001, 10**9):
+        r = client.post(
+            "/context", headers=H_READER, json={"question": "orders", "budget_tokens": budget}
+        )
+        assert r.status_code == 400, budget
+    many = " ".join(f"w{i}" for i in range(65))
+    assert client.post("/context", headers=H_READER, json={"question": many}).status_code == 400
+    assert client.get("/search", params={"q": many}, headers=H_READER).status_code == 400
+    ok = " ".join(f"w{i}" for i in range(64))
+    assert client.get("/search", params={"q": ok}, headers=H_READER).status_code == 200
+    assert client.get("/tables/" + "x" * 600, headers=H_READER).status_code == 400

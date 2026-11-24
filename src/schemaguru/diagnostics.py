@@ -60,7 +60,7 @@ CODES: Mapping[str, str] = MappingProxyType(
         "SG605": "an identity chain cannot be compiled into a waypoint rule (it is not applied)",
         "SG701": "SQLite FTS5 is unavailable; search falls back to a slower LIKE scan",
         "SG702": "the store was written by a newer schema version than this library supports",
-        "SG703": "cannot connect to the Postgres store (named by host and database, never secrets)",
+        "SG703": "the shared store is unavailable (refused, lost or pool exhausted; HTTP 503)",
         "SG801": "guard refused the SQL: not a single read-only SELECT/WITH statement",
         "SG802": "guard refused the SQL: it reads a never-query table",
         "SG803": "an agent tool call was refused: unknown tool or invalid arguments",

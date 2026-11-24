@@ -21,3 +21,7 @@ class AmbiguousNameError(SchemaGuruError):
 
 class ConfigError(SchemaGuruError):
     """Invalid configuration, e.g. an unknown key or a value outside its allowed set."""
+
+
+class StoreUnavailableError(SchemaGuruError):
+    """A shared store cannot be reached right now (connection refused, lost, pool exhausted)."""

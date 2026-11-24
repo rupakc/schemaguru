@@ -5,9 +5,14 @@
 * Key and join metrics use key-hash sampling, only when the key's distinct count exceeds
   ``exact_key_limit``; the fraction targets ``exact_key_limit`` sampled keys and the same
   fraction and seed are used on both sides of a join.
-* Column profiles use block (``system``) sampling, or row-level ``bernoulli`` where the backend
-  has no block sampling, at ``max_bytes_per_probe / est_bytes`` clamped to the configured
-  floor and ceiling.
+* Column profiles and pattern rates (single-read FactLang primitives) use block (``system``)
+  sampling, or row-level ``bernoulli`` where the backend has no block sampling, at
+  ``max_bytes_per_probe / est_bytes`` clamped to the configured floor and ceiling.
+* Top values (FactLang ``ValueMembership``) and joins (``KeyOverlap``) read more than once, so
+  FactLang refuses ``system``/``bernoulli`` for them (FL405). Top values use a deterministic row
+  sample instead: ``keyhash`` on the table's primary key at the block fraction above. With no
+  known primary key they are measured exactly (the per-probe budget then refuses an
+  over-budget probe with SG301).
 * ``measurement="force"`` samples every table: key requests by key hash (the fraction above,
   or the floor when the key is small), everything else at the floor.
 
@@ -23,9 +28,12 @@ from schemaguru.config import SamplingConfig
 from schemaguru.measure.requests import (
     NEVER_SAMPLED,
     KeyOverlapReq,
+    PatternRate,
+    ProfileColumns,
     Request,
     SampleChoice,
     SampleMethod,
+    TopValues,
     Uniqueness,
 )
 from schemaguru.model.refs import ObjectRef
@@ -73,9 +81,11 @@ def choose_sample(
     max_bytes_per_probe: int | None,
     seed: int,
     block_sampling: bool = True,
+    pk: tuple[str, ...] | None = None,
 ) -> SampleChoice | None:
     """``None`` means measure exactly. ``key_distinct`` unknown falls back to the catalog row
-    count, an upper bound on the number of keys (a smaller fraction, never a bigger one)."""
+    count, an upper bound on the number of keys (a smaller fraction, never a bigger one).
+    ``pk`` is the table's known primary key, the only way top values can be sampled."""
     if isinstance(req, NEVER_SAMPLED) or cfg.measurement == "off":
         return None
     force = cfg.measurement == "force"
@@ -92,9 +102,22 @@ def choose_sample(
         if force:
             return SampleChoice("keyhash", _fraction(floor), seed, key)
         return None  # a small key is cheap to measure exactly (only key columns are read)
+    if isinstance(req, TopValues):
+        if not pk:
+            return None  # no deterministic row key: exact, or refused over budget (SG301)
+        return SampleChoice("keyhash", _row_fraction(cfg, est_bytes, max_bytes_per_probe), seed, pk)
+    if not isinstance(req, ProfileColumns | PatternRate):
+        return None  # only single-read primitives may take a block or row sample (FL405)
     method: SampleMethod = "system" if block_sampling else "bernoulli"
-    if force:
-        return SampleChoice(method, _fraction(floor), seed)
+    return SampleChoice(method, _row_fraction(cfg, est_bytes, max_bytes_per_probe), seed)
+
+
+def _row_fraction(
+    cfg: SamplingConfig, est_bytes: int | None, max_bytes_per_probe: int | None
+) -> Decimal:
+    floor = Decimal(str(cfg.block_fraction_floor))
+    if cfg.measurement == "force":
+        return _fraction(floor)
     ceiling = Decimal(str(cfg.block_fraction_ceiling))
     if max_bytes_per_probe is None:
         frac = ceiling
@@ -102,4 +125,4 @@ def choose_sample(
         frac = floor  # unknown cost: the cheapest representative sample
     else:
         frac = min(ceiling, max(floor, Decimal(max_bytes_per_probe) / Decimal(est_bytes)))
-    return SampleChoice(method, _fraction(frac), seed)
+    return _fraction(frac)

@@ -351,6 +351,7 @@ class Scheduler:
             max_bytes_per_probe=self.config.budget.max_bytes_per_probe,
             seed=seed,
             block_sampling=NO_BLOCK_SAMPLING not in self.backend.capabilities(),
+            pk=self._primary_key(table.ref) if isinstance(req, TopValues) else None,
         )
         if choice is None:
             return req, est
@@ -393,6 +394,24 @@ class Scheduler:
         if not known:
             return table
         return max(known, key=lambda t: (t.bytes or 0, t.row_count or 0))
+
+    def _primary_key(self, ref: ObjectRef) -> tuple[str, ...] | None:
+        """A catalog primary key, else a key measured unique and complete; else None."""
+        for con in self.store.constraints(ref):
+            if con.kind == "primary_key" and con.columns:
+                return tuple(con.columns)
+        for f in self.store.facts_for([ref], ["PRIMARY_KEY"]):
+            cols = f.value.get("columns")
+            if (
+                f.provenance is Provenance.MEASURED
+                and f.status is Status.OBSERVED
+                and f.value.get("unique") is True
+                and f.value.get("complete") is True
+                and isinstance(cols, list)
+                and cols
+            ):
+                return tuple(str(c) for c in cols)
+        return None
 
     def _key_distinct(self, req: Request) -> int | None:
         if isinstance(req, KeyOverlapReq):

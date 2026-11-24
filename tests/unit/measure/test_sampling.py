@@ -79,9 +79,7 @@ def test_system_fraction_clamped() -> None:
 
 
 def test_bernoulli_when_no_block_sampling() -> None:
-    choice = _choose(
-        LARGE, TopValues(ObjectRef(None, "shop", "orders", "status"), 20), block_sampling=False
-    )
+    choice = _choose(LARGE, PROFILE, block_sampling=False)
     assert choice is not None and choice.method == "bernoulli"
 
 
@@ -162,3 +160,51 @@ def test_sample_choice_validation() -> None:
         SampleChoice("system", Decimal("1.5"), 1)
     with pytest.raises(ValueError):
         SampleChoice("limit", Decimal("0.1"), 1)  # type: ignore[arg-type]
+
+
+STATUS = TopValues(ObjectRef(None, "shop", "orders", "status"), 20)
+
+
+def test_top_values_on_a_large_table_use_keyhash_on_the_primary_key() -> None:
+    # FactLang FL405: ValueMembership needs a single read, so never system/bernoulli
+    choice = _choose(LARGE, STATUS, pk=("order_id",))
+    assert choice is not None and choice.method == "keyhash" and choice.key == ("order_id",)
+    assert choice.fraction == Decimal("0.005")  # the block fraction rule: 1 GiB / 200 GiB
+    assert _choose(LARGE, STATUS, pk=("order_id",), est_bytes=None).fraction == Decimal("0.001")
+    force = _choose(SMALL, STATUS, SamplingConfig(measurement="force"), pk=("order_id", "line"))
+    assert force is not None and force.key == ("order_id", "line")
+    assert force.fraction == Decimal("0.001")
+    assert _choose(SMALL, STATUS, pk=("order_id",)) is None  # small: exact
+
+
+def test_top_values_without_a_primary_key_are_measured_exactly() -> None:
+    # exact; the per-probe budget then refuses it (SG301) if it does not fit
+    assert _choose(LARGE, STATUS) is None
+    assert _choose(LARGE, STATUS, SamplingConfig(measurement="force")) is None
+
+
+@pytest.mark.parametrize("measurement", ["auto", "force"])
+@pytest.mark.parametrize("block", [True, False])
+@pytest.mark.parametrize("pk", [None, ("order_id",)])
+@pytest.mark.parametrize("key_distinct", [None, 10, 10**9])
+@pytest.mark.parametrize("est", [None, 1, 200 * GIB])
+def test_value_membership_and_key_overlap_never_use_system_or_bernoulli(
+    measurement: str,
+    block: bool,
+    pk: tuple[str, ...] | None,
+    key_distinct: int | None,
+    est: int | None,
+) -> None:
+    cfg = SamplingConfig(measurement=measurement)  # type: ignore[arg-type]
+    for table in (SMALL, LARGE):
+        for req in (STATUS, KeyOverlapReq(JOIN)):
+            c = _choose(
+                table,
+                req,
+                cfg,
+                pk=pk,
+                key_distinct=key_distinct,
+                est_bytes=est,
+                block_sampling=block,
+            )
+            assert c is None or c.method == "keyhash", (req, c)

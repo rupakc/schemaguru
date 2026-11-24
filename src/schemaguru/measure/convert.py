@@ -346,6 +346,20 @@ def _top_values(ctx: _Ctx, req: TopValues, p: Mapping[str, Any]) -> list[Fact]:
         {"value": _plain(v.get("value")), "count": _int(v.get("count"))}
         for v in (p.get("values") or [])
     ]
+    s = ctx.sample
+    raw_non_null = non_null
+    scaled: dict[str, Any] = {}
+    if s is not None and s.method == "keyhash":
+        # a key-hash row sample keeps whole rows at `fraction`: counts scale without bias
+        scaled["sample_counts"] = {
+            "non_null": non_null,
+            "observed": [o["count"] for o in observed],
+        }
+        observed = [
+            {**o, "count": None if o["count"] is None else scale_count(o["count"], s.fraction)}
+            for o in observed
+        ]
+        non_null = scale_count(non_null, s.fraction)
     mode, stored, categories = _apply_policy(ctx, req.column, observed)
     value: dict[str, Any] = {**ident}
     if stored is not None:
@@ -359,11 +373,17 @@ def _top_values(ctx: _Ctx, req: TopValues, p: Mapping[str, Any]) -> list[Fact]:
         value["merged"] = True  # masking collapsed distinct values into one token
     if ctx.sample is not None:
         # seen in the sample; a rare value absent from it is not claimed absent (spec 8.6)
-        n = _int(p.get("sampled_rows", non_null))
+        n = _int(p.get("sampled_rows", raw_non_null))
         dv = ctx.ev(distinct, distinct, None, "sample_lower_bound", True)
         value.update(
             seen_in_sample=True, complete=False, estimate=dv.__dict__, **ctx.sample_info(n)
         )
+        if scaled:
+            value.update(scaled)
+            value["estimates"] = {
+                "non_null": ctx.ev(non_null, None, None, "scaled", False).__dict__,
+                "distinct": dv.__dict__,
+            }
     pii = [
         Fact.make(
             FactKind.PII,

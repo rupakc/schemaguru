@@ -589,3 +589,29 @@ def test_policy_none_says_values_were_not_compared() -> None:
     out = _contradictions_for([_declared(EMAIL_COL, ["x@example.com"]), v])
     assert any("values not compared (value policy: none)" in c for c in out), out
     assert "example.com" not in repr(out)
+
+
+def test_keyhash_row_sample_of_top_values_scales_counts_and_is_not_approximate() -> None:
+    col = ObjectRef(None, "shop", "orders", "status")
+    s = SampleChoice("keyhash", Decimal("0.1"), 7, ("order_id",))
+    vals = [{"value": "paid", "count": 500}, {"value": "PAID", "count": 41}]
+    v = _by(
+        _facts(
+            TopValues(col, 20, sample=s),
+            {"non_null": 541, "distinct": 2, "values": vals, "sampled_rows": 600},
+        ),
+        "VALUES",
+    )
+    assert v.status is Status.ESTIMATED and v.method == "sampled:keyhash:0.1:7"
+    assert v.value["seen_in_sample"] is True and v.value["complete"] is False
+    assert "approximate" not in v.value
+    assert v.value["observed"] == [
+        {"value": "paid", "count": 5000},
+        {"value": "PAID", "count": 410},
+    ]
+    assert v.value["non_null"] == 5410
+    assert v.value["sample_counts"] == {"non_null": 541, "observed": [500, 41]}
+    est = v.value["estimates"]
+    assert est["non_null"]["method"] == "scaled" and est["non_null"]["value"] == 5410
+    assert est["distinct"]["method"] == "sample_lower_bound"
+    assert v.value["sampled_rows"] == 600 and v.value["fraction"] == "0.1"

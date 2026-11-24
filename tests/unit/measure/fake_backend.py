@@ -103,6 +103,24 @@ class FakeBackend:
                     )
                 )
                 continue
+            if (
+                isinstance(r, TopValues | KeyOverlapReq)
+                and r.sample is not None
+                and r.sample.method in ("system", "bernoulli")
+            ):  # mirrors FactLang: ValueMembership/KeyOverlap read more than once
+                out.append(
+                    MeasureResult(
+                        r,
+                        None,
+                        None,
+                        Diagnostic(
+                            "SG303",
+                            Severity.ERROR,
+                            "FL405 sample method needs a single read; use keyhash",
+                        ),
+                    )
+                )
+                continue
             try:
                 payload, sql = self._run(r)
             except Exception as e:  # the fake mirrors FactLang: execution errors never raise

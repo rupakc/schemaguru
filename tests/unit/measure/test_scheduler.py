@@ -414,3 +414,37 @@ def test_drainer_refills_per_period(shop_store: SQLiteStore, conn: Any) -> None:
     assert d.run_once().bytes == 0  # same period: nothing left
     now[0] = 61.0
     assert d.run_once().bytes > 0  # refilled
+
+
+def test_large_table_top_values_use_keyhash_on_the_primary_key(
+    shop_store: SQLiteStore, conn: Any
+) -> None:
+    fake = FakeBackend(conn)
+    Scheduler(shop_store, fake, Config(sampling=LARGE_ORDERS)).run([ORD])
+    tops = [r for r in all_requests(fake) if isinstance(r, TopValues)]
+    assert tops, "status is an enum candidate"
+    for r in tops:
+        assert r.sample is not None and r.sample.method == "keyhash"
+        assert r.sample.key == ("order_id",)
+    status = one(shop_store, "VALUES", col("orders", "status"))
+    assert status.status is Status.ESTIMATED and status.value["seen_in_sample"] is True
+    assert "approximate" not in status.value
+
+
+def test_fake_backend_refuses_block_or_row_samples_for_value_membership_and_overlap(
+    conn: Any,
+) -> None:
+    from decimal import Decimal
+
+    from schemaguru.measure.requests import SampleChoice
+
+    fake = FakeBackend(conn)
+    for method in ("system", "bernoulli"):
+        s = SampleChoice(method, Decimal("0.5"), 1)  # type: ignore[arg-type]
+        reqs = [TopValues(col("orders", "status"), 5, sample=s), KeyOverlapReq(O_C, sample=s)]
+        for r in fake.measure(reqs):
+            assert r.error is not None and "FL405" in r.error.message
+    ok = fake.measure(
+        [ProfileColumns(ORD, ("status",), sample=SampleChoice("system", Decimal("0.5"), 1))]
+    )
+    assert ok[0].error is None

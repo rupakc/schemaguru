@@ -3,8 +3,11 @@
 Order of judgement for each :class:`Change`:
 
 1. ``NOT_MEASURED``: a measured/catalog fact that is missing now but whose check did not run (its
-   kind is not in the new snapshot's ``checks_run``, or its table was not measured) is never
-   "removed" and never "fixed".
+   kind is not in this run's ``run_checks``, or its table was not measured) is never "removed"
+   and never "fixed". ``run_checks`` is what the run measured WITHOUT error; kinds merely carried
+   from tables that were not due are a separate set (``carried_checks``) and never count as run.
+   An added fact with status ERROR is also ``NOT_MEASURED`` (the probe failed). Facts carried
+   unchanged on a due table are classified ``NOT_MEASURED`` by ``refresh`` itself.
 2. Registered custom classifiers (first one with an opinion wins).
 3. The default rules: ``PRE_EXISTING`` (a contradiction the previous snapshot already had),
    then ``BENIGN`` / ``REVIEW`` per spec 15.4. Anything not recognised is ``REVIEW``.
@@ -127,6 +130,8 @@ def _default(c: Change, prev: Eff, new: Eff, prev_subjects: Collection[str]) -> 
     if c.change == "removed":
         return ChangeClass.REVIEW
     if c.change == "added":
+        if f.status is Status.ERROR:
+            return ChangeClass.NOT_MEASURED  # the probe failed: unknown, not a finding
         if f.kind.name == "PII":
             return ChangeClass.REVIEW
         if (

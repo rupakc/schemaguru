@@ -200,3 +200,12 @@ def test_classify_many_is_not_quadratic() -> None:
     )  # fmt: skip
     assert time.perf_counter() - t0 < 2.0
     assert out[0][1] is ChangeClass.BENIGN and out[-1][1] is ChangeClass.NOT_MEASURED
+
+
+def test_added_error_fact_is_not_measured() -> None:
+    err = Fact.make(
+        FactKind.NULL_RATE, ObjectRef(None, "shop", "customers", "loyalty_tier"),
+        {"rate": None, "reason": "probe_error"},
+        Provenance.MEASURED, Status.ERROR, method="exact", observed_at=T,
+    )  # fmt: skip
+    assert cls([], [err]) == [ChangeClass.NOT_MEASURED]

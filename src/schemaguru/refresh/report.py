@@ -47,8 +47,9 @@ class RefreshReport:
     exit_code: int
     snapshot_id: str | None = None
     previous_snapshot_id: str | None = None
-    checks_run: frozenset[str] = field(default_factory=frozenset)
+    run_checks: frozenset[str] = field(default_factory=frozenset)
     missing_checks: list[str] = field(default_factory=list)
+    carried_checks: frozenset[str] = field(default_factory=frozenset)
 
     def counts(self) -> dict[str, int]:
         c = Counter(cls.value for _, cls in self.changes)
@@ -59,7 +60,8 @@ class RefreshReport:
             "exit_code": self.exit_code,
             "snapshot_id": self.snapshot_id,
             "previous_snapshot_id": self.previous_snapshot_id,
-            "checks_run": sorted(self.checks_run),
+            "run_checks": sorted(self.run_checks),
+            "carried_checks": sorted(self.carried_checks),
             "missing_checks": list(self.missing_checks),
             "counts": self.counts(),
             "changes": [

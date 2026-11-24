@@ -30,7 +30,7 @@ def go(store: SQLiteStore, conn: Any, cfg: Config | None = None, **kw: Any) -> A
 def test_first_then_second_refresh(store: SQLiteStore, conn: Any) -> None:
     r1 = go(store, conn)
     assert r1.measure.measured_tables and r1.exit_code != 3
-    assert {"NULL_RATE", "CATALOG"} <= r1.checks_run
+    assert {"NULL_RATE", "CATALOG"} <= r1.run_checks
     assert r1.previous_snapshot_id is None and r1.snapshot_id
     r2 = go(store, conn)  # nothing stale or changed: nothing to measure, clean
     assert r2.previous_snapshot_id == r1.snapshot_id
@@ -69,7 +69,7 @@ def test_nothing_measured_exit_3(store: SQLiteStore, conn: Any) -> None:
     r = go(store, conn, cfg, cost=lambda req: 400)
     assert r.measure.measured_tables == [] and r.measure.over_budget
     assert r.exit_code == 3
-    assert "NULL_RATE" not in r.checks_run
+    assert "NULL_RATE" not in r.run_checks
 
 
 class NarrowScheduler:
@@ -89,12 +89,12 @@ def later(days: int = 30) -> datetime:
 def test_narrow_run_reports_not_measured(store: SQLiteStore, conn: Any) -> None:
     """End to end: refresh twice, the second run measures less than the first."""
     first = go(store, conn)
-    assert {"JOIN", "PRIMARY_KEY", "NULL_RATE"} <= first.checks_run
+    assert {"JOIN", "PRIMARY_KEY", "NULL_RATE"} <= first.run_checks
     cfg = Config()
     reader = DuckDBReader(DBAPIExecutor(conn))
     narrow = NarrowScheduler(ObjectRef(None, "shop", "customers"))
     r = refresh(store, reader, narrow, config=cfg, now=later)  # type: ignore[arg-type]
-    assert r.checks_run >= {"NULL_RATE", "CATALOG"} and "JOIN" not in r.checks_run
+    assert r.run_checks >= {"NULL_RATE", "CATALOG"} and "JOIN" not in r.run_checks
     assert {"JOIN", "PRIMARY_KEY"} <= set(r.missing_checks)
     by_class = {k for _, k in r.changes}
     assert by_class == {ChangeClass.NOT_MEASURED}  # never "removed", never "fixed"
@@ -102,17 +102,19 @@ def test_narrow_run_reports_not_measured(store: SQLiteStore, conn: Any) -> None:
     tables = {(k, sub.split(".")[1]) for k, sub in unmeasured if k != "JOIN"}
     assert ("PRIMARY_KEY", "customers") in tables  # kind not run
     assert ("NULL_RATE", "orders") in tables  # kind ran, table never reached
-    assert ("NULL_RATE", "customers") not in tables  # measured: not unknown
+    # a scheduler that claims a table but never re-stamped its facts is not believed
+    assert ("NULL_RATE", "customers") in tables
     assert r.exit_code == 0
     d = json.loads(r.to_json())
     assert "JOIN" in d["missing_checks"] and "sampled_tables" in d["measure"]
+    assert "run_checks" in d and "carried_checks" in d and "checks_run" not in d
     assert "missing checks" in r.to_markdown() and "Not measured" in r.to_markdown()
 
 
 def test_fresh_noop_is_not_a_narrow_run(store: SQLiteStore, conn: Any) -> None:
     first = go(store, conn)
     again = go(store, conn)
-    assert again.missing_checks == [] and again.checks_run >= first.checks_run - {"CATALOG"}
+    assert again.missing_checks == [] and again.carried_checks >= first.run_checks - {"CATALOG"}
 
 
 def test_withdrawal_survives_a_scheduler_failure(store: SQLiteStore, conn: Any) -> None:
@@ -166,7 +168,7 @@ def test_raising_reader_is_recorded_exit_3(store: SQLiteStore, conn: Any) -> Non
     cfg = Config()
     r = refresh(store, Boom(), Scheduler(store, FakeBackend(conn), cfg), config=cfg)  # type: ignore[arg-type]
     assert r.crawl.errors and r.crawl.tables_seen == 0 and r.exit_code == 3
-    assert "CATALOG" not in r.checks_run
+    assert "CATALOG" not in r.run_checks
 
 
 def test_crawl_errors_with_nothing_seen_exit_3(store: SQLiteStore, conn: Any) -> None:
@@ -176,7 +178,7 @@ def test_crawl_errors_with_nothing_seen_exit_3(store: SQLiteStore, conn: Any) ->
     reader = FakeReader(2, tables_per_schema=1, fail_schemas=["s0000", "s0001"])
     r = refresh(store, reader, NarrowScheduler(ObjectRef(None, "x", "y")), config=cfg)  # type: ignore[arg-type]
     assert r.crawl.errors and r.crawl.tables_seen == 0
-    assert r.exit_code == 3 and "CATALOG" not in r.checks_run
+    assert r.exit_code == 3 and "CATALOG" not in r.run_checks
 
 
 def test_partial_crawl_has_no_catalog_check(store: SQLiteStore, conn: Any) -> None:
@@ -187,13 +189,13 @@ def test_partial_crawl_has_no_catalog_check(store: SQLiteStore, conn: Any) -> No
         store, reader, NarrowScheduler(ObjectRef(None, "s0000", "t0000000")), config=Config()
     )  # type: ignore[arg-type]
     assert r.crawl.errors and r.crawl.tables_seen > 0
-    assert "CATALOG" not in r.checks_run
+    assert "CATALOG" not in r.run_checks
 
 
 def test_measure_errors_exit_3_and_check_not_run(store: SQLiteStore, conn: Any) -> None:
     r = go(store, conn, fail=lambda req: isinstance(req, Uniqueness))
     assert r.measure.errors and r.exit_code == 3
-    assert "PRIMARY_KEY" not in r.checks_run and "NULL_RATE" in r.checks_run
+    assert "PRIMARY_KEY" not in r.run_checks and "NULL_RATE" in r.run_checks
 
 
 class NoJoinScheduler(Scheduler):
@@ -222,7 +224,7 @@ def test_partial_run_no_false_alarm_and_later_narrowing_still_seen(
     t0 = datetime.now(timezone.utc)
     clock = [t0]
     first = _clocked(store, conn, clock)
-    assert "JOIN" in first.checks_run
+    assert "JOIN" in first.run_checks
     # run 2: only the new table is due, and it has no join: nothing is missing
     clock[0] = t0 + timedelta(days=1)
     conn.execute("CREATE TABLE shop.misc(id INTEGER PRIMARY KEY)")
@@ -231,11 +233,13 @@ def test_partial_run_no_false_alarm_and_later_narrowing_still_seen(
     assert [t.table for t in second.measure.measured_tables] == ["misc"]
     assert second.missing_checks == []
     assert not [c for c, k in second.changes if k is ChangeClass.NOT_MEASURED]
-    assert "JOIN" in second.checks_run  # still stands on the tables that were not due
+    assert "JOIN" in second.carried_checks  # still stands on the tables that were not due
+    recorded = store.snapshot_checks_run(second.snapshot_id or "")
+    assert "carried:JOIN" in recorded and "JOIN" not in recorded  # carried is never "run"
     # run 3: every table is due and the config no longer measures joins
     clock[0] = t0 + timedelta(days=40)
     third = _clocked(store, conn, clock, NoJoinScheduler)
-    assert "JOIN" in third.missing_checks and "JOIN" not in third.checks_run
+    assert "JOIN" in third.missing_checks and "JOIN" not in third.run_checks
     joins = [(c, k) for c, k in third.changes if c.kind.name == "JOIN"]
     assert joins and {k for _, k in joins} == {ChangeClass.NOT_MEASURED}
     assert not [1 for _, k in third.changes if k is ChangeClass.REVIEW]
@@ -310,7 +314,7 @@ def test_errored_check_old_facts_are_not_measured_never_fixed(
     _clocked(store, conn, clock)
     clock[0] = t0 + timedelta(days=30)
     r = _clocked(store, conn, clock, fail=lambda req: isinstance(req, ProfileColumns))
-    assert "NULL_RATE" not in r.checks_run
+    assert "NULL_RATE" not in r.run_checks and "NULL_RATE" not in r.carried_checks
     got = {k for c, k in r.changes if c.kind.name == "NULL_RATE"}
     assert ChangeClass.NOT_MEASURED in got and ChangeClass.REVIEW not in got
 
@@ -330,6 +334,35 @@ def test_advanced_fact_is_not_carried() -> None:
         )  # fmt: skip
 
     due = [ref.table_ref()]
-    same = _carried_unmeasured([nr(t)], [nr(t)], set(), due, [])
-    advanced = _carried_unmeasured([nr(t)], [nr(t + timedelta(days=1))], set(), due, [])
+    same = _carried_unmeasured([nr(t)], [nr(t)], due, True)
+    advanced = _carried_unmeasured([nr(t)], [nr(t + timedelta(days=1))], due, True)
     assert len(same) == 1 and advanced == []
+
+
+class OrdersNoJoinScheduler(Scheduler):
+    """JOIN still runs for other tables, but its request is dropped on orders."""
+
+    def plan_table(self, ref: ObjectRef) -> list[Any]:
+        reqs = super().plan_table(ref)
+        if ref.table == "orders":
+            reqs = [r for r in reqs if not isinstance(r, KeyOverlapReq)]
+        return reqs
+
+
+def test_kind_ran_elsewhere_does_not_vouch_for_a_dropped_probe(
+    store: SQLiteStore, conn: Any
+) -> None:
+    conn.execute("CREATE TABLE shop.lines(line_id INTEGER PRIMARY KEY, customer_id INTEGER)")
+    conn.execute("INSERT INTO shop.lines VALUES (1, 1)")
+    t0 = datetime.now(timezone.utc)
+    clock = [t0]
+    first = _clocked(store, conn, clock)
+    joins = {subject_key(c.subject) for c, _ in first.changes if c.kind.name == "JOIN"}
+    assert any("orders" in j for j in joins) and any("lines" in j for j in joins)
+    clock[0] = t0 + timedelta(days=40)
+    r = _clocked(store, conn, clock, OrdersNoJoinScheduler)
+    assert "JOIN" in r.run_checks  # it did run, on lines
+    flagged = [(subject_key(c.subject), k) for c, k in r.changes if c.kind.name == "JOIN"]
+    assert flagged and all(k is ChangeClass.NOT_MEASURED for _, k in flagged)
+    assert all("orders" in j and "lines" not in j for j, _ in flagged)
+    assert "JOIN" in r.missing_checks and r.exit_code == 0

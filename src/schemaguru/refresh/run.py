@@ -63,6 +63,7 @@ def _stale_or_changed(store: Store, now: datetime, ttl_days: int) -> list[Object
 
 
 STATE_KEY = "refresh"
+CARRIED_PREFIX = "carried:"  # snapshot checks_run entry for a kind that was carried, not run
 
 
 def _wkey(ref: ObjectRef, at: datetime) -> str:
@@ -103,32 +104,28 @@ def _withdrawn_since_snapshot(store: Store, prev_facts: list[Fact]) -> list[Obje
 def _carried_unmeasured(
     prev_facts: list[Fact],
     new_facts: list[Fact],
-    checks_run: Collection[str],
     targets: Collection[ObjectRef],
-    measured: Collection[ObjectRef],
+    catalog_ran: bool,
 ) -> list[Change]:
-    """Facts carried unchanged from the previous snapshot whose check did not run this time.
+    """Measured facts carried unchanged from the previous snapshot on tables that were due.
 
     The store never deletes facts, so a narrower run leaves the old ones in place and a plain
-    diff sees nothing. Decided per (table, kind): a carried fact (same id, ``observed_at`` not
-    advanced) on a table that was DUE is reported when its kind did not run in this run, or its
-    table was never reached. A table that was not due is never reported (its facts are still
-    fresh), so one partial run cannot raise a false alarm, and a later full run still sees what
-    it skips. ``checks_run`` must be what THIS run measured, not what the snapshot records.
+    diff sees nothing. The rule is strict and per fact: ANY carried MEASURED fact (same id,
+    ``observed_at`` not advanced) on a DUE table is not measured, whether its kind ran on other
+    tables or not. The scheduler re-stamps ``observed_at`` on everything it re-measures, so this
+    is exact. A table that was not due is never reported (its facts are still fresh). Carried
+    CATALOG facts are reported only when this run's crawl had errors.
     """
     prev_at = {f.id: f.observed_at for f in prev_facts}
-    due, done = set(targets), set(measured)
+    due = set(targets)
     out: list[Change] = []
     for f in new_facts:
         if f.id not in prev_at or f.observed_at != prev_at[f.id]:
             continue
         if f.provenance is Provenance.CATALOG:
-            skipped = CATALOG_CHECK not in checks_run
+            skipped = not catalog_ran
         elif f.provenance is Provenance.MEASURED and f.kind.name in MEASURED_KINDS:
-            tables = _tables_of(f)
-            if not tables & due:
-                continue
-            skipped = f.kind.name not in checks_run or not (tables & done)
+            skipped = bool(_tables_of(f) & due)
         else:
             continue
         if skipped:
@@ -169,10 +166,12 @@ def refresh(
 
     Re-measuring a table re-runs every probe the scheduler plans for it, which re-checks the
     declared/human expectations (PRIMARY_KEY, VALUES, JOIN) on the touched tables. A reader or
-    scheduler failure (``Exception``) is recorded in the report, never raised. A check that was
-    attempted and errored is not in ``checks_run``; ``CATALOG`` is only there for a crawl without
-    errors. The recorded checks also include kinds that still stand on tables that were not due
-    (fresh facts); ``missing_checks`` names kinds skipped on tables that were due.
+    scheduler failure (``Exception``) is recorded in the report, never raised. The report carries
+    two sets: ``run_checks`` (what this run measured without error; a check that was attempted and
+    errored is not in it, and ``CATALOG`` only for a crawl without errors) and ``carried_checks``
+    (kinds still fresh on tables that were not due). The snapshot stores both (carried kinds are
+    prefixed ``carried:``). Any carried measured fact on a table that was due is NOT_MEASURED, and
+    ``missing_checks`` lists the kinds of those facts.
 
     Exit code: ``3`` when the crawl failed with nothing seen, any measurement error was reported,
     or measurement was attempted and nothing was measured; else ``1`` if any change needs review;
@@ -196,20 +195,17 @@ def refresh(
         except Exception as e:
             measure = MeasureReport(errors=[_error("SG303", f"measurement failed: {e}")])
 
-    run_checks = set(measure.checks_run)  # what THIS run measured
+    run_checks = set(measure.checks_run)  # what THIS run measured without error
     if not crawl_report.errors:
         run_checks.add(CATALOG_CHECK)
-    # the snapshot also records kinds that still stand on tables that were not due
-    recorded = run_checks | _carried_kinds(prev_facts, targets, t, config.fact_ttl_days)
-    snap = take(store, recorded, label)
+    # kinds still standing on tables that were not due (fresh facts); recorded apart, never mixed
+    carried_checks = _carried_kinds(prev_facts, targets, t, config.fact_ttl_days)
+    snap = take(store, run_checks | {CARRIED_PREFIX + k for k in carried_checks}, label)
     new_facts = store.snapshot_facts(snap)
 
     changes: list[Change] = diff(prev_facts, new_facts)
     changes += [Change(TABLE_WITHDRAWN, r, None, None, "removed") for r in withdrawn]
-    carried = _carried_unmeasured(
-        prev_facts, new_facts, run_checks, targets, measure.measured_tables
-    )
-    changes += carried
+    carried = _carried_unmeasured(prev_facts, new_facts, targets, CATALOG_CHECK in run_checks)
     missing = sorted(
         {
             CATALOG_CHECK if c.before and c.before.provenance is Provenance.CATALOG else c.kind.name
@@ -221,6 +217,7 @@ def refresh(
     classified = classify_changes(
         changes, prev_eff, new_eff, checks_run=run_checks, measured_tables=measure.measured_tables
     )
+    classified += [(c, ChangeClass.NOT_MEASURED) for c in carried]
 
     nothing_seen = bool(crawl_report.errors) and crawl_report.tables_seen == 0
     if nothing_seen or measure.errors or (targets and not measure.measured_tables):
@@ -230,7 +227,15 @@ def refresh(
     else:
         code = EXIT_OK
     report = RefreshReport(
-        classified, crawl_report, measure, code, snap, prev_id, frozenset(recorded), missing
+        classified,
+        crawl_report,
+        measure,
+        code,
+        snap,
+        prev_id,
+        frozenset(run_checks),
+        missing,
+        frozenset(carried_checks),
     )
     # last, after diff/resolve/classify: a failure above must not mark a withdrawal reported
     store.crawl_state_set(

@@ -641,3 +641,61 @@ def test_space_password_never_leaks_through_cli(run: Run, monkeypatch: pytest.Mo
     code, out, err = run("crawl", "--url", "postgresql://other/db")
     assert code == 3 and not any(w in out + err for w in ("big pass", "alice", "my big")), err
     assert "driver said no" in err
+
+
+# --- final fix wave: driver ImportErrors name the extra; local paths shown; JSON errors -------
+
+
+@pytest.mark.parametrize(
+    ("module", "extra"),
+    [
+        ("snowflake", "snowflake"),
+        ("snowflake.connector", "snowflake"),
+        ("psycopg", "postgres"),
+        ("google.cloud.bigquery", "bigquery"),
+        ("databricks", "databricks"),
+        ("clickhouse_connect", "clickhouse"),
+    ],
+)
+def test_missing_driver_names_the_extra(
+    run: Run, monkeypatch: pytest.MonkeyPatch, module: str, extra: str
+) -> None:
+    def missing(*a: object, **k: object) -> None:
+        raise ModuleNotFoundError(f"No module named {module!r}", name=module)
+
+    monkeypatch.setattr("schemaguru.cli.commands.Guru.connect", missing)
+    code, out, err = run("crawl", "--url", "snowflake://u:pw@acct/db")
+    assert code == 3 and out == ""
+    assert f"pip install 'schemaguru[{extra}]'" in err, err
+    assert "pw@" not in err
+
+
+def test_unknown_missing_module_still_says_what_is_missing(
+    run: Run, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def missing(*a: object, **k: object) -> None:
+        raise ModuleNotFoundError("No module named 'zorbdb'", name="zorbdb")
+
+    monkeypatch.setattr("schemaguru.cli.commands.Guru.connect", missing)
+    code, _, err = run("crawl", "--url", "zorb://h/db")
+    assert code == 3 and "zorbdb" in err and "schemaguru[" not in err  # no invented extra
+
+
+def test_duckdb_path_is_not_redacted(run: Run, tmp_path: Path) -> None:
+    missing = tmp_path / "no_such_warehouse.duckdb"
+    code, _, err = run("crawl", "--url", f"duckdb:///{missing}")
+    assert code == 3 and "no_such_warehouse.duckdb" in err, err
+
+
+def test_json_format_errors_are_a_json_object_on_stderr(run: Run) -> None:
+    code, out, err = run("crawl", "--format", "json")
+    assert code == 2 and out == ""
+    body = json.loads(err)
+    assert set(body["error"]) >= {"code", "message"} and "--url" in body["error"]["message"]
+    code, out, err = run("--format", "json", "crawl", "--url", "nosuchdb://u:hunter2@h.invalid/x")
+    body = json.loads(err)
+    assert code == 3 and body["error"]["code"] == "SG106", body
+    assert "hunter2" not in err
+    # text format keeps the plain line (negative control)
+    code, _, err = run("crawl")
+    assert err.startswith("error: ")

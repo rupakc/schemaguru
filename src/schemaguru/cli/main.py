@@ -139,11 +139,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return handler(args, io)
     except cmd.UsageError as e:
-        io.error(str(e))
+        io.error(str(e), code="usage")
         return EXIT_INVALID
     except ConfigError as e:
-        io.error(f"invalid configuration: {e}")
+        io.error(f"invalid configuration: {e}", code="config")
         return EXIT_INVALID
+    except ImportError as e:  # a driver or extra that is not installed: name what to install
+        io.error(cmd.missing_module_message(e), code="missing_dependency")
+        return EXIT_ERROR
     except KeyboardInterrupt:
         io.error("interrupted")
         return 130
@@ -151,7 +154,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         io.error(str(e))
         return EXIT_ERROR
     except OSError as e:
-        io.error(f"{type(e).__name__}: {e}")
+        io.error(f"{type(e).__name__}: {io.scrub(str(e))}")
         return EXIT_ERROR
     except Exception as e:  # a driver error must not print a traceback holding a URL
         io.error(f"{type(e).__name__}: {io.scrub(str(e))}")

@@ -9,6 +9,7 @@ import importlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -36,7 +37,53 @@ _DRAFT_ONLY_KEYS = ("prompt_hash", "candidate")
 _REJECTED_KEY = "review.rejected"
 
 
-scrub = scrub_text  # the shared implementation (catalog.executor); kept for callers
+scrub = scrub_text  # the shared implementation (_util.redact); kept for callers
+_SG_CODE = re.compile(r"\bSG\d{3}\b")
+
+# top-level module of a driver or SDK -> the extra that installs it
+_MODULE_EXTRAS = {
+    "google": "bigquery",
+    "snowflake": "snowflake",
+    "redshift_connector": "redshift",
+    "databricks": "databricks",
+    "psycopg": "postgres",
+    "psycopg2": "postgres",
+    "duckdb": "duckdb",
+    "clickhouse_connect": "clickhouse",
+    "pyodbc": "mssql",
+    "oracledb": "oracle",
+    "cx_Oracle": "oracle",
+    "trino": "trino",
+    "pymysql": "mysql",
+    "MySQLdb": "mysql",
+    "anthropic": "anthropic",
+    "openai": "openai",
+    "numpy": "embeddings",
+    "tiktoken": "tiktoken",
+    "mcp": "mcp",
+    "starlette": "server",
+    "uvicorn": "server",
+    "langchain_core": "langchain",
+    "llama_index": "llamaindex",
+    "agents": "openai-agents",
+}
+
+
+def missing_module_message(e: ImportError) -> str:
+    """What to tell a user whose driver or extra is missing: the module, and the extra that
+    installs it when SchemaGuru knows one (a message that already says how is kept)."""
+    text = scrub(str(e))
+    if "pip install" in text:
+        return text
+    name = getattr(e, "name", None) or ""
+    root = name.split(".", 1)[0]
+    extra = _MODULE_EXTRAS.get(root)
+    if root == "google" and not name.startswith("google.cloud.bigquery") and name != "google":
+        extra = None
+    missing = name or "a required module"
+    if extra is None:
+        return f"{missing} is not installed ({text}); install the driver for this warehouse"
+    return f"{missing} is not installed; install it with: pip install 'schemaguru[{extra}]'"
 
 
 class UsageError(Exception):
@@ -70,8 +117,18 @@ class IO:
         else:
             self.raw("\n".join(lines))
 
-    def error(self, message: str) -> None:
-        sys.stderr.write(f"error: {self.scrub(message)}\n")
+    def error(self, message: str, code: str | None = None) -> None:
+        """One error on stderr: ``error: <message>``; with ``--format json`` a JSON object
+        ``{"error": {"code": ..., "message": ...}}`` (the code is the message's ``SGnnn`` when
+        it has one, else ``code``, else ``"error"``)."""
+        text = self.scrub(message)
+        if self.fmt == "json":
+            found = _SG_CODE.search(text)
+            shown = found.group(0) if found else code or "error"
+            body = {"error": {"code": shown, "message": text}}
+            sys.stderr.write(json.dumps(body, sort_keys=True, ensure_ascii=False) + "\n")
+        else:
+            sys.stderr.write(f"error: {text}\n")
 
     def warn(self, message: str) -> None:
         sys.stderr.write(f"warning: {self.scrub(message)}\n")

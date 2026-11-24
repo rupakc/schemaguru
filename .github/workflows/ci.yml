@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Until FactLang 0.1.0 is on PyPI, install it from git first.
+      - run: pip install "factlang @ git+https://github.com/rupakc/factlang@main"
+      - run: pip install -e ".[dev]"
+      - run: ruff check
+      - run: ruff format --check
+      - run: mypy --strict src
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install "factlang @ git+https://github.com/rupakc/factlang@main"
+        shell: bash
+      - run: pip install -e ".[dev]"
+        shell: bash
+      - run: pytest -m "not integration and not live and not benchmark" --cov
+        shell: bash
+
+  denylist:
+    runs-on: ubuntu-latest
+    env:
+      SCHEMAGURU_DENYLIST: ${{ secrets.SCHEMAGURU_DENYLIST }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      # With the secret unset the repo scan is skipped (the job still passes).
+      - run: pytest tests/architecture/test_denylist.py -rs -p no:cacheprovider
+
+  build:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*

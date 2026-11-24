@@ -1,0 +1,153 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "schemaguru"
+dynamic = ["version"]
+description = "Automated schema intelligence for data warehouses: discover, measure, derive, draft and serve."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Rupak Chakraborty" }]
+keywords = ["data-warehouse", "schema", "metadata", "llm-agents", "text-to-sql", "data-catalog"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Database",
+  "Typing :: Typed",
+]
+dependencies = ["factlang>=0.1,<0.2", "PyYAML>=6"]
+
+[project.optional-dependencies]
+bigquery = ["google-cloud-bigquery>=3"]
+snowflake = ["snowflake-connector-python>=3"]
+redshift = ["redshift-connector>=2"]
+databricks = ["databricks-sql-connector>=3"]
+postgres = ["psycopg[binary]>=3.1"]
+duckdb = ["duckdb>=1.0"]
+clickhouse = ["clickhouse-connect>=0.7"]
+mssql = ["pyodbc>=5"]
+oracle = ["oracledb>=2"]
+trino = ["trino>=0.330"]
+mysql = ["pymysql>=1.1"]
+postgres-store = ["psycopg[binary]>=3.1"]
+anthropic = ["anthropic>=0.40"]
+openai = ["openai>=1.50"]
+embeddings = ["numpy>=1.26"]
+tiktoken = ["tiktoken>=0.7"]
+mcp = ["mcp>=1.0"]
+server = ["starlette>=0.37", "uvicorn>=0.30"]
+langchain = ["langchain-core>=0.3"]
+llamaindex = ["llama-index-core>=0.11"]
+openai-agents = ["openai-agents>=0.1"]
+all = [
+  "google-cloud-bigquery>=3",
+  "snowflake-connector-python>=3",
+  "redshift-connector>=2",
+  "databricks-sql-connector>=3",
+  "psycopg[binary]>=3.1",
+  "duckdb>=1.0",
+  "clickhouse-connect>=0.7",
+  "pyodbc>=5",
+  "oracledb>=2",
+  "trino>=0.330",
+  "pymysql>=1.1",
+  "anthropic>=0.40",
+  "openai>=1.50",
+  "numpy>=1.26",
+  "tiktoken>=0.7",
+  "mcp>=1.0",
+  "starlette>=0.37",
+  "uvicorn>=0.30",
+  "langchain-core>=0.3",
+  "llama-index-core>=0.11",
+  "openai-agents>=0.1",
+]
+dev = [
+  "pytest>=8",
+  "pytest-cov",
+  "pytest-asyncio>=0.23",
+  "hypothesis>=6",
+  "ruff",
+  "mypy",
+  "types-PyYAML",
+  "build",
+  "twine",
+  "duckdb>=1.0",
+]
+docs = ["mkdocs-material", "mkdocstrings[python]"]
+
+[project.scripts]
+schemaguru = "schemaguru.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/rupakc/schemaguru"
+Issues = "https://github.com/rupakc/schemaguru/issues"
+Changelog = "https://github.com/rupakc/schemaguru/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/schemaguru/__about__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/schemaguru"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/schemaguru", "tests", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+extend-exclude = ["docs", ".superpowers", ".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["yaml", "yaml.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: needs a service container or local engine",
+  "live: needs real warehouse credentials",
+  "factlang: calls the real FactLang; skipped until the capability is available",
+  "benchmark: scale benchmark, run nightly rather than per pull request",
+]
+
+[tool.coverage.run]
+source = ["src/schemaguru"]
+omit = [
+  "src/schemaguru/catalog/readers/bigquery.py",
+  "src/schemaguru/catalog/readers/snowflake.py",
+  "src/schemaguru/catalog/readers/redshift.py",
+  "src/schemaguru/catalog/readers/databricks.py",
+  "src/schemaguru/catalog/readers/oracle.py",
+  "src/schemaguru/server/*",
+  "src/schemaguru/agent/mcp.py",
+  "src/schemaguru/agent/adapters/*",
+  "src/schemaguru/draft/providers/anthropic.py",
+  "src/schemaguru/draft/providers/openai_compat.py",
+  # TODO(Task 25): remove these three FactLang seam omissions. They cannot run before
+  # FactLang ships the capabilities they call; Task 25 lifts the skips and this omission.
+  "src/schemaguru/measure/flbridge.py",
+  "src/schemaguru/catalog/executor.py",
+  "src/schemaguru/render/fragments.py",
+]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true

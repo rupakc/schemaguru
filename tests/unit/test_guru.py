@@ -190,7 +190,8 @@ def test_connect_helper(tmp_path: Path) -> None:
         ("snowflake://acct/db?a=1?password=hunter2", "snowflake://acct"),
         ("snowflake://acct/db?passphrase=s3cret", "snowflake://acct"),
         ("mssql://host/db;Password=s3cret", "mssql://host"),
-        ("duckdb:///shop.duckdb", "duckdb://"),
+        # a local database file path is not a secret: shown (final-fix-wave ruling)
+        ("duckdb:///shop.duckdb", "duckdb:///shop.duckdb"),
         ("postgresql://u:pw@[::1]:5432/db", "postgresql://[::1]:5432"),
         # anything else fails closed
         ("postgresql://alice:p/ss@db/x", "postgresql://***"),
@@ -228,10 +229,10 @@ def test_connect_errors_never_echo_secrets(url: str) -> None:
         assert secret not in msg.split("SG106", 1)[1].replace("pass a connector", ""), msg
 
 
-def test_guru_repr_hides_the_url(tmp_path: Path, shop_file: Path) -> None:
+def test_guru_repr_shows_a_local_path_only(tmp_path: Path, shop_file: Path) -> None:
     g = Guru.connect(f"duckdb:///{shop_file}", store=str(tmp_path / "r.db"))
     text = repr(g)
-    assert "duckdb://" in text and str(shop_file) not in text
+    assert "duckdb://" in text and shop_file.name in text  # a file path is no secret
     g.close()
 
 

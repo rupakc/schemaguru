@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from schemaguru.catalog.executor import redact_url, scrub_text
+from schemaguru._util.redact import redact_url, scrub_text
 from schemaguru.config import Config
 from schemaguru.diagnostics import Diagnostic, DiagnosticBag, Severity
 from schemaguru.errors import SchemaGuruError
@@ -29,9 +29,9 @@ from schemaguru.measure import flbridge
 from schemaguru.model.facts import Fact, Provenance, Status
 from schemaguru.overlays.dbt import import_dbt as _import_dbt
 from schemaguru.overlays.writer import export_drafts as _export_drafts
+from schemaguru.store.open import is_postgres_dsn
 
 DEFAULT_STORE = os.path.join(".schemaguru", "default.db")
-_PG_SCHEMES = ("postgres://", "postgresql://")
 _DRAFT_ONLY_KEYS = ("prompt_hash", "candidate")
 _REJECTED_KEY = "review.rejected"
 
@@ -117,7 +117,7 @@ def _guru(
     url = _url(args)
     store = args.store or cfg.store_path
     shared: Any = None  # a Postgres store (``--store postgres://...``) is opened here
-    if isinstance(store, str) and store.startswith(_PG_SCHEMES):
+    if is_postgres_dsn(store):
         shared = _optional("schemaguru.store.postgres", "postgres-store", "the Postgres store")
         shared = shared.PostgresStore(store)
     try:

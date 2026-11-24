@@ -96,8 +96,8 @@ from schemaguru.scope.pipeline import NOT_SHOWN_PROBE, build_scope
 from schemaguru.scope.retrievers import LexicalRetriever, Retriever
 from schemaguru.scope.tokens import CharTokenCounter, TiktokenCounter, TokenCounter
 from schemaguru.store.export import export_json
+from schemaguru.store.open import open_store
 from schemaguru.store.protocol import Store
-from schemaguru.store.sqlite import SQLiteStore
 
 Target = str | ObjectRef
 _T = TypeVar("_T")
@@ -209,7 +209,8 @@ class Guru:
         self._owns_store = store is None or isinstance(store, str | os.PathLike)
         if store is None or isinstance(store, str | os.PathLike):
             path = store or self._config.store_path or os.path.join(".schemaguru", f"{name}.db")
-            self.store: Store = SQLiteStore(path)
+            # a postgres:// DSN opens PostgresStore; another URL is a ConfigError, never a file
+            self.store: Store = open_store(path)
         else:
             self.store = store
         self.connector = connector

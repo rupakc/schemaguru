@@ -18,8 +18,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Protocol
-from urllib.parse import urlsplit
 
+from schemaguru._util.redact import redact_text, redact_url
+from schemaguru._util.redact import scrub_text as scrub_text  # re-exported (CLI, server)
 from schemaguru._util.sqltext import Opts
 from schemaguru._util.sqltext import scan as _scan
 from schemaguru.catalog.protocol import CatalogError
@@ -211,91 +212,6 @@ _SCHEME_DIALECTS = {
     "sqlserver": "tsql",
     "mariadb": "mysql",
 }
-
-
-_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*")
-
-
-def redact_url(url: str) -> str:
-    """What may be shown of a connection URL in an error, log or repr: fails CLOSED.
-
-    Only ``scheme://host[:port]``, and only when the URL parses cleanly with at most one ``@``
-    and that ``@`` inside the authority; anything else is ``scheme://***`` (or ``***`` without
-    a scheme). Userinfo, path, query and fragment are never shown.
-    """
-    scheme, sep, _ = url.partition("://")
-    if not sep or not _SCHEME.fullmatch(scheme):
-        return "***"
-    closed = f"{scheme}://***"
-    if url.count("@") > 1:
-        return closed
-    try:
-        parts = urlsplit(url)
-        host, port = parts.hostname, parts.port
-    except ValueError:
-        return closed
-    if "@" in url and "@" not in parts.netloc:
-        return closed  # the '@' sits in a path, query or fragment: the authority was misread
-    if host is None:
-        return closed if parts.netloc else f"{scheme}://"
-    if not re.fullmatch(r"[A-Za-z0-9._:-]+", host):
-        return closed
-    shown = f"[{host}]" if ":" in host else host
-    return f"{scheme}://{shown}" + (f":{port}" if port is not None else "")
-
-
-_URL_IN_TEXT = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
-
-
-def redact_text(text: str) -> str:
-    """``text`` with every embedded ``scheme://...`` token replaced by :func:`redact_url`.
-
-    For messages that may quote a URL (errors, logs, CLI output). A token runs to the next
-    whitespace, so a URL is judged whole; text without a URL is unchanged.
-    """
-    return _URL_IN_TEXT.sub(lambda m: redact_url(m.group(0)), text)
-
-
-_URL_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
-_TRAILING = "'\")>]},.;:"
-
-
-def scrub_text(text: str, known: Sequence[str | None] = ()) -> str:
-    """``text`` with credentials removed from every URL in it and the rest left intact.
-
-    The exact strings in ``known`` (the ``--url`` value) are replaced by their redacted form
-    first; then every URL-shaped token is redacted. Never redacts a whole message.
-    """
-    for url in sorted({u for u in known if u}, key=len, reverse=True):
-        text = text.replace(url, redact_url(url))
-    parts = re.split(r"(\s+)", text)  # tokens at even indexes, whitespace at odd ones
-    out: list[str] = []
-    i = 0
-    while i < len(parts):
-        tok = parts[i]
-        m = _URL_TOKEN.search(tok)
-        if m is None:
-            out.append(tok)
-            i += 1
-            continue
-        body = m.group(0).rstrip(_TRAILING)
-        authority = body.partition("://")[2].split("/", 1)[0]
-        if "@" not in body and re.search(r":\D", authority):
-            # userinfo with a space in the password: the '@' is in a later token (fail closed)
-            j = i + 2
-            while j < len(parts) and j <= i + 16 and "://" not in parts[j]:
-                if "@" in parts[j]:
-                    out.append(tok[: m.start()] + body.split("://")[0] + "://***")
-                    i = j + 1
-                    break
-                j += 2
-            else:
-                out.append(tok[: m.start()] + redact_url(body) + tok[m.start() + len(body) :])
-                i += 1
-            continue
-        out.append(tok[: m.start()] + redact_url(body) + tok[m.start() + len(body) :])
-        i += 1
-    return "".join(out)
 
 
 _redact = redact_text  # message text (the CLI); connect() itself uses redact_url

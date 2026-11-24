@@ -33,11 +33,11 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING, Any
 
+from schemaguru._util.redact import scrub_text
 from schemaguru._util.text import name_tokens
 from schemaguru.agent.dispatch import error_text
 from schemaguru.agent.facts import outbound_facts
 from schemaguru.agent.tools import MAX_NAME, MAX_TEXT, tool_definitions
-from schemaguru.catalog.executor import scrub_text
 from schemaguru.errors import (
     STORE_MISCONFIGURED,
     STORE_UNAVAILABLE,

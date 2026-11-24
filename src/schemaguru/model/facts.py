@@ -63,6 +63,8 @@ class Fact:
             raise ValueError("a MEASURED fact requires a method")
         if self.status is Status.ESTIMATED and not (self.method or "").startswith("sampled:"):
             raise ValueError("an ESTIMATED fact requires a 'sampled:...' method")
+        if self.status is Status.VERIFIED and (self.method or "").startswith("sampled:"):
+            raise ValueError("a sampled number is never VERIFIED")
         if self.status is Status.VERIFIED and not (
             self.method == "exact"
             or (
@@ -98,9 +100,10 @@ class Fact:
     ) -> Fact:
         """Build a fact; the id is always computed (never supplied)."""
         spec = get_kind(kind) if isinstance(kind, str) else kind
-        fid = stable_hash(
-            [spec.name, subject.canonical(), provenance.value, _value_identity(spec, value)]
+        subject_key = (
+            subject.identity_key() if isinstance(subject, JoinRef) else subject.canonical()
         )
+        fid = stable_hash([spec.name, subject_key, provenance.value, _value_identity(spec, value)])
         return cls(
             fid, spec, subject, value, provenance, status, method, evidence, source,
             observed_at, snapshot_id,

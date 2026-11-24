@@ -66,7 +66,7 @@ class FactKind:
     NULL_RATE: ClassVar[KindSpec] = _k("NULL_RATE", "column", identity=())
     ROW_COUNT: ClassVar[KindSpec] = _k("ROW_COUNT", "table", identity=())
     DISTINCT: ClassVar[KindSpec] = _k("DISTINCT", "column", identity=())
-    FRESHNESS: ClassVar[KindSpec] = _k("FRESHNESS", "table", identity=())
+    FRESHNESS: ClassVar[KindSpec] = _k("FRESHNESS", "table", identity=("column",))
     TYPE_NOTE: ClassVar[KindSpec] = _k("TYPE_NOTE", "column", identity=("stored_as", "means"))
     SOFT_DELETE: ClassVar[KindSpec] = _k(
         "SOFT_DELETE", "table", expectation=True, identity=("predicate",)

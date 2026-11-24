@@ -114,3 +114,36 @@ def test_roundtrip_with_evidence() -> None:
         evidence=Evidence(claim_text="c", params=(1, "a"), bytes_processed=5, raw={"k": [1]}),
     )  # fmt: skip
     assert Fact.from_dict(f.to_dict()) == f
+
+
+def test_freshness_id_per_column_stable_across_remeasure() -> None:
+    t = ORD.table_ref()
+
+    def fr(col: str, age: int) -> Fact:
+        return Fact.make(
+            FactKind.FRESHNESS, t, {"column": col, "age_seconds": age},
+            Provenance.MEASURED, Status.OBSERVED, method="exact",
+        )  # fmt: skip
+
+    assert fr("created_at", 1).id != fr("updated_at", 1).id
+    assert fr("created_at", 1).id == fr("created_at", 99).id
+
+
+def test_join_id_includes_cast_to() -> None:
+    cast = JoinRef((ORD,), (CUS,), cast_to="string")
+
+    def mk(j: JoinRef) -> Fact:
+        return Fact.make(FactKind.JOIN, j, {}, Provenance.MEASURED, Status.OBSERVED, method="exact")
+
+    assert mk(JOIN).id != mk(cast).id
+    assert mk(cast).id == mk(JoinRef((ORD,), (CUS,), cast_to="string")).id
+    assert cast.canonical() == JOIN.canonical()
+
+
+def test_sampled_never_verified_any_provenance() -> None:
+    for prov in (Provenance.HUMAN, Provenance.DECLARED, Provenance.MEASURED):
+        with pytest.raises(ValueError):
+            Fact.make(
+                FactKind.PRIMARY_KEY, CUS.table_ref(), {"columns": ["id"]}, prov, Status.VERIFIED,
+                method="sampled:keyhash:0.1:1", evidence=Evidence(verdict="PASS"),
+            )  # fmt: skip

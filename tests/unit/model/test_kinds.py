@@ -39,6 +39,7 @@ def test_meaning_and_expectation_sets() -> None:
 
 def test_identity_fields() -> None:
     assert FactKind.JOIN.identity_fields == ()
+    assert FactKind.FRESHNESS.identity_fields == ("column",)
     assert FactKind.VALUES.identity_fields == ("case_sensitive", "split")
     assert FactKind.DESCRIPTION.identity_fields is None
 

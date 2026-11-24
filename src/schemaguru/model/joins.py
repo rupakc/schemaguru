@@ -45,6 +45,12 @@ class JoinRef:
 
         return f"{side(self.left)} -> {side(self.right)}"
 
+    def identity_key(self) -> str:
+        """Canonical form plus ``cast_to``: two joins differing only in cast are distinct facts."""
+        return (
+            self.canonical() if self.cast_to is None else f"{self.canonical()} cast {self.cast_to}"
+        )
+
     def reversed(self) -> JoinRef:
         return JoinRef(self.right, self.left, self.cast_to)
 

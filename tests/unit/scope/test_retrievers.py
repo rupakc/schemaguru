@@ -164,15 +164,17 @@ class BagEmbedder:
 
     VOCAB = ("revenue", "order", "customer", "segment", "event", "funnel", "payment", "card")
 
-    def __init__(self) -> None:
+    def __init__(self, model_id: str = "bag-v1", extra_dims: int = 0) -> None:
         self.calls = 0
+        self.model_id = model_id
+        self.extra_dims = extra_dims
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         self.calls += 1
         out = []
         for text in texts:
             low = text.lower()
-            out.append([float(low.count(w)) for w in self.VOCAB])
+            out.append([float(low.count(w)) for w in self.VOCAB] + [0.0] * self.extra_dims)
         return out
 
 
@@ -208,6 +210,8 @@ def test_embedding_retriever_explicit_refs_and_bad_embedder(shop: SQLiteStore) -
     from schemaguru.scope.embeddings import EmbeddingRetriever
 
     class Short:
+        model_id = "short"
+
         def embed(self, texts: Sequence[str]) -> list[list[float]]:
             return [[1.0] for _ in texts[:-1]]
 
@@ -270,3 +274,66 @@ def test_embedding_reload_and_nonpositive_k(shop: SQLiteStore) -> None:
     r.reload()
     assert r.search("order", k=2) == first
     assert r.search("order", k=0) == []
+
+
+def test_embedding_dimension_swap_under_same_id_is_never_silent(shop: SQLiteStore) -> None:
+    pytest.importorskip("numpy")
+    from schemaguru.errors import SchemaGuruError
+    from schemaguru.scope.embeddings import EmbeddingRetriever
+
+    n = EmbeddingRetriever(shop, BagEmbedder("m")).index()
+    swapped = EmbeddingRetriever(shop, BagEmbedder("m", extra_dims=1))
+    # searching the old 8-dim index with a 9-dim question raises, never returns []
+    with pytest.raises(SchemaGuruError, match="dimension"):
+        swapped.search("card payment", k=2)
+    # the dimension is part of the document hash: index() re-embeds everything
+    assert swapped.index() == n
+    assert swapped.search("card payment", k=1)[0][0] == t("payments")
+
+
+def test_embedding_model_id_swap_same_dimension(shop: SQLiteStore) -> None:
+    pytest.importorskip("numpy")
+    from schemaguru.scope.embeddings import EmbeddingRetriever
+
+    n = EmbeddingRetriever(shop, BagEmbedder("a")).index()
+    b = EmbeddingRetriever(shop, BagEmbedder("b"))
+    assert b.model == "b"
+    assert b.index() == n  # same dimension, different id: vectors are not reused
+    assert EmbeddingRetriever(shop, BagEmbedder("b")).index() == 0
+    # an explicit model name overrides the embedder's id
+    assert EmbeddingRetriever(shop, BagEmbedder("b"), model="pinned").model == "pinned"
+
+
+def test_embedding_model_id_required(shop: SQLiteStore) -> None:
+    from schemaguru.scope.embeddings import EmbeddingRetriever
+
+    class Anonymous:
+        def embed(self, texts: Sequence[str]) -> list[list[float]]:
+            return [[1.0] for _ in texts]
+
+    with pytest.raises(ValueError, match="model"):
+        EmbeddingRetriever(shop, Anonymous())  # type: ignore[arg-type]
+
+
+def test_dotted_identifier_that_does_not_resolve_still_boosts(shop: SQLiteStore) -> None:
+    r = LexicalRetriever(shop)
+    # 'orders.order_id' is not a stored ref form the store resolves as a table; its parts are
+    # still verbatim names, so orders is boosted over order_items
+    assert refs(r.search("sum orders.order_id", k=2))[0] == "orders"
+    assert refs(r.search("count nosuch.order_items", k=1)) == ["order_items"]
+
+
+def test_last_is_not_a_stopword(tmp_path: Path) -> None:
+    with SQLiteStore(tmp_path / "l.db") as s:
+        s.upsert_tables([Table(t("last_login"), "table"), Table(t("first_login"), "table")])
+        assert refs(LexicalRetriever(s).search("last login", k=1)) == ["last_login"]
+
+
+def test_embedding_mixed_dimensions_raise(shop: SQLiteStore) -> None:
+    pytest.importorskip("numpy")
+    from schemaguru.errors import SchemaGuruError
+    from schemaguru.scope.embeddings import EmbeddingRetriever
+
+    shop.embeddings_put("mix", [(t("orders"), "h", [1.0, 0.0]), (t("customers"), "h", [1.0])])
+    with pytest.raises(SchemaGuruError, match="mixes vector dimensions"):
+        EmbeddingRetriever(shop, BagEmbedder("mix")).search("order", k=1)

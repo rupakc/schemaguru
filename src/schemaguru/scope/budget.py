@@ -37,7 +37,10 @@ def fit(
     budget_tokens: int,
     counter: TokenCounter,
 ) -> list[tuple[ObjectRef, DetailLevel]]:
-    """Give each table, in rank order, the richest level that still leaves room for the rest.
+    """Greedy in rank order: each table gets the richest level that leaves room for the rest.
+
+    Being greedy, the first table may take ``FULL`` and push every later table down to
+    ``NAME_ONLY``; rank decides who gets detail.
 
     Detail degrades before tables go: every remaining table is reserved its ``NAME_ONLY``
     cost first, so a table is dropped (from the bottom of the ranking) only when even the
@@ -108,9 +111,11 @@ def lite_columns(
        as a whole word in the predicate / pitfall text, case-insensitively);
     4. columns with descriptions or values (comment, column ``DESCRIPTION``, ``VALUES``);
     5. the rest.
-    Within a tier, catalog ordinal order. ``facts`` may be any facts touching the table.
+    Within a tier, catalog ordinal order. Soft-delete columns (markers, or named in the
+    predicate) are always kept, past ``limit`` if need be (spec 25.15). ``facts`` may be any
+    facts touching the table.
     """
-    if limit <= 0 or not columns:
+    if not columns:
         return []
     table = columns[0].ref.table_ref()
     by_name = {c.ref.column: c for c in columns if c.ref.column is not None}
@@ -128,6 +133,8 @@ def lite_columns(
             for n in con.columns:
                 mark(n, 1)
     texts: list[str] = []
+    soft_texts: list[str] = []
+    always: set[str] = set()  # soft-delete columns: load-bearing, kept past ``limit``
     for f in facts:
         kind, subj = f.kind.name, f.subject
         if isinstance(subj, JoinRef):
@@ -144,13 +151,16 @@ def lite_columns(
         elif kind == "SOFT_DELETE":
             for n in _names(f.value.get("marker_columns")):
                 mark(n, 2)
-            texts.append(str(f.value.get("predicate") or ""))
+                always.add(n)
+            soft_texts.append(str(f.value.get("predicate") or ""))
         elif kind == "PITFALL":
             texts.extend(_strings(f.value))
         elif kind in ("DESCRIPTION", "VALUES") and subj.column is not None:
             mark(subj.column, 3)
     for name in by_name:
-        if any(_mentions(t, name) for t in texts):
+        if any(_mentions(t, name) for t in soft_texts):
+            always.add(name)
+        if any(_mentions(t, name) for t in (*texts, *soft_texts)):
             mark(name, 2)
     for c in columns:
         if c.comment and c.ref.column is not None:
@@ -158,4 +168,6 @@ def lite_columns(
     ordered = sorted(
         columns, key=lambda c: (tier.get(c.ref.column or "", 4), c.ordinal, c.ref.column or "")
     )
-    return ordered[:limit]
+    kept = ordered[: max(limit, 0)]
+    kept += [c for c in ordered[max(limit, 0) :] if c.ref.column in always]
+    return kept

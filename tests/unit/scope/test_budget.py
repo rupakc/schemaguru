@@ -341,3 +341,27 @@ def test_lite_ignores_other_tables_and_nested_pitfall_values() -> None:
     )
     names = [c.ref.column for c in lite_columns(ORDERS, [], [other, nested], limit=1)]
     assert names == ["created_at"]
+
+
+def test_lite_always_keeps_soft_delete_markers_beyond_the_limit() -> None:
+    wide = [col(f"k{i}", i) for i in range(1, 11)] + [col("deleted", 11), col("note", 12)]
+    pk = Constraint("primary_key", t("orders"), tuple(f"k{i}" for i in range(1, 6)), None, None)
+    fk = Constraint(
+        "foreign_key", t("orders"), tuple(f"k{i}" for i in range(6, 11)), t("x"), ("a",) * 5
+    )
+    names = [c.ref.column for c in lite_columns(wide, [pk, fk], [soft_delete("NOT deleted")])]
+    assert len(names) == 9  # LITE_MAX_COLUMNS PK/FK columns + the load-bearing soft-delete one
+    assert names[-1] == "deleted" and "note" not in names
+    marker = [c.ref.column for c in lite_columns(wide, [pk, fk], [soft_delete("x", ["deleted"])])]
+    assert marker[-1] == "deleted"
+    # even at a tiny limit the soft-delete column survives
+    assert [
+        c.ref.column for c in lite_columns(wide, [pk], [soft_delete("NOT deleted")], limit=1)
+    ] == [
+        "k1",
+        "deleted",
+    ]
+
+
+def test_lite_no_columns() -> None:
+    assert lite_columns([], [PK], [soft_delete("NOT deleted")]) == []

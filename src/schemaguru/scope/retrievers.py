@@ -52,7 +52,6 @@ STOPWORDS = frozenset(
         "is",
         "it",
         "its",
-        "last",
         "many",
         "me",
         "much",
@@ -174,10 +173,13 @@ class LexicalRetriever:
         for ident in dict.fromkeys(_IDENT.findall(question)):
             if "." in ident:
                 ref, _ = self.store.resolve(ident)
-                if ref is not None:
-                    table = self.store.table(ref)
-                    if table is not None and table.withdrawn_at is None:
-                        found.add(ref.table_ref())
+                table = None if ref is None else self.store.table(ref)
+                if ref is not None and table is not None and table.withdrawn_at is None:
+                    found.add(ref.table_ref())
+                elif ref is None:
+                    # e.g. 'orders.order_id' when the table lives in a schema: each dotted part
+                    # is still a verbatim name (table.column -> the table part matches)
+                    bare.extend(p for p in ident.split(".") if p.lower() not in STOPWORDS)
             elif ident.lower() not in STOPWORDS:
                 bare.append(ident)
         found.update(self.store.tables_named(bare, limit=self.max_name_matches))

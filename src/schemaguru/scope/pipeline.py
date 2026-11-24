@@ -17,6 +17,8 @@ from schemaguru.store.protocol import Store
 
 # Retrieval hits fetched beyond the seeds, to count the candidates that are "not shown".
 NOT_SHOWN_PROBE = 100
+# Table-subject kinds a measurement run writes; one of them MEASURED = "the table was measured".
+MEASURED_TABLE_KINDS = ("ROW_COUNT", "FRESHNESS", "PRIMARY_KEY")
 
 
 @dataclass(frozen=True)
@@ -60,7 +62,7 @@ def build_scope(
     not_shown = len({*candidates, *ranked} - shown)
     measured: set[ObjectRef] = set()
     subjects: list[ObjectRef | JoinRef] = list(shown)
-    for f in store.facts_for(subjects, None):
+    for f in store.facts_for(subjects, MEASURED_TABLE_KINDS):
         if f.provenance is Provenance.MEASURED and isinstance(f.subject, ObjectRef):
             measured.add(f.subject.table_ref())
     unmeasured = tuple(r for r, _ in chosen if r not in measured)

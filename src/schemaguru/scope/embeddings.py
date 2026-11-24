@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from schemaguru._util.hashing import stable_hash
 from schemaguru._util.text import name_tokens
+from schemaguru.errors import SchemaGuruError
 from schemaguru.model.facts import Fact
 from schemaguru.model.joins import JoinRef
 from schemaguru.model.refs import ObjectRef
@@ -24,6 +25,14 @@ _MEANING_KINDS = ("DESCRIPTION", "USE_CASES", "ENTITY_TYPE", "PITFALL")
 
 
 class Embedder(Protocol):
+    """``model_id`` names the model (and version) that produced the vectors.
+
+    Vectors from different ids are never mixed: stored vectors are keyed by it.
+    """
+
+    @property
+    def model_id(self) -> str: ...
+
     def embed(self, texts: Sequence[str]) -> list[list[float]]: ...
 
 
@@ -93,12 +102,18 @@ class EmbeddingRetriever:
         store: VectorStore,
         embedder: Embedder,
         *,
-        model: str = "default",
+        model: str | None = None,
         batch_size: int = 64,
     ) -> None:
+        name = model if model is not None else getattr(embedder, "model_id", None)
+        if not isinstance(name, str) or not name:
+            raise ValueError(
+                "EmbeddingRetriever needs a model name: give the embedder a 'model_id' "
+                "or pass model=..."
+            )
         self.store = store
         self.embedder = embedder
-        self.model = model
+        self.model = name
         self.batch_size = max(1, batch_size)
         self._matrix: tuple[list[ObjectRef], np.ndarray[Any, Any]] | None = None
 
@@ -113,25 +128,34 @@ class EmbeddingRetriever:
                 t = self.store.table(r)
                 if t is not None and t.withdrawn_at is None:
                     targets.append(t.ref)
-        todo: list[tuple[ObjectRef, str, str]] = []
+        # The vector dimension is part of each document hash, so an embedder that changed
+        # dimension under the same model name re-embeds everything. Probe it only when there
+        # is something stored to compare with.
+        dim = len(self._embed(["dimension probe"])[0]) if stored else None
+        todo: list[tuple[ObjectRef, str]] = []
         for ref in targets:
             doc = table_document(self.store, ref)
-            h = stable_hash(["table-doc-v1", doc])
-            if stored.get(ref) != h:
-                todo.append((ref, h, doc))
+            if dim is None or stored.get(ref) != self._hash(doc, dim):
+                todo.append((ref, doc))
         for i in range(0, len(todo), self.batch_size):
             batch = todo[i : i + self.batch_size]
-            vecs = self.embedder.embed([d for _, _, d in batch])
-            if len(vecs) != len(batch):
-                raise ValueError(
-                    f"embedder returned {len(vecs)} vectors for {len(batch)} documents"
-                )
+            vecs = self._embed([d for _, d in batch])
             self.store.embeddings_put(
-                self.model, [(r, h, v) for (r, h, _), v in zip(batch, vecs, strict=True)]
+                self.model,
+                [(r, self._hash(d, len(v)), v) for (r, d), v in zip(batch, vecs, strict=True)],
             )
         if todo:
             self._matrix = None
         return len(todo)
+
+    def _hash(self, doc: str, dim: int) -> str:
+        return stable_hash(["table-doc-v2", self.model, dim, doc])
+
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        vecs = self.embedder.embed(texts)
+        if len(vecs) != len(texts):
+            raise ValueError(f"embedder returned {len(vecs)} vectors for {len(texts)} documents")
+        return vecs
 
     def reload(self) -> None:
         """Drop the in-memory matrix (after another process re-indexed the store)."""
@@ -142,9 +166,14 @@ class EmbeddingRetriever:
 
         if self._matrix is None:
             rows = self.store.embeddings_get(self.model)
-            dims = {d for _, _, d, _ in rows}
-            dim = max(dims, key=lambda d: (sum(1 for r in rows if r[2] == d), -d)) if dims else 0
-            keep = [r for r in rows if r[2] == dim]
+            dims = sorted({d for _, _, d, _ in rows})
+            if len(dims) > 1:
+                raise SchemaGuruError(
+                    f"embedding index {self.model!r} mixes vector dimensions {dims}; "
+                    "run index() with the current embedder"
+                )
+            dim = dims[0] if dims else 0
+            keep = rows
             refs = [r for r, _, _, _ in keep]
             mat = np.zeros((len(keep), dim), dtype=np.float32)
             for i, (_, _, _, blob) in enumerate(keep):
@@ -162,9 +191,15 @@ class EmbeddingRetriever:
         refs, mat = self._load()
         if not refs:
             return []
-        q = np.asarray(self.embedder.embed([question])[0], dtype=np.float32)
+        q = np.asarray(self._embed([question])[0], dtype=np.float32)
+        if q.shape[0] != mat.shape[1]:
+            raise SchemaGuruError(
+                f"embedder {self.model!r} returned a {q.shape[0]}-dimension question vector but "
+                f"the stored index has dimension {mat.shape[1]}; run index() to re-embed, or give "
+                "a different model its own model_id"
+            )
         norm = float(np.linalg.norm(q))
-        if q.shape[0] != mat.shape[1] or norm == 0.0:
+        if norm == 0.0:
             return []
         sims = mat @ (q / norm)
         pos = np.flatnonzero(sims > 0.0)

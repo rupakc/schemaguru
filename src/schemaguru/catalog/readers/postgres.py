@@ -59,7 +59,8 @@ class PostgresReader:
             "(SELECT count(*) FROM pg_class c WHERE c.relnamespace = n.oid "
             " AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND NOT c.relispartition) AS table_count "
             "FROM pg_namespace n "
-            "WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg\\_%' "
+            # a prefix test, not LIKE 'pg\\_%': FactLang's metadata guard refuses any backslash
+            "WHERE n.nspname <> 'information_schema' AND left(n.nspname, 3) <> 'pg_' "
             "ORDER BY n.nspname",
             timeout_s=self.timeout_s,
         )

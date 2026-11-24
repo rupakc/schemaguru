@@ -36,12 +36,18 @@ _RULES = compile_rules(
         (r"^(binary|varbinary|image|timestamp)$", "bytes"),
     )
 )
-_ENFORCED = "CASE WHEN CAST(SERVERPROPERTY('EngineEdition') AS int) = 6 THEN 0 ELSE 1 END"
+# FactLang's T-SQL metadata guard refuses every quote, so each constant is a bound parameter;
+# the parameter values below are listed in the order their ``?`` appears in each query.
+_ENFORCED = "CASE WHEN CAST(SERVERPROPERTY(?) AS int) = 6 THEN 0 ELSE 1 END"
+_ENGINE_EDITION = "EngineEdition"
 _COMMENT = (
     "CAST((SELECT TOP 1 ep.value FROM sys.extended_properties ep "
     "WHERE ep.class = {cls} AND ep.major_id = {major} AND ep.minor_id = {minor} "
-    "AND ep.name = 'MS_Description') AS nvarchar(4000))"
+    "AND ep.name = ?) AS nvarchar(4000))"
 )
+_MS_DESCRIPTION = "MS_Description"
+_OBJ_TYPES = ("U", "V")  # user tables, views
+_KEY_TYPES = ("PK", "UQ")
 
 
 def _native_type(name: str, max_length: int, precision: int, scale: int) -> str:
@@ -87,11 +93,11 @@ class TSQLReader:
             "SELECT s.name AS name, "
             f"{_COMMENT.format(cls=3, major='s.schema_id', minor=0)} AS comment, "
             "(SELECT COUNT(*) FROM sys.objects o WHERE o.schema_id = s.schema_id "
-            " AND o.type IN ('U', 'V') AND o.is_ms_shipped = 0) AS table_count "
+            " AND o.type IN (?, ?) AND o.is_ms_shipped = 0) AS table_count "
             "FROM sys.schemas s "
             "WHERE s.name NOT IN (?, ?, ?) AND s.schema_id NOT BETWEEN 16384 AND 16399 "
             "ORDER BY s.name COLLATE Latin1_General_BIN2",
-            _SYSTEM_SCHEMAS,
+            (_MS_DESCRIPTION, *_OBJ_TYPES, *_SYSTEM_SCHEMAS),
             timeout_s=self.timeout_s,
         )
         return Page(
@@ -107,15 +113,23 @@ class TSQLReader:
         rows = self._ex.run(
             "SELECT TOP (?) o.name AS name, o.type AS obj_type, "
             f"{_COMMENT.format(cls=1, major='o.object_id', minor=0)} AS comment, "
-            "CASE WHEN o.type = 'U' THEN (SELECT SUM(p.rows) FROM sys.partitions p "
+            "CASE WHEN o.type = ? THEN (SELECT SUM(p.rows) FROM sys.partitions p "
             " WHERE p.object_id = o.object_id AND p.index_id < 2) END AS row_count "
             "FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id "
-            "WHERE s.name = ? AND o.type IN ('U', 'V') AND o.is_ms_shipped = 0 "
+            "WHERE s.name = ? AND o.type IN (?, ?) AND o.is_ms_shipped = 0 "
             "AND (CAST(? AS nvarchar(256)) IS NULL "
             " OR o.name COLLATE Latin1_General_BIN2 > CAST(? AS nvarchar(256)) "
             " COLLATE Latin1_General_BIN2) "
             "ORDER BY o.name COLLATE Latin1_General_BIN2",
-            (self.page_size + 1, schema.name, page_token, page_token),
+            (
+                self.page_size + 1,
+                _MS_DESCRIPTION,
+                _OBJ_TYPES[0],
+                schema.name,
+                *_OBJ_TYPES,
+                page_token,
+                page_token,
+            ),
             timeout_s=self.timeout_s,
         )
         more = len(rows) > self.page_size
@@ -149,9 +163,9 @@ class TSQLReader:
             "LEFT JOIN sys.types bt ON bt.user_type_id = ty.system_type_id "
             "LEFT JOIN sys.default_constraints dc ON dc.parent_object_id = c.object_id "
             " AND dc.parent_column_id = c.column_id "
-            f"WHERE o.type IN ('U', 'V') AND ({clause}) "
+            f"WHERE o.type IN (?, ?) AND ({clause}) "
             "ORDER BY s.name, o.name, c.column_id",
-            params,
+            (_MS_DESCRIPTION, *_OBJ_TYPES, *params),
             timeout_s=self.timeout_s,
         )
         for r in rows:
@@ -191,9 +205,9 @@ class TSQLReader:
             "JOIN sys.index_columns ic ON ic.object_id = kc.parent_object_id "
             " AND ic.index_id = kc.unique_index_id AND ic.is_included_column = 0 "
             "JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id "
-            f"WHERE kc.type IN ('PK', 'UQ') AND ({clause}) "
+            f"WHERE kc.type IN (?, ?) AND ({clause}) "
             "ORDER BY s.name, o.name, kc.type DESC, kc.name, ic.key_ordinal",
-            params,
+            (_ENGINE_EDITION, *_KEY_TYPES, *params),
             timeout_s=self.timeout_s,
         )
         grouped: dict[tuple[str, str, str, str], list[Mapping[str, str]]] = {}
@@ -226,7 +240,7 @@ class TSQLReader:
             "JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id "
             " AND rc.column_id = fkc.referenced_column_id "
             f"WHERE ({clause}) ORDER BY s.name, o.name, fk.name, fkc.constraint_column_id",
-            params,
+            (_ENGINE_EDITION, *params),
             timeout_s=self.timeout_s,
         )
         fgrouped: dict[tuple[str, str, str], list[Mapping[str, str]]] = {}

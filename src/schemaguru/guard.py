@@ -9,9 +9,10 @@ baseline lexer and under each single dialect option (``#`` or
 quotes, nested ``/* */``, backslash escapes, ``[ident]``); otherwise the SQL is refused as
 "ambiguous across SQL dialects". By design this refuses dialect-specific constructs whose meaning
 differs across dialects (``#`` comments, ``$$`` strings, ``[ident]`` holding a quote or
-comment marker, triple quotes), so some valid SQL is refused. ``U&`` escapes, backslashes in quoted identifiers and ``/*!`` comments are
-refused outright. Everything else is checked once, on the agreed segmentation: one statement,
-SELECT/WITH first, no DML/DDL keyword, no function that runs SQL from text.
+comment marker, triple quotes), so some valid SQL is refused. ``U&`` escapes, backslashes in
+quoted identifiers and ``/*!`` comments are refused outright. Everything else is checked once,
+on the agreed segmentation: one statement, SELECT/WITH first, no DML/DDL keyword, no function
+that runs SQL from text.
 
 It does not stop side-effecting or resource-heavy read-only constructs (``pg_sleep``,
 ``pg_read_file``, expensive scans): the host must still run queries under a read-only database

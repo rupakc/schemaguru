@@ -46,6 +46,94 @@ jobs:
       - run: pytest -m "not integration and not live and not benchmark" --cov
         shell: bash
 
+  integration:
+    runs-on: ubuntu-latest
+    env:
+      # An engine listed here that is missing (no DSN, no driver, no server) fails the job
+      # instead of skipping. Locally the same tests skip.
+      SCHEMAGURU_REQUIRE_ENGINES: postgres,mysql,clickhouse,tsql,trino
+      SCHEMAGURU_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+      SCHEMAGURU_TEST_MYSQL_DSN: mysql://root:root@127.0.0.1:3306/
+      SCHEMAGURU_TEST_CLICKHOUSE_DSN: clickhouse://sg:sg@localhost:8123/
+      SCHEMAGURU_TEST_TSQL_DSN: >-
+        DRIVER={ODBC Driver 18 for SQL Server};SERVER=localhost,1433;UID=sa;PWD=Sg_Passw0rd!;TrustServerCertificate=yes
+      SCHEMAGURU_TEST_TRINO_DSN: trino://schemaguru@localhost:8080/memory
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s
+          --health-retries 20
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -proot" --health-interval 5s
+          --health-timeout 5s --health-retries 30
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8
+        env:
+          CLICKHOUSE_USER: sg
+          CLICKHOUSE_PASSWORD: sg
+        ports: ["8123:8123"]
+        options: >-
+          --health-cmd "wget -qO- http://localhost:8123/ping" --health-interval 5s
+          --health-timeout 5s --health-retries 30
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: Sg_Passw0rd!
+        ports: ["1433:1433"]
+      trino:
+        image: trinodb/trino:latest
+        ports: ["8080:8080"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the Microsoft ODBC Driver 18 for SQL Server
+        run: |
+          curl -sSL -O "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb"
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 unixodbc-dev
+      - run: pip install "factlang @ git+https://github.com/rupakc/factlang@main"
+      # cryptography: MySQL 8 authenticates root with caching_sha2_password, which pymysql needs it for.
+      - run: pip install -e ".[dev,postgres,mysql,clickhouse,mssql,trino]" cryptography
+      - name: Wait for the slow engines (SQL Server, Trino)
+        run: |
+          python - <<'PY'
+          import os, time, urllib.request
+          import pyodbc
+          deadline = time.time() + 240
+          while True:
+              try:
+                  pyodbc.connect(os.environ["SCHEMAGURU_TEST_TSQL_DSN"], timeout=5).close()
+                  break
+              except Exception as exc:
+                  if time.time() > deadline:
+                      raise SystemExit(f"SQL Server did not become ready: {exc}")
+                  time.sleep(3)
+          while True:
+              try:
+                  with urllib.request.urlopen("http://localhost:8080/v1/info", timeout=5) as r:
+                      if b'"starting":false' in r.read().replace(b" ", b""):
+                          break
+              except Exception:
+                  pass
+              if time.time() > deadline:
+                  raise SystemExit("Trino did not become ready")
+              time.sleep(3)
+          PY
+      - run: pytest -m integration -rs -p no:cacheprovider
+
   denylist:
     runs-on: ubuntu-latest
     env:

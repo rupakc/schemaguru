@@ -8,11 +8,13 @@ runs it and converts the placeholders to its driver's paramstyle. Only this modu
 from __future__ import annotations
 
 import importlib
+import os
 import re
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 from schemaguru._util.sqltext import Opts
 from schemaguru._util.sqltext import scan as _scan
@@ -173,9 +175,33 @@ _SCHEME_DIALECTS = {
 }
 
 
+_SECRET_KEYS = re.compile(
+    r"password|passwd|pwd|token|secret|key|private_key|credentials", re.IGNORECASE
+)
+
+
 def _redact(url: str) -> str:
-    """``url`` with any ``user:password@`` replaced: credentials never reach a message."""
-    return re.sub(r"(://)[^/@]*@", r"\1***@", url)
+    """``url`` safe for a message: no userinfo, no secret query values, no fragment.
+
+    The userinfo is everything in the authority up to its LAST ``@`` (a password may hold
+    ``/`` or ``@``, which ``urlsplit`` would misread), so it is cut by hand: before the query,
+    everything up to the last ``@`` becomes ``***@``. Query values whose key names a secret
+    (password, pwd, token, secret, key, private_key, credentials, ...) become ``***``.
+    """
+    parts = urlsplit(url)
+    if not parts.scheme or "://" not in url:
+        return "***" if "@" in url else url.split("#", 1)[0]
+    rest = url.split("://", 1)[1].split("#", 1)[0]
+    head, sep, query = rest.partition("?")
+    if "@" in head:
+        head = "***@" + head.rsplit("@", 1)[1]
+    if sep:
+        pairs = []
+        for item in query.split("&"):
+            k, eq, _v = item.partition("=")
+            pairs.append(f"{k}=***" if eq and _SECRET_KEYS.search(k) else item)
+        query = "&".join(pairs)
+    return f"{parts.scheme}://{head}{sep}{query}"
 
 
 @dataclass
@@ -229,9 +255,19 @@ def connect(url: str) -> Connection:
             raise CatalogError(
                 "SG106", "duckdb:// needs the DuckDB driver: pip install 'schemaguru[duckdb]'"
             ) from None
-        path = url.split("://", 1)[1]
-        path = path[1:] if path.startswith("/") else path
-        raw = duckdb.connect(path or ":memory:")
+        path = url.split("://", 1)[1].split("?", 1)[0]
+        path = (path[1:] if path.startswith("/") else path) or ":memory:"
+        if path == ":memory:":
+            raw = duckdb.connect(path)
+        else:  # read-only: SchemaGuru never writes, and a typo must not create a file
+            if not os.path.exists(path):
+                raise CatalogError("SG106", f"no DuckDB database at {_redact(url)}")
+            try:
+                raw = duckdb.connect(path, read_only=True)
+            except Exception as e:
+                raise CatalogError(
+                    "SG106", f"cannot open {_redact(url)}: {type(e).__name__}"
+                ) from None
         return Connection("duckdb", DBAPIExecutor(raw, "qmark"), None, raw)
     raise CatalogError(
         "SG106",

@@ -100,6 +100,8 @@ class Config:
     enum_max_distinct: int = 20
     fact_ttl_days: int = 14
     measure_on_demand: Literal["queue", "background", "block"] = "queue"
+    # block mode: the most a context() call may spend measuring its scoped tables, in seconds
+    block_timeout_s: float = 10.0
     store_path: str | None = None
     llm_model: str = "claude-sonnet-5-5"
     # token counter for view budgets: chars/4 heuristic, or tiktoken (extra ``tiktoken``)

@@ -8,6 +8,7 @@ import sys
 import time
 import types
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -146,7 +147,7 @@ def test_three_line_quickstart(
     guru.close()
 
     # the same store, now with a measurement backend: the queued first-touch tables drain
-    conn = duckdb.connect(str(shop_file))
+    conn = duckdb.connect(str(shop_file), read_only=True)  # the fallback opens read-only
     fake = FakeBackend(conn)
     again = sg.Guru.connect(f"duckdb:///{shop_file}", backend=fake)
     report = again.measure_queue()
@@ -169,6 +170,54 @@ def test_connect_helper(tmp_path: Path) -> None:
         assert "secret" not in str(e)  # credentials never reach messages
     with pytest.raises(SchemaGuruError, match="SG106"):
         connect_url("not a url")
+
+
+@pytest.mark.parametrize(
+    ("url", "secrets"),
+    [
+        ("postgresql://alice:p/ss@db/x", ["alice", "p/ss"]),
+        ("mysql://u:pa@ss@h/db", ["pa@ss", "u:pa", "ss@h"]),
+        ("snowflake://acct/db?user=a&password=hunter2", ["hunter2"]),
+        (
+            "snowflake://acct/db?PWD=s3&Token=t0k&private_key=pk&warehouse=wh#frag",
+            ["s3", "t0k", "pk", "frag"],
+        ),
+    ],
+)
+def test_redact_removes_credentials(url: str, secrets: list[str]) -> None:
+    from schemaguru.catalog.executor import _redact
+
+    out = _redact(url)
+    for secret in secrets:
+        assert secret not in out, (url, out)
+    with pytest.raises(SchemaGuruError) as exc:
+        connect_url(url.replace(url.split("://")[0], "nosuchdb", 1))
+    for secret in secrets:
+        assert secret not in str(exc.value)
+
+
+def test_redact_keeps_urls_without_credentials() -> None:
+    from schemaguru.catalog.executor import _redact
+
+    for url in (
+        "duckdb:///shop.duckdb",
+        "postgresql://db:5432/x?sslmode=require",
+        "duckdb:///:memory:",
+    ):
+        assert _redact(url) == url
+    assert "warehouse=wh" in _redact("snowflake://acct/db?warehouse=wh&password=x")
+    assert "h/db" in _redact("mysql://u:pa@ss@h/db")
+
+
+def test_duckdb_fallback_is_read_only(tmp_path: Path, shop_file: Path) -> None:
+    missing = tmp_path / "typo.duckdb"
+    with pytest.raises(SchemaGuruError, match="SG106"):
+        connect_url(f"duckdb:///{missing}")
+    assert not missing.exists()  # a typo never creates a warehouse file
+    conn = connect_url(f"duckdb:///{shop_file}")
+    with pytest.raises(Exception, match=r"(?i)read.only"):
+        conn.raw.execute("CREATE TABLE shop.x(i INTEGER)")
+    conn.close()
 
 
 def test_connect_crawls_an_empty_store_only(tmp_path: Path, shop_file: Path) -> None:
@@ -234,20 +283,87 @@ def test_background_mode_drains(tmp_path: Path, shop_duckdb: tuple[Any, ShopFact
     g.crawl()
     first = g.context("orders per customer")
     assert "unmeasured" in first.text
+    assert g.context("orders per customer") is first  # cached until the drainer writes
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
-        if g.store.facts_for([ORD], ["ROW_COUNT", "PRIMARY_KEY", "FRESHNESS"]):
+        # the SAME Guru: the drainer's writes invalidate its cached view
+        if "10,000 rows (measured" in g.context("orders per customer").text:
             break
         time.sleep(0.05)
     else:
-        pytest.fail("the background drainer never measured shop.orders")
-    g.close()  # stops the drainer
-    assert g.drainer is not None and not g.drainer.is_alive()
-    # the drainer's writes invalidated the cached view
-    g2 = make_guru(tmp_path, shop_duckdb[0], backend=fake)
-    assert "10,000 rows (measured" in g2.context("orders per customer").text
-    g2.close()
+        pytest.fail("the background drainer's measurements never reached this Guru's view")
+    drainer = g.drainer
+    g.close()  # stops the drainer and waits for it
+    assert drainer is not None and not drainer.is_alive()
     conn.close()
+
+
+def test_config_setter_restarts_the_drainer_on_the_one_scheduler(
+    tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts]
+) -> None:
+    conn = shop_duckdb[0].cursor()
+    fake = FakeBackend(conn)
+    bg = Config(measure_on_demand="background")
+    g = make_guru(tmp_path, shop_duckdb[0], backend=fake, config=bg, drain_interval_s=0.05)
+    g.crawl()
+    sched = g._scheduler
+    g.context("orders per customer")
+    old = g.drainer
+    assert old is not None and old.is_alive() and old.scheduler is sched
+    g.config = replace(bg, enum_max_distinct=5)  # still background: restarted
+    assert not old.is_alive()
+    assert g._scheduler is sched and sched.config.enum_max_distinct == 5
+    new = g.drainer
+    assert new is not None and new is not old and new.is_alive() and new.scheduler is sched
+    g.config = Config()  # queue mode: stopped, not restarted
+    assert not new.is_alive() and g.drainer is None
+    assert g._scheduler is sched
+    # a budget override is a run-level guard on the same scheduler (one lock, no second runner)
+    report = g.measure(CUS, budget=Budget(max_bytes_total=1, max_bytes_per_probe=None))
+    assert g._scheduler is sched
+    assert report.bytes == 0 and {d.code for d in report.errors} & {"SG301", "SG302"}
+    g.close()
+    conn.close()
+
+
+def test_block_mode_measures_outside_the_lock_with_a_time_cap(
+    tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts]
+) -> None:
+    held: list[bool] = []
+    fake = FakeBackend(shop_duckdb[0])
+    real = fake.measure
+
+    def measure(reqs: Any) -> Any:
+        held.append(g._lock._is_owned())  # type: ignore[attr-defined]
+        return real(reqs)
+
+    fake.measure = measure  # type: ignore[method-assign]
+    g = make_guru(tmp_path, shop_duckdb[0], backend=fake, config=Config(measure_on_demand="block"))
+    g.crawl()
+    assert "10,000 rows (measured" in g.context("orders per customer").text
+    assert held and not any(held)  # warehouse calls never run under the façade lock
+    g.close()
+    assert Config().block_timeout_s == 10.0
+    capped = Config(measure_on_demand="block", block_timeout_s=0.0)
+    g = make_guru(tmp_path / "capped", shop_duckdb[0], config=capped)
+    g.crawl()
+    view = g.context("orders per customer")  # the cap stops the run; the view still renders
+    assert "unmeasured" in view.text
+    assert {r for r, _ in g.store.queue_pop(100)} & set(view.tables)  # what was left is queued
+    g.close()
+
+
+def test_one_retrieval_per_render(guru: Guru) -> None:
+    calls: list[int] = []
+    real = guru.retriever.search
+
+    def search(q: str, k: int) -> Any:
+        calls.append(k)
+        return real(q, k)
+
+    guru.retriever.search = search  # type: ignore[method-assign]
+    guru.context("orders per customer")
+    assert len(calls) == 1
 
 
 def test_block_mode_measures_scoped_tables(

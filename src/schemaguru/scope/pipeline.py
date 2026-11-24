@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from schemaguru.config import GraphConfig, ScopeConfig
@@ -48,14 +49,23 @@ def build_scope(
     budget_tokens: int,
     cfg: ScopeConfig,
     graph_cfg: GraphConfig | None = None,
+    hits: Sequence[tuple[ObjectRef, float]] | None = None,
+    bridges: Sequence[ObjectRef] | None = None,
 ) -> Scope:
-    """Run the pipeline; read-only (no writes on the query path, spec 25.10)."""
+    """Run the pipeline; read-only (no writes on the query path, spec 25.10).
+
+    A caller that already ran ``retriever.search(question, cfg.seed_k + NOT_SHOWN_PROBE)``
+    (e.g. to reserve budget for the candidates) passes its ``hits`` and the ``bridges``
+    ``expand`` gave for their seeds, so retrieval and expansion run once.
+    """
     if budget_tokens < 0:
         raise ValueError("budget_tokens must be >= 0")
-    hits = retriever.search(question, cfg.seed_k + NOT_SHOWN_PROBE)
+    if hits is None:
+        hits = retriever.search(question, cfg.seed_k + NOT_SHOWN_PROBE)
     candidates = list(dict.fromkeys(r.table_ref() for r, _ in hits))
     seeds = candidates[: cfg.seed_k]
-    bridges = [] if graph is None else expand(seeds, graph, cfg, graph_cfg=graph_cfg)
+    if bridges is None:
+        bridges = [] if graph is None else expand(seeds, graph, cfg, graph_cfg=graph_cfg)
     ranked = list(dict.fromkeys([*seeds, *bridges]))
     chosen = fit(ranked, renderer, budget_tokens, counter)
     shown = {r for r, _ in chosen}

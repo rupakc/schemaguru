@@ -8,7 +8,11 @@ its own; the façade only wires them:
   shows that were never measured are pushed on the measurement queue, and nothing else is
   written. The queue is drained by ``measure()`` / ``measure_queue()`` / ``refresh()``, by a
   daemon thread when ``Config(measure_on_demand="background")``, or synchronously for the
-  scoped tables when ``measure_on_demand="block"`` (the user's explicit opt-in to spend).
+  scoped tables when ``measure_on_demand="block"`` (the user's explicit opt-in to spend; capped
+  by ``Config.block_timeout_s`` and run outside the façade lock).
+* **One scheduler** per Guru, so one measurement run at a time: budget and exact-sampling
+  overrides are run-level arguments, and a config change stops the drainer (waiting for it),
+  reconfigures the scheduler between runs and restarts the drainer only in background mode.
 * **View cache** (spec 12.2): an LRU of ``Config.scope.cache_entries`` views keyed on the store's
   latest snapshot id, the question hash, the config hash, profile and budget, plus a write
   generation. Every write through the façade (crawl, measure, draft, accept, overlays,
@@ -89,7 +93,7 @@ from schemaguru.render.legend import LEGEND
 from schemaguru.render.table_block import render_path
 from schemaguru.render.view import ContextView, ViewRenderer
 from schemaguru.scope.expand import expand
-from schemaguru.scope.pipeline import build_scope
+from schemaguru.scope.pipeline import NOT_SHOWN_PROBE, build_scope
 from schemaguru.scope.retrievers import LexicalRetriever, Retriever
 from schemaguru.scope.tokens import CharTokenCounter, TiktokenCounter, TokenCounter
 from schemaguru.store.export import export_json
@@ -148,9 +152,10 @@ class _Scheduler(Scheduler):
         *,
         drain_queue: bool = False,
         guard: BudgetGuard | None = None,
+        config: Config | None = None,
     ) -> MeasureReport:
         try:
-            return super().run(refs, drain_queue=drain_queue, guard=guard)
+            return super().run(refs, drain_queue=drain_queue, guard=guard, config=config)
         finally:
             self._on_write()
 
@@ -289,8 +294,7 @@ class Guru:
 
     def close(self) -> None:
         """Stop the background drainer, close what this Guru opened (its store, its URL)."""
-        if self.drainer is not None:
-            self.drainer.stop()
+        self._stop_drainer()
         if self._connection is not None:
             self._connection.close()
             self._connection = None
@@ -311,21 +315,40 @@ class Guru:
 
     @config.setter
     def config(self, value: Config) -> None:
+        """Swap the config: the drainer is stopped (and restarted only in background mode).
+
+        The one scheduler is reconfigured between runs; nothing here holds the façade lock while
+        waiting for a run, because a finishing run takes that lock to invalidate views.
+        """
+        was_draining = self._stop_drainer()
+        backend = self._default_backend(value) if self._auto_backend else None
+        self._scheduler.reconfigure(value, backend)
         with self._lock:
             self._config = value
+            if backend is not None:  # the FactLang backend scales its samples by the config
+                self.backend = backend
             self._cache = _LRU(value.scope.cache_entries)
             if not self._explicit_counter:
                 self.counter = _counter_for(value)
-            if self._auto_backend:  # the FactLang backend scales its samples by the config
-                self.backend = self._default_backend()
-            self._scheduler = self._make_scheduler(value)
             self._invalidate()
+        if was_draining and value.measure_on_demand == "background":
+            self._ensure_drainer()
 
-    def _default_backend(self) -> MeasureBackend:
+    def _stop_drainer(self) -> bool:
+        """Stop the drainer and WAIT for it (never under the façade lock); True if it ran."""
+        with self._lock:
+            drainer, self.drainer = self.drainer, None
+        if drainer is None:
+            return False
+        alive = drainer.is_alive()
+        drainer.stop(timeout=None)
+        return alive
+
+    def _default_backend(self, cfg: Config | None = None) -> MeasureBackend:
         if self.connector is None:
             return _NoBackend()
-        catalog = StoreCatalog(self.store)
-        return FactLangBackend(self.connector, catalog=catalog, sampling=self._config.sampling)
+        sampling = (cfg or self._config).sampling
+        return FactLangBackend(self.connector, catalog=StoreCatalog(self.store), sampling=sampling)
 
     def _make_scheduler(self, cfg: Config) -> _Scheduler:
         return _Scheduler(self.store, self.backend, cfg, now=self._now, on_write=self._invalidate)
@@ -461,14 +484,14 @@ class Guru:
         blocked = self._no_measure()
         if blocked is not None:
             return blocked
+        # one scheduler per Guru (one lock): a budget override is a run-level guard
+        guard = None if budget is None else BudgetGuard(budget, self.store)
         sched = self._scheduler
-        if budget is not None:
-            sched = self._make_scheduler(replace(self._config, budget=budget))
         if all:
-            return sched.run(self._eager_order())
+            return sched.run(self._eager_order(), guard=guard)
         if targets is None:
-            return sched.run(drain_queue=True)
-        return sched.run(self._targets(targets))
+            return sched.run(drain_queue=True, guard=guard)
+        return sched.run(self._targets(targets), guard=guard)
 
     def measure_queue(self) -> MeasureReport:
         """Drain the measurement queue (first-touch and feedback tables) under the budget."""
@@ -603,7 +626,7 @@ class Guru:
         exact_cfg = replace(
             self._config, sampling=replace(self._config.sampling, measurement="off")
         )
-        self._make_scheduler(exact_cfg).run(list(dict.fromkeys(tables)))
+        self._scheduler.run(list(dict.fromkeys(tables)), config=exact_cfg)
         wanted = {(f.kind.name, f.subject) for f in sampled}
         fresh = self.store.facts_for(
             list({f.subject for f in sampled}), sorted({f.kind.name for f in sampled})
@@ -752,12 +775,23 @@ class Guru:
                 require_aware(self._now()).date(),
             )
             view = self._cache.get(key)
+            block: tuple[ObjectRef, ...] = ()
             if view is None:
                 view, unmeasured = self._render(question, budget_tokens, profile)
-                if unmeasured and self._on_demand(unmeasured):
-                    view, _ = self._render(question, budget_tokens, profile)
+                if unmeasured and cfg.measure_on_demand == "block" and self._no_measure() is None:
+                    block = unmeasured
                 else:
+                    self._enqueue(unmeasured)
                     self._cache.put(key, view)
+        if block:
+            # block mode (the user's opt-in to spend): measure OUTSIDE the façade lock, capped
+            # by block_timeout_s; whatever the cap leaves is re-queued by the scheduler
+            cap = cfg.budget.max_seconds
+            seconds = cfg.block_timeout_s if cap is None else min(cap, cfg.block_timeout_s)
+            guard = BudgetGuard(replace(cfg.budget, max_seconds=seconds), self.store)
+            self._scheduler.run(list(block), guard=guard)
+            with self._lock:
+                view, _ = self._render(question, budget_tokens, profile)
         return view if format == "text" else replace(view, format=format)
 
     def _render(
@@ -767,12 +801,8 @@ class Guru:
         c = self.counter
         # the candidates the fitter may pick from (seeds plus bridges): their hub hazard lines
         # are reserved up front, because a view never drops them
-        seeds = list(
-            dict.fromkeys(
-                ref.table_ref()
-                for ref, _ in self.retriever.search(question, self._config.scope.seed_k)
-            )
-        )
+        hits = self.retriever.search(question, self._config.scope.seed_k + NOT_SHOWN_PROBE)
+        seeds = list(dict.fromkeys(ref.table_ref() for ref, _ in hits))[: self._config.scope.seed_k]
         bridges = (
             []
             if r.graph is None
@@ -788,6 +818,8 @@ class Guru:
             budget_tokens=r.table_budget(budget_tokens, c, tables=[*seeds, *bridges]),
             cfg=self._config.scope,
             graph_cfg=self._config.graph,
+            hits=hits,
+            bridges=bridges,
         )
         view = r.view(
             question,
@@ -798,25 +830,21 @@ class Guru:
         )
         return view, scope.unmeasured
 
-    def _on_demand(self, unmeasured: Sequence[ObjectRef]) -> bool:
-        """First touch (spec 12.5): queue, or measure now in block mode. True if it measured."""
-        mode = self._config.measure_on_demand
-        if mode == "block" and self._no_measure() is None:
-            self._scheduler.run(list(unmeasured))
-            return True
+    def _enqueue(self, unmeasured: Sequence[ObjectRef]) -> None:
+        """First touch (spec 12.5): queue the tables; in background mode wake the drainer."""
         for ref in unmeasured:
             self.store.queue_push(ref, FIRST_TOUCH, 1.0)
-        if mode == "background":
+        if unmeasured and self._config.measure_on_demand == "background":
             self._ensure_drainer()
-        return False
 
     def _ensure_drainer(self) -> None:
-        if self.drainer is not None and self.drainer.is_alive():
-            return
-        if self._no_measure() is not None:
-            return
-        self.drainer = BackgroundDrainer(self._scheduler, self._drain_interval_s)
-        self.drainer.start()
+        with self._lock:
+            if self.drainer is not None and self.drainer.is_alive():
+                return
+            if self._no_measure() is not None:
+                return
+            self.drainer = BackgroundDrainer(self._scheduler, self._drain_interval_s)
+            self.drainer.start()
 
     def fingerprint_views(self, questions: Iterable[str]) -> dict[str, str]:
         """``{question: fingerprint}`` for a host's CI to detect prompt drift (spec 13.4)."""

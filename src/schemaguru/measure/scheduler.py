@@ -150,15 +150,31 @@ class Scheduler:
         *,
         drain_queue: bool = False,
         guard: BudgetGuard | None = None,
+        config: Config | None = None,
     ) -> MeasureReport:
         """Measure ``refs`` (default: every live table, or only the queue with ``drain_queue``).
 
         ``guard`` shares one byte budget across runs (the background drainer); by default each
-        run gets a fresh ``Budget``. On the total budget, and on any unexpected exception, the
-        tables not yet measured are pushed back onto the queue (then the exception propagates).
+        run gets a fresh ``Budget``. ``config`` overrides the scheduler's config for this run only
+        (e.g. exact measurement), under the same lock, so overrides never run alongside other
+        runs. On the total budget, and on any unexpected exception, the tables not yet measured
+        are pushed back onto the queue (then the exception propagates).
         """
         with self._lock:
-            return self._run(refs, drain_queue, guard)
+            if config is None:
+                return self._run(refs, drain_queue, guard)
+            saved, self.config = self.config, config
+            try:
+                return self._run(refs, drain_queue, guard)
+            finally:
+                self.config = saved
+
+    def reconfigure(self, config: Config, backend: MeasureBackend | None = None) -> None:
+        """Replace the config (and backend) between runs: waits for a running run to finish."""
+        with self._lock:
+            self.config = config
+            if backend is not None:
+                self.backend = backend
 
     def _run(
         self, refs: Sequence[ObjectRef] | None, drain_queue: bool, shared: BudgetGuard | None

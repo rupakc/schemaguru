@@ -1,13 +1,29 @@
 """Conservative SQL text helpers (layer 0): quote/comment-aware lexing, no parsing.
 
 Dialects disagree on comments (``--``, ``#``, ``//``, nested ``/* */``, MySQL's ``--`` needing a
-following space, a lone ``\\r`` ending a line comment), on quotes (``$tag$``, triple quotes,
-``[ident]``) and on backslash escapes. A lexer that guesses wrong can be made to hide a statement
-inside a "literal". Safety callers use :func:`agreed_lex`: the baseline segmentation is accepted
-only if it equals the segmentation under EVERY single-option variant. If no single option changes
-the segmentation, none of its triggers occurs in code (a trigger that is already inside a string
-or comment cannot matter), so no combination of options can change it either; combinations are
-therefore covered without enumerating them.
+following ASCII whitespace, a lone ``\\r`` ending a line comment), on quotes (``$tag$``, triple
+quotes, Oracle ``q'[...]'``, ``[ident]``) and on backslash escapes. A lexer that guesses wrong can
+be made to hide a statement inside a "literal" or inside a quoted identifier. Safety callers use
+:func:`agreed_lex`: the baseline lexing is accepted only if :func:`agrees` holds for EVERY
+single-option variant.
+
+:func:`agrees` compares the per-character kinds exactly (code, string or comment content,
+identifier content, and the delimiters of each), so every baseline string, comment and
+identifier span is the identical span in the variant. The one tolerated difference is a
+``[...]`` region of the bracket variant lying over baseline CODE whose content holds no quote
+(``'``, ``"``, backtick), no comment marker (``--``, ``/*``, ``#``, ``//``) and no ``;``: such
+content is plain code to every other option too, so treating it as code changes nothing.
+
+Why single variants cover combinations: the lexer is a left-to-right sequence of decisions, each
+made in code (which region starts here?) or inside a region (where does it end?). By induction,
+if the baseline and a combination are in the same state at a position, they make the same
+decision there: in code, an option of the combination could only act through its own trigger at
+that position, but then the single variant for that option would already have differed (or,
+for brackets, produced a harmless region that ends back in code with no trigger inside it); a
+region's end depends on at most one option per region kind (backslash for quotes, CR for line
+comments, nesting for block comments), each checked alone. So the combination's lexing equals
+the baseline's. This holds only because the comparison is exact; a property test checks it on
+random trigger-dense strings.
 """
 
 from __future__ import annotations
@@ -31,6 +47,7 @@ class Opts:
     backslash: bool = False  # backslash escapes the next character inside a literal
     cr: bool = False  # a lone '\r' ends a line comment
     bracket: bool = False  # [ident] quoting
+    qquote: bool = False  # Oracle q'X...X' alternative quoting
 
 
 # (variant, text that must occur for the variant to be able to differ from the baseline)
@@ -44,16 +61,21 @@ _VARIANTS: tuple[tuple[Opts, tuple[str, ...]], ...] = (
     (Opts(nested=True), ("/*",)),
     (Opts(backslash=True), ("\\",)),
     (Opts(bracket=True), ("[",)),
+    (Opts(qquote=True), ("q'", "Q'")),
 )
+
+_ASCII_WS = frozenset(" \t\n\v\f\r")
+_Q_CLOSE = {"[": "]", "(": ")", "{": "}", "<": ">"}
 
 _DOLLAR = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 
 
 class Lexed(NamedTuple):
-    kinds: str  # per char: c code, q string content, i identifier content, d delimiter,
-    #             D dollar delimiter, m comment
+    kinds: str  # per char: c code, q string content, d string delimiter, D dollar delimiter,
+    #             i identifier content, e identifier delimiter, m comment,
+    #             j bracket-identifier content, b bracket delimiter
     terminated: bool  # False when a literal or block comment is still open at the end
-    bang: bool  # a '/*!' conditional comment was seen
+    bang: bool  # a '/*!' or '/*M!' executable comment was seen
 
 
 @lru_cache(maxsize=64)
@@ -67,6 +89,8 @@ def _special(o: Opts) -> re.Pattern[str]:
         chars.add("$")
     if o.bracket:
         chars.add("[")
+    if o.qquote:
+        chars |= {"q", "Q"}
     return re.compile("[" + re.escape("".join(sorted(chars))) + "]")
 
 
@@ -81,6 +105,17 @@ def _line_end(sql: str, i: int, cr: bool) -> int:
         if k >= 0:
             j = k
     return j
+
+
+def _is_word(c: str) -> bool:
+    return c.isalnum() or c in "_$"
+
+
+def _word_before(sql: str, i: int) -> bool:
+    """True when ``sql[i]`` continues a word (``nq'`` / ``Nq'`` national prefix excepted)."""
+    if i == 0 or not _is_word(sql[i - 1]):
+        return False
+    return not (sql[i - 1] in "nN" and (i == 1 or not _is_word(sql[i - 2])))
 
 
 def lex(sql: str, o: Opts) -> Lexed:
@@ -103,7 +138,7 @@ def lex(sql: str, o: Opts) -> Lexed:
             (
                 ch == "-"
                 and sql.startswith("--", i)
-                and (not o.dd_space or i + 2 >= n or sql[i + 2].isspace() or ord(sql[i + 2]) < 32)
+                and (not o.dd_space or i + 2 >= n or sql[i + 2] in _ASCII_WS)
             )
             or (ch == "#" and o.hash)
             or (ch == "/" and o.slash and sql.startswith("//", i))
@@ -112,7 +147,7 @@ def lex(sql: str, o: Opts) -> Lexed:
             out.append("m" * (j - i))
             i = j
         elif o.comments and ch == "/" and sql.startswith("/*", i):
-            if sql.startswith("!", i + 2):
+            if sql.startswith("!", i + 2) or sql[i + 2 : i + 4] in ("M!", "m!"):
                 bang = True
             depth, j = 1, i + 2
             while j < n and depth:
@@ -163,12 +198,31 @@ def lex(sql: str, o: Opts) -> Lexed:
                 j = k
                 break
             if closed:
-                out.append("d" + "i" * (j - i - 1) + "d")
+                out.append("b" + "j" * (j - i - 1) + "b")
                 i = j + 1
             else:
                 terminated = False
-                out.append("d" + "i" * (n - i - 1))
+                out.append("b" + "j" * (n - i - 1))
                 i = n
+        elif ch in "qQ" and o.qquote:
+            if (
+                sql.startswith("'", i + 1)
+                and i + 2 < n
+                and sql[i + 2] not in " \t\r\n"
+                and not _word_before(sql, i)
+            ):
+                close = _Q_CLOSE.get(sql[i + 2], sql[i + 2]) + "'"
+                k = sql.find(close, i + 3)
+                if k < 0:
+                    terminated = False
+                    out.append("ddd" + "q" * (n - i - 3))
+                    i = n
+                else:
+                    out.append("ddd" + "q" * (k - i - 3) + "dd")
+                    i = k + 2
+            else:
+                out.append("c")
+                i += 1
         elif ch in o.quotes:
             if o.triple and ch in "'\"" and sql.startswith(ch * 3, i):
                 j = i + 3
@@ -184,6 +238,7 @@ def lex(sql: str, o: Opts) -> Lexed:
                     i = j + 3
                 continue
             kind = "i" if ch in '"`' else "q"
+            delim = "e" if kind == "i" else "d"
             j = i + 1
             closed = False
             if o.backslash:
@@ -212,9 +267,9 @@ def lex(sql: str, o: Opts) -> Lexed:
                     j = k
                     break
             j = min(j, n)
-            out.append("d" + kind * (j - i - 1))
+            out.append(delim + kind * (j - i - 1))
             if closed:
-                out.append("d")
+                out.append(delim)
                 i = j + 1
             else:
                 terminated = False
@@ -225,37 +280,48 @@ def lex(sql: str, o: Opts) -> Lexed:
     return Lexed("".join(out), terminated, bang)
 
 
-_HIDDEN = str.maketrans("qmcidD", "xxcccc")
+_BRACKET_REGION = re.compile(r"bj*b?")
+_BRACKET_UNSAFE = re.compile(r"[\'\"`;#]|--|/\*|//")
+_BRACKET_AS_CODE = str.maketrans("bj", "cc")
 
 
-def _membership(lx: Lexed) -> tuple[str, bool, bool]:
-    return lx.kinds.translate(_HIDDEN), lx.terminated, lx.bang
+def agrees(sql: str, base: Lexed, other: Lexed) -> bool:
+    """Whether ``other`` lexes ``sql`` the same way as ``base`` (see the module docstring).
+
+    Kinds must match exactly per character, except that a ``[...]`` region of ``other`` over
+    baseline code counts as code when its content holds no quote, comment marker or ``;``.
+    """
+    if other.terminated != base.terminated or other.bang != base.bang:
+        return False
+    kinds = other.kinds
+    if "b" in kinds:
+        for m in _BRACKET_REGION.finditer(kinds):
+            s, e = m.span()
+            if base.kinds[s:e].count("c") != e - s:
+                return False
+            if _BRACKET_UNSAFE.search(sql, s + 1, e - 1 if kinds[e - 1 : e] == "b" else e):
+                return False
+        kinds = kinds.translate(_BRACKET_AS_CODE)
+    return kinds == base.kinds
 
 
 def agreed_lex(sql: str) -> tuple[Lexed, bool]:
-    """Baseline segmentation and whether every single-option variant agrees with it.
+    """Baseline lexing and whether every single-option variant :func:`agrees` with it.
 
-    Segmentations are compared only on "inside a string or comment" membership: an
-    identifier-quoted region (``"..."``, backticks, ``[...]``) counts as code, because it cannot
-    hide anything from the baseline (a ``;`` or keyword inside ``[;]`` is still code to the
-    baseline's checks). A variant whose trigger text does not occur in ``sql`` cannot differ, so
-    it is skipped.
+    A variant whose trigger text does not occur in ``sql`` cannot differ, so it is skipped.
     """
     base = lex(sql, Opts())
-    base_sig = _membership(base)
-    agreed = True
     for o, triggers in _VARIANTS:
-        if any(t in sql for t in triggers) and _membership(lex(sql, o)) != base_sig:
-            agreed = False
-            break
-    return base, agreed
+        if any(t in sql for t in triggers) and not agrees(sql, base, lex(sql, o)):
+            return base, False
+    return base, True
 
 
 def scan(sql: str, o: Opts | None = None, *, backslash: bool = False) -> list[tuple[str, bool]]:
     """``(char, in_literal)`` per character; comments are not special (callers refuse them)."""
     opts = o if o is not None else Opts(quotes="'\"", comments=False, backslash=backslash)
     k = lex(sql, opts).kinds
-    return [(c, t in "qidD") for c, t in zip(sql, k, strict=True)]
+    return [(c, t in "qidDejb") for c, t in zip(sql, k, strict=True)]
 
 
 class Blanked(NamedTuple):
@@ -272,7 +338,7 @@ def blank(
     lx = lexed if lexed is not None else lex(sql, o if o is not None else Opts())
     out: list[str] = []
     for c, t in zip(sql, lx.kinds, strict=True):
-        if t == "c" or t == "d" or (t == "i" and keep_idents):
+        if t in "cde" or (t in "ijb" and keep_idents):
             out.append(c)
         elif t == "D":
             out.append("'")

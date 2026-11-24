@@ -1,27 +1,35 @@
 """Read-only SQL guard helper (layer 6, spec 16.4). It judges text; it never executes.
 
 This is a conservative DENY-LIST over text, NOT a sandbox. It is dialect-agnostic and refuses
-whatever it cannot read the same way in every dialect: the code/string/comment segmentation of
-the SQL, reduced to "inside a string or comment or not" (identifier-quoted regions count as code,
-so array subscripts like ``x[1]`` and ``arr[OFFSET(0)]`` are fine), must be identical under the
-baseline lexer and under each single dialect option (``#`` or
-``//`` comments, ``--`` needing a space, a lone CR ending a comment, ``$tag$`` strings, triple
-quotes, nested ``/* */``, backslash escapes, ``[ident]``); otherwise the SQL is refused as
-"ambiguous across SQL dialects". By design this refuses dialect-specific constructs whose meaning
-differs across dialects (``#`` comments, ``$$`` strings, ``[ident]`` holding a quote or
-comment marker, triple quotes), so some valid SQL is refused. ``U&`` escapes, backslashes in
-quoted identifiers and ``/*!`` comments are refused outright. Everything else is checked once,
-on the agreed segmentation: one statement, SELECT/WITH first, no DML/DDL keyword, no function
-that runs SQL from text.
+whatever it cannot read the same way in every dialect: the SQL is lexed by a baseline lexer and
+by each single dialect option (``#`` or ``//`` comments, ``--`` needing ASCII whitespace after
+it, a lone CR ending a comment, ``$tag$`` strings, triple quotes, Oracle ``q'[...]'``, nested
+``/* */``, backslash escapes, ``[ident]``), and every character must fall in the same class -
+code, string-or-comment, or identifier - with every string, comment and quoted identifier
+spanning exactly the same text. The one tolerated difference is a ``[...]`` region over baseline
+code whose content has no quote, comment marker or ``;`` (array subscripts like ``x[1]`` and
+``arr[OFFSET(0)]``). Anything else is refused as "ambiguous across SQL dialects"; since no single
+option changes the lexing, no combination of options can either (see
+:mod:`schemaguru._util.sqltext`). By design this refuses some valid dialect-specific SQL (``#``
+comments, ``$$`` strings, ``x['key']``, triple quotes). ``U&`` escapes, backslashes in quoted
+identifiers and ``/*!`` / ``/*M!`` executable comments are refused outright. Everything else is
+checked once, on the agreed lexing: one statement, SELECT/WITH first, no DML/DDL keyword, no
+function that runs SQL or opens a table or file named by text.
 
-It does not stop side-effecting or resource-heavy read-only constructs (``pg_sleep``,
-``pg_read_file``, expensive scans): the host must still run queries under a read-only database
-role with limits.
+It does not stop side-effecting or resource-heavy read-only constructs (``pg_sleep``, expensive
+scans): the host must still run queries under a read-only database role with limits.
 
-``never_query`` is enforced by name: any identifier outside a string or comment whose text equals
-the banned table's last name part (case-insensitively, quoted or not) refuses the SQL, wherever
-it appears and whatever catalog/schema qualifies it; so does any string literal containing that
-name (dynamic SQL is built from strings). The ``dialect`` argument is reserved.
+``never_query`` is BEST-EFFORT, meant to keep a COOPERATIVE agent away from a table; it is not
+isolation from an adversarial one, which needs warehouse permissions (a read-only role that
+cannot see the table). It is enforced by name: any identifier outside a string or comment whose
+text equals the banned table's last name part (case-insensitively, quoted or not) refuses the
+SQL, wherever it appears and whatever catalog/schema qualifies it; so does any string literal
+containing that name, after joining literals separated only by whitespace, comments or ``||``
+(dynamic SQL is built from strings). Escape sequences inside literals are not decoded. Functions
+that run SQL from text (``query_to_xml``, ``ts_stat``, DuckDB ``query``, ``dblink*``, ...) and
+functions that read files or foreign databases (``pg_read_file``, ``lo_import``, ``read_csv*``,
+``read_parquet*``, ``read_json*``, ``*_scan``, ...) are refused whatever their arguments, because
+they reach data without naming it as a catalog table. The ``dialect`` argument is reserved.
 """
 
 from __future__ import annotations
@@ -54,8 +62,21 @@ _TEXT_SQL_FUNCTIONS = frozenset(
         "cursor_to_xml",
         "query_table",
         "query_table_function",
-        "dblink",
-        "dblink_exec",
+        "schema_to_xml",
+        "schema_to_xmlschema",
+        "schema_to_xml_and_xmlschema",
+        "database_to_xml",
+        "database_to_xmlschema",
+        "database_to_xml_and_xmlschema",
+        "ts_stat",
+        "ts_rewrite",
+        "query",
+        "pg_read_file",
+        "pg_read_binary_file",
+        "lo_import",
+        "lo_export",
+        "read_text",
+        "read_blob",
         "exec",
         "execute",
         "sp_executesql",
@@ -64,6 +85,32 @@ _TEXT_SQL_FUNCTIONS = frozenset(
         "opendatasource",
     }
 )
+_TEXT_SQL_PREFIXES = ("dblink", "read_csv", "read_parquet", "read_json", "read_ndjson")
+_LITERAL_GLUE = re.compile(r"(?:\s|\|\|)*")
+
+
+def _reads_by_text(name: str) -> bool:
+    return (
+        name in _TEXT_SQL_FUNCTIONS or name.startswith(_TEXT_SQL_PREFIXES) or name.endswith("_scan")
+    )
+
+
+def _joined_literals(sql: str, kinds: str) -> list[str]:
+    """String-literal contents, adjacent literals (only whitespace, comments, delimiters or ``||``
+    between them) joined into one text."""
+    out: list[str] = []
+    prev_end = 0
+    for m in _STRING_RUN.finditer(kinds):
+        gap = "".join(
+            c if k == "c" else " "
+            for c, k in zip(sql[prev_end : m.start()], kinds[prev_end : m.start()], strict=True)
+        )
+        if out and _LITERAL_GLUE.fullmatch(gap):
+            out[-1] += sql[m.start() : m.end()]
+        else:
+            out.append(sql[m.start() : m.end()])
+        prev_end = m.end()
+    return out
 
 
 @dataclass(frozen=True)
@@ -90,7 +137,7 @@ def check_sql(
             reasons.append(r)
 
     if lexed.bang:
-        add("SG801: '/*!' conditional comments are not allowed")
+        add("SG801: '/*!' and '/*M!' executable comments are not allowed")
     if not lexed.terminated:
         add("SG801: unterminated quote or comment")
     if any(c == "\\" and k == "i" for c, k in zip(sql, lexed.kinds, strict=True)):
@@ -122,8 +169,8 @@ def check_sql(
             if key in names:
                 add(f"SG802: reads never-query table {ref.canonical()}")
         followed = i + 1 < len(toks) and toks[i + 1].text == "("
-        if followed and folded in _TEXT_SQL_FUNCTIONS:
-            add(f"SG801: {folded}() runs SQL from text")
+        if followed and _reads_by_text(folded):
+            add(f"SG801: {folded}() runs SQL or reads a table or file named by text")
         if followed and folded in ("identifier", "table"):
             plain = (
                 i + 3 < len(toks)
@@ -135,9 +182,8 @@ def check_sql(
             if folded == "table" and i + 2 < len(toks) and toks[i + 2].kind == "str":
                 add("SG802: a string given to TABLE( cannot be checked")
     if banned:
-        low = sql.casefold()
-        for m in _STRING_RUN.finditer(lexed.kinds):
-            lit = low[m.start() : m.end()]
+        for lit in _joined_literals(sql, lexed.kinds):
+            lit = lit.casefold()
             for key, ref in banned.items():
                 if key in lit:
                     add(f"SG802: a string literal names never-query table {ref.canonical()}")

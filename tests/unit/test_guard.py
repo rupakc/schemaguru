@@ -224,3 +224,172 @@ def test_guard_array_subscripts_pass(sql: str) -> None:
 )
 def test_guard_bracket_quote_bypasses_stay_rejected(sql: str) -> None:
     assert not check_sql(sql).ok
+
+
+# --- fix round 4 -------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sql", "nq"),
+    [
+        ('SELECT 1 AS [a"] ; DROP TABLE t ; SELECT 1 AS ["]', ()),
+        ("SELECT [a`] ; DROP TABLE t ; SELECT 1 AS [`]", ()),
+        ('SELECT 1 AS [a"], * FROM secret AS ["]', NQ),
+    ],
+)
+def test_guard_r4_identifier_span_must_match_in_every_variant(
+    sql: str, nq: list[ObjectRef]
+) -> None:
+    v = check_sql(sql, never_query=nq)
+    assert not v.ok and v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT x[1] FROM t",
+        "SELECT arr[OFFSET(0)] FROM t",
+        "SELECT arr[SAFE_ORDINAL(1)] FROM t",
+        "SELECT a[1:2] FROM t",
+        'SELECT "col[1]" FROM t',
+        'SELECT "a[b]" , x[2] FROM t',
+    ],
+)
+def test_guard_r4_harmless_brackets_still_pass(sql: str) -> None:
+    v = check_sql(sql, never_query=NQ)
+    assert v.ok, v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT x[';'] FROM t",
+        "SELECT x[a;b] FROM t",
+        "SELECT x[a#b] FROM t",
+        "SELECT x[a//b] FROM t",
+        "SELECT x[a/*b*/] FROM t",
+    ],
+)
+def test_guard_r4_bracket_region_with_unsafe_content_refused(sql: str) -> None:
+    assert check_sql(sql).reasons == ("SG801: ambiguous across SQL dialects",)
+
+
+@pytest.mark.parametrize(
+    "fn",
+    [
+        "schema_to_xml",
+        "schema_to_xmlschema",
+        "schema_to_xml_and_xmlschema",
+        "database_to_xml",
+        "database_to_xmlschema",
+        "database_to_xml_and_xmlschema",
+        "ts_stat",
+        "ts_rewrite",
+        "query",
+        "dblink_get_result",
+        "dblink_open",
+        "sqlite_scan",
+        "postgres_scan",
+        "mysql_scan",
+        "parquet_scan",
+        "pg_read_file",
+        "pg_read_binary_file",
+        "lo_import",
+        "lo_export",
+        "read_csv",
+        "read_csv_auto",
+        "read_parquet",
+        "read_json",
+        "read_json_auto",
+    ],
+)
+def test_guard_r4_text_and_file_functions_refused(fn: str) -> None:
+    v = check_sql(f"SELECT * FROM {fn}('x', true)")
+    assert not v.ok and any(fn in r for r in v.reasons)
+    v = check_sql(f'SELECT pg_catalog."{fn}"(1)')
+    assert not v.ok
+
+
+def test_guard_r4_function_names_as_columns_pass() -> None:
+    assert check_sql("SELECT query, read_count, ts_rank(v, q) FROM t").ok
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT ts_stat('select v from analytics.sec'\n'ret')",
+        "SELECT my_udf('select v from analytics.sec'\n'ret')",
+        "SELECT my_udf('select v from analytics.sec' /* c */ 'ret')",
+        "SELECT my_udf('select v from analytics.sec' -- c\n 'ret')",
+        "SELECT my_udf('select v from analytics.sec' || 'ret')",
+    ],
+)
+def test_guard_r4_adjacent_literals_are_joined(sql: str) -> None:
+    v = check_sql(sql, never_query=NQ)
+    assert not v.ok and any(r.startswith("SG802") for r in v.reasons)
+
+
+def test_guard_r4_separate_literals_not_joined_across_code() -> None:
+    assert check_sql("SELECT my_udf('sec', x, 'ret')", never_query=NQ).ok
+
+
+@pytest.mark.parametrize(
+    "sql", ["SELECT 1 /*M! ; DROP TABLE t */", "SELECT 1 /*M!100000 , 2 */ FROM t"]
+)
+def test_guard_r4_mariadb_executable_comment_refused(sql: str) -> None:
+    v = check_sql(sql)
+    assert not v.ok and v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 2 FROM s WHERE 1 --\N{NO-BREAK SPACE}; DROP TABLE t",
+        "SELECT 2 FROM s WHERE 1 --\u0085; DROP TABLE t",
+        "SELECT 2 FROM s WHERE 1 --\N{EM SPACE}; DROP TABLE t",
+    ],
+)
+def test_guard_r4_dash_dash_space_counts_only_ascii_whitespace(sql: str) -> None:
+    v = check_sql(sql)
+    assert not v.ok and v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT q'[ ' ]' FROM t FOR UPDATE --'",
+        "SELECT q'[ ' ]' , 1 ; DROP TABLE t --'",
+        "SELECT Q'{ ' }' , 1 ; DROP TABLE t --'",
+        "SELECT q'! ' !' , 1 ; DROP TABLE t --'",
+        "SELECT nq'< ' >' , 1 ; DROP TABLE t --'",
+    ],
+)
+def test_guard_r4_oracle_q_quote_refused(sql: str) -> None:
+    v = check_sql(sql)
+    assert not v.ok and v.reasons
+
+
+def test_guard_r4_single_variant_agreement_covers_every_combination() -> None:
+    """Property behind the design: if every single-option variant agrees with the baseline,
+    every COMBINATION of options agrees too (checked on random trigger-dense strings)."""
+    import dataclasses
+    import random
+
+    from schemaguru._util.sqltext import Opts, agreed_lex, agrees, lex
+
+    flags = [f.name for f in dataclasses.fields(Opts) if f.type in (bool, "bool")]
+    flags.remove("comments")
+    alphabet = [*"'\"`[]-/*#$\\\r\n ;aqQnM!x(", "\N{NO-BREAK SPACE}", "''", "--", "/*", "*/"]
+    rng = random.Random(20261124)
+    agreed_samples = 0
+    for _ in range(30_000):
+        sql = "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 10)))
+        base, ok = agreed_lex(sql)
+        if not ok:
+            continue
+        agreed_samples += 1
+        combos = [dict.fromkeys(flags, True)]
+        combos += [{f: rng.random() < 0.5 for f in flags} for _ in range(6)]
+        for c in combos:
+            assert agrees(sql, base, lex(sql, Opts(**c))), (sql, c)
+    assert agreed_samples > 1_000

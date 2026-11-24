@@ -7,6 +7,9 @@
 * an empty table -> ``UNMEASURABLE``, distinct from an all-null column (``NULL_RATE`` 1.0,
   ``dead``).
 * unknown is ``None``, never 0 or 1.0; counts are ``int``, rates ``float``.
+* observed values pass through the table's value policy before they are stored (spec 11):
+  ``masked`` (and ``raw`` unless ``store_raw_samples``) keeps shape tokens and records a ``PII``
+  fact; ``none`` keeps counts only.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ from schemaguru.model.facts import Fact, Provenance, Status
 from schemaguru.model.joins import JOIN_VALUE_KEYS, JoinRef, join_verdict
 from schemaguru.model.kinds import FactKind, KindSpec
 from schemaguru.model.refs import ObjectRef
+from schemaguru.pii import ValuePolicy, mask_value
 
 SOURCE = "measure"
 WILSON = "wilson95"
@@ -336,12 +340,11 @@ def _top_values(ctx: _Ctx, req: TopValues, p: Mapping[str, Any]) -> list[Fact]:
         {"value": _plain(v.get("value")), "count": _int(v.get("count"))}
         for v in (p.get("values") or [])
     ]
-    value: dict[str, Any] = {
-        **ident,
-        "observed": observed,
-        "distinct": distinct,
-        "non_null": non_null,
-    }
+    stored, categories = _apply_policy(ctx, req.column, observed)
+    value: dict[str, Any] = {**ident}
+    if stored is not None:
+        value["observed"] = stored
+    value.update(distinct=distinct, non_null=non_null, distinct_observed=len(observed))
     if ctx.sample is not None:
         # seen in the sample; a rare value absent from it is not claimed absent (spec 8.6)
         n = _int(p.get("sampled_rows", non_null))
@@ -349,7 +352,54 @@ def _top_values(ctx: _Ctx, req: TopValues, p: Mapping[str, Any]) -> list[Fact]:
         value.update(
             seen_in_sample=True, complete=False, estimate=dv.__dict__, **ctx.sample_info(n)
         )
-    return [ctx.fact(FactKind.VALUES, req.column, value)]
+    pii = [
+        Fact.make(
+            FactKind.PII,
+            req.column,
+            {"category": cat, "detector": cat},
+            Provenance.MEASURED,
+            Status.OBSERVED,
+            method="exact",
+            evidence=ctx.evidence,
+            source=SOURCE,
+            observed_at=ctx.observed_at,
+            snapshot_id=ctx.snapshot_id,
+        )
+        for cat in categories
+    ]
+    return [ctx.fact(FactKind.VALUES, req.column, value), *pii]
+
+
+def _apply_policy(
+    ctx: _Ctx, column: ObjectRef, observed: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]] | None, list[str]]:
+    """``(values to store or None, PII categories seen)`` under the table's policy (spec 11).
+
+    ``none`` stores no values; ``raw`` stores them verbatim only with ``store_raw_samples``;
+    otherwise each value is masked and identical tokens are merged by summing their counts.
+    """
+    mode = ValuePolicy.for_table(column, ctx.config.sampling)
+    if mode == "none":
+        return None, []
+    if mode == "raw" and ctx.config.sampling.store_raw_samples:
+        return observed, []
+    merged: dict[Any, dict[str, Any]] = {}
+    categories: list[str] = []
+    for item in observed:
+        v, n = item["value"], item["count"]
+        if v is not None:
+            masked, cat = mask_value(v)
+            if cat is not None:
+                v = masked
+                if cat not in categories:
+                    categories.append(cat)
+        key = (type(v).__name__, v)
+        prev = merged.get(key)
+        if prev is None:
+            merged[key] = {"value": v, "count": n}
+        elif n is not None:
+            prev["count"] = n if prev["count"] is None else prev["count"] + n
+    return list(merged.values()), categories
 
 
 def _cardinality(ml: int | None, mr: int | None) -> str | None:

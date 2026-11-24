@@ -419,3 +419,96 @@ def test_system_sample_estimates_are_approximate() -> None:
                                                   "distinct_keys": 1}}})  # fmt: skip
     assert all(f.value["estimate"]["approximate"] is False for f in facts)
     assert all("approximate" not in f.value for f in facts)
+
+
+# ---- spec 11: observed values pass through the table's value policy -----------------------
+
+EMAIL_COL = ObjectRef(None, "shop", "customers", "email")
+EMAIL_VALS = [
+    {"value": "alice@example.com", "count": 3},
+    {"value": "bob@example.com", "count": 2},
+    {"value": "carol@example.com", "count": 1},
+]
+EMAIL_PAYLOAD = {"non_null": 6, "distinct": 3, "values": EMAIL_VALS}
+
+
+def _cfg(mode: str, store_raw: bool = False) -> Config:
+    from dataclasses import replace
+
+    from schemaguru.config import SamplingConfig
+
+    return replace(CFG, sampling=SamplingConfig(llm_values=mode, store_raw_samples=store_raw))  # type: ignore[arg-type]
+
+
+def test_masked_mode_stores_shape_tokens_with_summed_counts_and_pii_fact() -> None:
+    facts = _facts(TopValues(EMAIL_COL, 20), EMAIL_PAYLOAD, config=_cfg("masked"))
+    v = _by(facts, "VALUES")
+    assert v.value["observed"] == [{"value": "<email>", "count": 6}]
+    assert v.value["distinct_observed"] == 3 and v.value["distinct"] == 3
+    assert "alice@example.com" not in repr([f.value for f in facts])
+    pii = _by(facts, "PII")
+    assert pii.subject == EMAIL_COL
+    assert pii.value == {"category": "email", "detector": "email"}
+    assert pii.provenance is Provenance.MEASURED and pii.status is Status.OBSERVED
+    assert pii.method == "exact"
+
+
+def test_default_config_masks() -> None:
+    v = _by(_facts(TopValues(EMAIL_COL, 20), EMAIL_PAYLOAD), "VALUES")
+    assert v.value["observed"] == [{"value": "<email>", "count": 6}]
+
+
+def test_none_mode_stores_counts_only() -> None:
+    facts = _facts(TopValues(EMAIL_COL, 20), EMAIL_PAYLOAD, config=_cfg("none"))
+    v = _by(facts, "VALUES")
+    assert "observed" not in v.value
+    assert v.value["distinct"] == 3 and v.value["non_null"] == 6
+    assert v.value["distinct_observed"] == 3
+    assert "example.com" not in repr([f.value for f in facts])
+
+
+def test_raw_mode_without_store_raw_samples_masks() -> None:
+    v = _by(_facts(TopValues(EMAIL_COL, 20), EMAIL_PAYLOAD, config=_cfg("raw")), "VALUES")
+    assert v.value["observed"] == [{"value": "<email>", "count": 6}]
+
+
+def test_raw_mode_with_store_raw_samples_keeps_raw() -> None:
+    facts = _facts(TopValues(EMAIL_COL, 20), EMAIL_PAYLOAD, config=_cfg("raw", True))
+    v = _by(facts, "VALUES")
+    assert v.value["observed"] == EMAIL_VALS
+    assert not [f for f in facts if f.kind.name == "PII"]
+
+
+def test_per_glob_policy_applies_to_the_table() -> None:
+    from dataclasses import replace
+
+    from schemaguru.config import SamplingConfig
+
+    cfg = replace(
+        CFG, sampling=SamplingConfig(llm_values="raw", per_glob={"shop.customers": "none"})
+    )
+    v = _by(_facts(TopValues(EMAIL_COL, 20), EMAIL_PAYLOAD, config=cfg), "VALUES")
+    assert "observed" not in v.value
+
+
+def test_enum_values_unchanged_by_masking_and_case_drift_still_reported() -> None:
+    from schemaguru.knowledge.resolve import resolve
+    from schemaguru.model.facts import Fact as F
+    from schemaguru.model.kinds import FactKind
+
+    col = ObjectRef(None, "shop", "orders", "status")
+    vals = [{"value": "paid", "count": 5000}, {"value": "PAID", "count": 412}]
+    facts = _facts(TopValues(col, 20), {"non_null": 5412, "distinct": 2, "values": vals})
+    v = _by(facts, "VALUES")
+    assert v.value["observed"] == vals and v.value["distinct_observed"] == 2
+    assert not [f for f in facts if f.kind.name == "PII"]
+    declared = F.make(
+        FactKind.VALUES,
+        col,
+        {"values": ["paid", "refunded"], "case_sensitive": True, "split": None},
+        Provenance.DECLARED,
+        Status.UNVERIFIED,
+    )
+    eff = resolve([declared, v], now=NOW, ttl_days=30)
+    contradictions = [c for e in eff.values() for c in e.contradictions]
+    assert any("observed also: PAID (412 rows)" in c for c in contradictions), contradictions

@@ -615,8 +615,12 @@ rows-per-key in the predecessor) and exists because nothing measured replaces it
 Human-authored constraints on paths, form `any* p any*`, compiled into a bitmask
 automaton with a dead state (emptiness decidable offline). Predicates: `node(t)`,
 `col(t.c)`, `edge(a.x->b.y)`, `any`. Exact matching only. A rule needs `because:`.
-Pair scope may require and forbid; node scope may only forbid and is withheld when the
-forbidden node is a search endpoint. ≤ 16 requirements per rule. A rule that cannot
+Pair scope may require and forbid; node scope may only forbid: a node rule
+`node: X` forbids routes through X as an intermediate, and its optional `forbid:` list
+adds further prohibitions; every node-scope prohibition is withheld for a search where
+the forbidden node is an endpoint. `any`/`col`/`edge` are not allowed in node-scope
+forbids (SG602). A chain that cannot be compiled (non-linear, missing join) is reported
+as an SG605 warning, never dropped silently. *(Clarified 2026-11-24 after review.)* ≤ 16 requirements per rule. A rule that cannot
 parse fails closed (error at load); a prohibition no edge can match is reported as a
 lint warning.
 

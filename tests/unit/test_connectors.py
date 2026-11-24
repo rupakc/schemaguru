@@ -145,17 +145,143 @@ def test_callable_and_unknown_driver_need_a_dialect(tmp_path: Path) -> None:
     assert as_connector(Conn(), "postgres").dialect == "postgres"
 
 
-def test_inline_literals_cannot_escape() -> None:
-    """Values the host cannot bind are inlined escaped for the dialect; NUL is refused."""
+# --- inline mode: a host with no bind parameters (round 2, CRITICAL injection fix) ----------
+
+PAYLOAD = "x\\' OR 1=1 --"  # x\' OR 1=1 --  : ends the literal where \' is an escape
+
+
+def _probe(template: str, dialect: str, **values: object) -> Any:
+    """A rendered probe straight to the connector (no FactLang guard in front of it)."""
+    from factlang.connectors.base import Arity
+    from factlang.semantics.filters import Param
+    from factlang.sql import RenderedProbe
+
+    params = tuple(
+        Param(k, v, "string" if isinstance(v, str) else "integer") for k, v in values.items()
+    )
+    return RenderedProbe(template, params, Arity.ROW_SET, None, dialect, "best_effort")
+
+
+def _escapes(sql: str) -> bool:
+    """Would ``OR 1=1`` run as code on a server that reads ``\\'`` as an escape (MySQL,
+    Snowflake, Postgres with standard_conforming_strings=off) or on one that does not?"""
+    from schemaguru._util.sqltext import Opts, scan
+
+    for backslash in (False, True):
+        chars = scan(sql, Opts(backslash=backslash))
+        code = "".join(" " if lit else c for c, lit in chars)
+        if "OR 1=1" in code:
+            return True
+    return False
+
+
+def test_old_backslash_and_ansi_quoters_let_the_payload_escape() -> None:
+    """Negative control: the round-1 quoters produce SQL the escape check flags."""
+
+    def old_ansi(t: str) -> str:
+        return "'" + t.replace("'", "''") + "'"
+
+    def old_backslashed(t: str) -> str:
+        return "'" + t.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+    template = "SELECT 1 AS x WHERE status = {{v}}"
+    assert _escapes(_probe(template, "snowflake", v=PAYLOAD).inline(old_ansi))
+    no_backslash_escapes = "' OR 1=1 -- "  # MySQL with NO_BACKSLASH_ESCAPES
+    assert _escapes(_probe(template, "mysql", v=no_backslash_escapes).inline(old_backslashed))
+    assert not _escapes("SELECT 1 AS x WHERE status = 'it''s'")
+
+
+@pytest.mark.parametrize("dialect", sorted({*sg.catalog.dialects(), "sqlite"}))
+def test_inline_refuses_the_injection_on_every_dialect(dialect: str) -> None:
     from factlang.connectors.base import ExecutionError
-    from factlang.connectors.base import run_metadata as fl_run
 
     got: list[str] = []
-    ansi = InlineConnector(lambda sql: got.append(sql) or [], "duckdb")
-    fl_run(ansi, "SELECT 1 AS x WHERE {{v}} = 'a'", {"v": "it's"})
-    assert "'it''s'" in got[-1]
-    bq = InlineConnector(lambda sql: got.append(sql) or [], "bigquery")
-    fl_run(bq, "SELECT 1 AS x WHERE {{v}} = 'a'", {"v": "a\\' OR 1=1 --"})
-    assert "'a\\\\\\' OR 1=1 --'" in got[-1]
-    with pytest.raises(ExecutionError):
-        fl_run(ansi, "SELECT 1 AS x WHERE {{v}} = 'a'", {"v": "a\x00b"})
+    conn = InlineConnector(lambda sql: got.append(sql) or [], dialect)
+    with pytest.raises(ExecutionError, match=r"SG109.*backslash"):
+        conn.execute(
+            _probe("SELECT 1 AS x WHERE status = {{v}}", dialect, v=PAYLOAD), timeout_s=None
+        )
+    assert got == []  # the host never saw it
+
+
+def test_inline_injection_end_to_end_through_check_fact(shop_path: Path, tmp_path: Path) -> None:
+    """The reviewer's repro: an agent's claim through an execute(sql) host is refused."""
+    conn = duckdb.connect(str(shop_path), read_only=True)
+    seen: list[str] = []
+
+    def execute(sql: str) -> list[dict[str, Any]]:
+        seen.append(sql)
+        return _dict_rows(conn, sql)
+
+    guru = sg.Guru(
+        connector=execute,
+        dialect="duckdb",
+        store=str(tmp_path / "s.db"),
+        config=sg.Config(agent_checks="allow"),
+    )
+    guru.crawl()
+    before = len(seen)
+    claim = "ROWS shop.orders VALUE >=0 WHERE status = '" + PAYLOAD.replace("'", "''") + "'"
+    out = guru.handle_tool_call("check_fact", {"claims": claim})
+    assert "OR 1=1" not in "".join(seen[before:])
+    assert not [s for s in seen[before:] if _escapes(s)]
+    assert [e["verdict"] for e in out["evidence"]] == ["error"]  # refused, not judged
+    assert len(seen) == before  # before the host ran anything
+    guru.close()
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [["a", "b"], float("nan"), float("inf"), -float("inf"), {"a": 1}, b"x", "a\x00b"],
+)
+def test_inline_refuses_non_scalars_and_non_finite(value: object) -> None:
+    from factlang.connectors.base import ExecutionError
+    from factlang.semantics.filters import Param
+
+    from schemaguru.catalog.executor import inline_problem
+
+    assert inline_problem(value) is not None
+    from factlang.connectors.base import Arity
+    from factlang.sql import RenderedProbe
+
+    conn = InlineConnector(lambda sql: [], "duckdb")
+    template = "SELECT 1 AS x WHERE c = {{v}}"
+    probe = RenderedProbe(
+        template, (Param("v", value, "string"),), Arity.ROW_SET, None, "duckdb", "best_effort"
+    )
+    with pytest.raises(ExecutionError, match="SG109"):
+        conn.execute(probe, timeout_s=None)
+
+
+def test_inline_scalars_ansi_doubling() -> None:
+    import datetime
+    from decimal import Decimal
+
+    from schemaguru.catalog.executor import inline_problem
+
+    for ok in ("O'Brien", 3, True, 1.5, Decimal("2.50"), datetime.date(2026, 1, 2), None):
+        assert inline_problem(ok) is None, ok
+    got: list[str] = []
+    conn = InlineConnector(lambda sql: got.append(sql) or [], "mysql")
+    conn.execute(_probe("SELECT 1 AS x WHERE name = {{v}}", "mysql", v="O'Brien"), timeout_s=None)
+    assert got == ["SELECT 1 AS x WHERE name = 'O''Brien'"]
+    assert not _escapes(got[0])
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "SELECT 1 AS x WHERE c = {{v}}; DELETE FROM shop.orders",
+        "SELECT 1 AS x WHERE c = {{v}} -- the rest is a comment",
+        "DELETE FROM shop.orders WHERE c = {{v}}",
+    ],
+)
+def test_inline_final_sql_goes_through_the_read_only_guard(template: str) -> None:
+    from factlang.connectors.base import ExecutionError
+
+    got: list[str] = []
+    conn = InlineConnector(lambda sql: got.append(sql) or [], "duckdb")
+    with pytest.raises(ExecutionError, match="SG104"):
+        conn.execute(_probe(template, "duckdb", v="ok"), timeout_s=None)
+    assert got == []

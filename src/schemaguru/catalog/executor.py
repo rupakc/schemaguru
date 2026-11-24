@@ -8,12 +8,15 @@ runs it and converts the placeholders to its driver's paramstyle. Only this modu
 from __future__ import annotations
 
 import contextlib
+import datetime
 import importlib
+import math
 import os
 import re
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
@@ -427,20 +430,32 @@ ACCEPTED_CONNECTORS = (
 )
 
 
-def _quote_for(dialect: str) -> Any:
-    """A string-literal quoter for ``dialect``: backslash-escaping engines escape backslashes
-    too, so a value can never end a literal early."""
-    if dialect in ("bigquery", "mysql", "clickhouse", "databricks"):
+# what a host without bind parameters may receive as a literal (spec 2 G2): plain scalars only
+_INLINE_TYPES = (str, int, float, Decimal, datetime.date, type(None))
 
-        def backslashed(text: str) -> str:
-            return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
-        return backslashed
+def inline_problem(value: object) -> str | None:
+    """Why ``value`` may not be inlined into SQL for a host with no bind parameters, or None.
 
-    def ansi(text: str) -> str:
-        return "'" + text.replace("'", "''") + "'"
+    Strings may not hold a backslash or NUL: whether ``\\'`` ends a literal depends on the
+    server's mode (MySQL, Snowflake, Postgres with ``standard_conforming_strings=off``), so
+    such a value has no spelling that is safe everywhere. Without them, doubling ``'`` is
+    unambiguous on every engine. Only plain scalars are allowed, and floats must be finite.
+    """
+    if not isinstance(value, _INLINE_TYPES):  # bool is an int; datetime is a date
+        return f"a {type(value).__name__} value cannot be inlined (scalars only)"
+    if isinstance(value, float) and not math.isfinite(value):
+        return f"a non-finite number ({value!r}) cannot be inlined"
+    if isinstance(value, Decimal) and not value.is_finite():
+        return f"a non-finite number ({value}) cannot be inlined"
+    if isinstance(value, str) and ("\\" in value or "\x00" in value):
+        return "a text value holding a backslash or NUL cannot be inlined safely"
+    return None
 
-    return ansi
+
+def _ansi(text: str) -> str:
+    """An ANSI string literal: quotes doubled (no backslash reaches here)."""
+    return "'" + text.replace("'", "''") + "'"
 
 
 def _as_rows(result: Any) -> list[dict[str, Any]]:
@@ -461,9 +476,16 @@ def _as_rows(result: Any) -> list[dict[str, Any]]:
 class InlineConnector:
     """A FactLang connector over a host that only runs SQL text: ``fn(sql) -> rows``.
 
-    The host takes no bind parameters, so values are inlined as literals, escaped for the
-    dialect (strings quoted, backslashes escaped where the engine treats them as escapes); NUL
-    is refused. Rows are mappings (or row objects with ``keys``/``items``).
+    The host has no driver binding, so values are inlined as literals, on every dialect the same
+    way (``SG109`` refuses anything else):
+
+    * only plain scalars (text, integers, booleans, finite numbers, decimals, dates,
+      timestamps, NULL); a list, NaN or infinity is refused;
+    * text holding a backslash or NUL is refused; all other text is ANSI-quoted (``'`` doubled),
+      which no server mode can read differently;
+    * the final SQL must pass the read-only guard (``SG104``) right before the host runs it.
+
+    Rows are mappings (or row objects with ``keys``/``items``).
     """
 
     paramstyle = "qmark"  # nominal: every value is inlined
@@ -471,14 +493,22 @@ class InlineConnector:
     def __init__(self, fn: Any, dialect: str) -> None:
         self.fn = fn
         self.dialect = dialect
-        self._quote = _quote_for(dialect)
 
     def execute(self, probe: Any, *, timeout_s: float | None) -> Any:
         base = importlib.import_module("factlang.connectors.base")
         for p in probe.params:
-            if isinstance(p.value, str) and "\x00" in p.value:
-                raise base.ExecutionError("a NUL character cannot be inlined", code="FL700")
-        sql = probe.inline(self._quote)
+            why = inline_problem(p.value)
+            if why is not None:
+                raise base.ExecutionError(
+                    f"SG109: {why}; this host takes SQL text only (pass a DB-API connection or "
+                    "an engine for bound parameters)",
+                    code="FL700",
+                )
+        sql = probe.inline(_ansi)
+        try:
+            check_metadata_sql(sql)  # read-only, one statement, no comment, on the final text
+        except CatalogError as e:
+            raise base.ExecutionError(f"SG104: inlined SQL refused: {e}", code="FL703") from None
         try:
             rows = _as_rows(self.fn(sql))
         except base.ExecutionError:

@@ -162,8 +162,11 @@ reader and the measurement backend from it: a DB-API connection (`duckdb`, `sqli
 `psycopg`, …; the dialect comes from the driver, or pass `dialect=`), a SQLAlchemy engine, a
 BigQuery client, a FactLang connector, or a plain function `execute(sql)` /
 `execute(sql, params)` returning rows as dicts (pass `dialect=`). A function that takes no
-parameters gets every value inlined as an escaped literal. Anything else raises `ConfigError`
-`SG107` naming the accepted types.
+parameters gets every value inlined as an ANSI literal. Such an `execute(sql)` or `query(sql)`
+host has no driver binding, so a probe whose text value holds a backslash (or a NUL, or is not
+a plain scalar) is refused (`SG109`) and its final SQL must pass the read-only guard; pass a
+DB-API connection or an engine for full support. Anything else raises `ConfigError` `SG107`
+naming the accepted types.
 
 ```python
 conn = duckdb.connect("warehouse.duckdb", read_only=True)

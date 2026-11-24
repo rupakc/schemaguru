@@ -32,6 +32,8 @@ CODES: Mapping[str, str] = MappingProxyType(
         "cannot be told (ConfigError naming the accepted types)",
         "SG108": "an installed plugin (entry point schemaguru.<point>) failed to load and was "
         "skipped",
+        "SG109": "a value cannot be inlined for a host without bind parameters (a backslash, NUL, "
+        "non-scalar or non-finite value); the probe is refused",
         "SG201": "overlay 'version' is missing or unsupported",
         "SG202": "overlay has an unknown key (a close match is suggested)",
         "SG203": "overlay reference does not resolve to anything in the store",

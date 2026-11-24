@@ -120,6 +120,28 @@ def _supersession(measured: Sequence[Fact]) -> tuple[list[Fact], list[Fact]]:
     return sorted(warn, key=_newest_first), sorted(gone, key=_newest_first)
 
 
+def _identity_key(f: Fact) -> str:
+    """The payload part of a fact's identity (``KindSpec.identity_fields``; whole value if None)."""
+    names = f.kind.identity_fields
+    ident = dict(f.value) if names is None else {n: f.value.get(n) for n in names}
+    return canonical_json(ident)
+
+
+def _supersession_by_identity(measured: Sequence[Fact]) -> tuple[list[Fact], list[Fact]]:
+    """``_supersession`` applied per identity: a measurement of another identity (a UNIQUE check
+    on candidate key ``email`` vs the declared key ``order_id``) never supersedes this one."""
+    by_ident: dict[str, list[Fact]] = {}
+    for m in measured:
+        by_ident.setdefault(_identity_key(m), []).append(m)
+    warn: list[Fact] = []
+    gone: list[Fact] = []
+    for ms in by_ident.values():
+        w, g = _supersession(ms)
+        warn += w
+        gone += g
+    return sorted(warn, key=_newest_first), sorted(gone, key=_newest_first)
+
+
 def _contradictions(
     kind: KindSpec, facts: Sequence[Fact], expectations: Sequence[Fact], measured: Sequence[Fact]
 ) -> list[str]:
@@ -225,7 +247,7 @@ def resolve(
         fs = groups[key]
         kind, subject = fs[0].kind, fs[0].subject
         measured = sorted((f for f in fs if f.provenance is Provenance.MEASURED), key=_newest_first)
-        measured_warn, superseded = _supersession(measured)
+        measured_warn, superseded = _supersession_by_identity(measured)
         if superseded:  # kept in `all`, but no longer warning
             older = {m.id for m in superseded}
             fs = [

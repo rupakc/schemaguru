@@ -179,10 +179,11 @@ def test_distinct_measured_all_retained_and_worst_warns() -> None:
     eff = resolve([a, b], now=NOW, ttl_days=14)[_key(FactKind.PII, STATUS)]
     assert {f.id for f in eff.all} == {a.id, b.id}
     assert eff.observed is not None and eff.observed.id == b.id
-    assert eff.contradictions == ()  # a newer measurement clears the older warning
+    # a newer measurement of ANOTHER identity (phone) never clears the older warning (email)
+    assert len(eff.contradictions) == 1
     older = next(f for f in eff.all if f.id == a.id)
-    assert older.status is Status.STALE  # kept in `all`, no longer warning
-    # but the newest measurement warns when it is the contradicted one
+    assert older.status is Status.CONTRADICTED
+    # and the newest measurement of an identity warns when it is the contradicted one
     a2 = Fact.make(
         FactKind.PII, STATUS, {"category": "email"}, Provenance.MEASURED,
         Status.CONTRADICTED, method="shape", observed_at=_ago(0),
@@ -378,30 +379,30 @@ def _eff_nr(*fs: Fact):  # type: ignore[no-untyped-def]
 
 def test_newer_sample_does_not_clear_exact_contradiction() -> None:
     bad = _nr("email", Status.CONTRADICTED, 3)
-    ok_sample = _nr("phone", Status.ESTIMATED, 1, method="sampled:1%")
+    ok_sample = _nr("email", Status.ESTIMATED, 1, method="sampled:1%")
     eff = _eff_nr(bad, ok_sample)
     assert len(eff.contradictions) == 1
     assert next(f for f in eff.all if f.id == bad.id).status is Status.CONTRADICTED
 
 
 def test_newer_sample_contradiction_shown_marked_sampled() -> None:
-    ok = _nr("phone", Status.OBSERVED, 3)
+    ok = _nr("email", Status.OBSERVED, 3)
     bad_sample = _nr("email", Status.CONTRADICTED, 1, method="sampled:1%")
     eff = _eff_nr(ok, bad_sample)
     assert len(eff.contradictions) == 1 and "[sampled]" in eff.contradictions[0]
 
 
 def test_newer_exact_ok_supersedes_older_contradiction() -> None:
-    bad = _nr("email", Status.CONTRADICTED, 3)
-    ok = _nr("phone", Status.OBSERVED, 1)
+    bad = _nr("email", Status.CONTRADICTED, 3, method="sampled:1%")
+    ok = _nr("email", Status.OBSERVED, 1)
     eff = _eff_nr(bad, ok)
     assert eff.contradictions == ()
     assert next(f for f in eff.all if f.id == bad.id).status is Status.STALE
 
 
 def test_older_sample_contradiction_not_cleared_by_newer_sample() -> None:
-    bad = _nr("email", Status.CONTRADICTED, 3, method="sampled:1%")
-    ok = _nr("phone", Status.ESTIMATED, 1, method="sampled:2%")
+    bad = _nr("email", Status.CONTRADICTED, 3)
+    ok = _nr("email", Status.ESTIMATED, 1, method="sampled:2%")
     assert len(_eff_nr(bad, ok).contradictions) == 1
 
 
@@ -465,3 +466,43 @@ def test_newest_error_is_a_warning_never_the_pivot() -> None:
     # with only an error, it is all there is
     eff = resolve([err], now=NOW, ttl_days=14)[_key(FactKind.NULL_RATE, col)]
     assert eff.primary is not None and eff.primary.status is Status.ERROR
+
+
+ORDERS_T = ObjectRef(None, "shop", "orders", None)
+
+
+def _pk(cols: list[str], status: Status, days: float, method: str = "exact") -> Fact:
+    return Fact.make(
+        FactKind.PRIMARY_KEY, ORDERS_T, {"columns": cols}, Provenance.MEASURED, status,
+        method=method, observed_at=_ago(days),
+    )  # fmt: skip
+
+
+def test_newer_exact_of_other_identity_does_not_supersede() -> None:
+    bad = _pk(["order_id"], Status.CONTRADICTED, 3)
+    other = _pk(["email"], Status.OBSERVED, 1)
+    eff = resolve([bad, other], now=NOW, ttl_days=14)[_key(FactKind.PRIMARY_KEY, ORDERS_T)]
+    assert len(eff.contradictions) == 1
+    assert next(f for f in eff.all if f.id == bad.id).status is Status.CONTRADICTED
+
+
+def test_same_identity_remeasure_still_supersedes_pk() -> None:
+    bad = _pk(["order_id"], Status.CONTRADICTED, 3, method="sampled:1%")
+    ok = _pk(["order_id"], Status.OBSERVED, 1)
+    eff = resolve([bad, ok], now=NOW, ttl_days=14)[_key(FactKind.PRIMARY_KEY, ORDERS_T)]
+    assert eff.contradictions == ()
+    assert next(f for f in eff.all if f.id == bad.id).status is Status.STALE
+
+
+def test_values_with_different_split_do_not_supersede() -> None:
+    def v(split: str | None, st: Status, days: float) -> Fact:
+        return Fact.make(
+            FactKind.VALUES, STATUS,
+            {"case_sensitive": True, "split": split, "observed": []},
+            Provenance.MEASURED, st, method="exact", observed_at=_ago(days),
+        )  # fmt: skip
+
+    bad, ok = v(None, Status.CONTRADICTED, 3), v(";", Status.OBSERVED, 1)
+    eff = resolve([bad, ok], now=NOW, ttl_days=14)[_key(FactKind.VALUES, STATUS)]
+    assert next(f for f in eff.all if f.id == bad.id).status is Status.CONTRADICTED
+    assert len(eff.contradictions) == 1

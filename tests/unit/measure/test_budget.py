@@ -92,13 +92,15 @@ def test_probe_larger_than_total_is_over_probe(store: SQLiteStore) -> None:
 
 
 def test_unknown_spend_is_recorded_as_unknown_not_zero(store: SQLiteStore) -> None:
-    g = BudgetGuard(Budget(), store)
+    g = BudgetGuard(Budget(max_bytes_per_probe=10, max_bytes_total=100), store)
     assert g.admit(_est(None)) == "run"
+    assert g.remaining_bytes() == 90  # charged pessimistically at max_bytes_per_probe
     g.record(_res(None))
-    assert g.unknown_spend == 1 and g.spent_bytes == 0
+    assert g.unknown_spend == 1 and g.spent_bytes == 10
     assert store.ledger_total("measure", "queries", None) == 1
     assert store.ledger_total("measure.unknown_bytes", "queries", None) == 1
-    assert store.ledger_total("measure", "bytes", None) == 0
+    assert store.ledger_total("measure.unknown_bytes", "bytes", None) == 10  # the charge
+    assert store.ledger_total("measure", "bytes", None) == 0  # no fake "real" bytes
 
 
 def test_new_run_keeps_bytes_resets_probes_and_clock(store: SQLiteStore) -> None:
@@ -115,3 +117,59 @@ def test_new_run_keeps_bytes_resets_probes_and_clock(store: SQLiteStore) -> None
 def test_zero_total_allows_nothing(store: SQLiteStore) -> None:
     g = BudgetGuard(Budget(max_bytes_per_probe=None, max_bytes_total=0), store)
     assert g.admit(_est(400)) == "over_total" and g.admit(_est(None)) == "over_total"
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.t = 0.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def _cycle(g: BudgetGuard, n: int) -> int:
+    """One run of up to ``n`` unknown-cost probes; returns how many were admitted and run."""
+    g.new_run()
+    ran = 0
+    for r in _reqs(n):
+        if g.admit(_est(None, r)) != "run":
+            break
+        g.record(_res(None, r))
+        ran += 1
+    return ran
+
+
+def test_unknown_cost_probes_are_bounded_across_runs(store: SQLiteStore) -> None:
+    clock = Clock()
+    g = BudgetGuard(Budget(max_bytes_per_probe=10, max_bytes_total=100), store, clock=clock)
+    total = sum(_cycle(g, 1000) for _ in range(5))  # 5 shared runs, one period
+    assert total == 10  # 100 / 10 per probe, not 5000
+
+
+def test_unknown_charge_falls_back_to_total(store: SQLiteStore) -> None:
+    g = BudgetGuard(Budget(max_bytes_per_probe=None, max_bytes_total=100), store)
+    assert _cycle(g, 50) == 1
+    big = BudgetGuard(Budget(max_bytes_per_probe=1000, max_bytes_total=100), store)
+    assert _cycle(big, 50) == 1  # a charge never exceeds the whole total
+
+
+def test_budget_refills_after_period(store: SQLiteStore) -> None:
+    clock = Clock()
+    g = BudgetGuard(Budget(max_bytes_per_probe=10, max_bytes_total=100, period_s=60.0), store,
+                    clock=clock)  # fmt: skip
+    assert _cycle(g, 50) == 10 and _cycle(g, 50) == 0
+    clock.t = 59.0
+    assert _cycle(g, 50) == 0
+    clock.t = 60.0
+    assert g.remaining_bytes() == 100
+    assert _cycle(g, 50) == 10
+    assert g.lifetime_spent_bytes == 200
+
+
+def test_no_refill_without_period(store: SQLiteStore) -> None:
+    clock = Clock()
+    g = BudgetGuard(Budget(max_bytes_per_probe=10, max_bytes_total=100, period_s=None), store,
+                    clock=clock)  # fmt: skip
+    assert _cycle(g, 50) == 10
+    clock.t = 10.0**9
+    assert _cycle(g, 50) == 0 and g.remaining_bytes() == 0

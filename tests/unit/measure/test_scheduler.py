@@ -385,3 +385,32 @@ def test_large_key_distinct_comes_from_keyhash(shop_store: SQLiteStore, conn: An
     assert d.value["distinct_keys"] == pytest.approx(10_000, rel=0.25)
     pk = one(shop_store, "PRIMARY_KEY", ORD)
     assert pk.value["row_count"] == pytest.approx(10_000, rel=0.25)
+
+
+def test_drainer_backoff_resets_after_clean_run(shop_store: SQLiteStore, conn: Any) -> None:
+    budget = Budget(max_bytes_total=1_000, max_bytes_per_probe=None, period_s=None)
+    cfg = Config(measure_on_demand="background", budget=budget)
+    d = BackgroundDrainer(Scheduler(shop_store, FakeBackend(conn, cost=lambda r: 300), cfg),
+                          interval_s=1.0)  # fmt: skip
+    for _ in range(3):
+        shop_store.queue_push(CUS, "first_touch", 1.0)
+        d.run_once()
+    assert d.wait_s > 1.0
+    shop_store.queue_pop(100)
+    clean = d.run_once()  # nothing queued: a clean run
+    assert not any(e.code == "SG302" for e in clean.errors) and d.wait_s == 1.0
+
+
+def test_drainer_refills_per_period(shop_store: SQLiteStore, conn: Any) -> None:
+    now = [0.0]
+    budget = Budget(max_bytes_total=1_000, max_bytes_per_probe=None, period_s=60.0)
+    cfg = Config(measure_on_demand="background", budget=budget)
+    d = BackgroundDrainer(Scheduler(shop_store, FakeBackend(conn, cost=lambda r: 400), cfg),
+                          interval_s=1.0, clock=lambda: now[0])  # fmt: skip
+    shop_store.queue_push(CUS, "first_touch", 1.0)
+    first = d.run_once()
+    assert first.over_budget == [CUS]
+    shop_store.queue_push(CUS, "first_touch", 1.0)
+    assert d.run_once().bytes == 0  # same period: nothing left
+    now[0] = 61.0
+    assert d.run_once().bytes > 0  # refilled

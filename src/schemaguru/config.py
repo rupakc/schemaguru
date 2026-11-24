@@ -27,6 +27,9 @@ class Budget:
     max_seconds: float | None = None
     crawl_bytes: int | None = None
     draft_budget_tokens: int | None = None
+    # a guard shared across runs (the background drainer) refills its byte total once per
+    # period; None = one total for the guard's lifetime
+    period_s: float | None = 86400.0
 
 
 @dataclass(frozen=True)

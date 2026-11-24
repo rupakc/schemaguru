@@ -61,3 +61,9 @@ def test_from_yaml(tmp_path: Path) -> None:
     p.write_text("- 1\n", encoding="utf-8")
     with pytest.raises(ConfigError):
         Config.from_yaml(p)
+
+
+def test_budget_period() -> None:
+    assert Budget().period_s == 86400.0
+    assert Config.from_mapping({"budget": {"period_s": None}}).budget.period_s is None
+    assert Config.from_mapping({"budget": {"period_s": 3600}}).budget.period_s == 3600

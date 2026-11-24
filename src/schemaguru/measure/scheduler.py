@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -165,7 +166,11 @@ class Scheduler:
         report = MeasureReport()
         guard = shared if shared is not None else BudgetGuard(self.config.budget, self.store)
         guard.new_run()
-        spent0, ucost0, uspend0 = guard.spent_bytes, guard.unknown_cost, guard.unknown_spend
+        spent0, ucost0, uspend0 = (
+            guard.lifetime_spent_bytes,
+            guard.unknown_cost,
+            guard.unknown_spend,
+        )
         snapshot = self._snapshot_id or self.store.latest_snapshot() or "live"
         targets: list[ObjectRef] = [r.table_ref() for r in refs] if refs is not None else []
         reasons: dict[ObjectRef, str] = {}
@@ -200,7 +205,7 @@ class Scheduler:
                     requeue(targets[i:], "interrupted")  # nothing popped is ever lost
                     raise
         finally:
-            report.bytes = guard.spent_bytes - spent0
+            report.bytes = guard.lifetime_spent_bytes - spent0
             report.unknown_cost_probes = guard.unknown_cost - ucost0
             report.unknown_spend_probes = guard.unknown_spend - uspend0
         return report
@@ -428,14 +433,21 @@ class BackgroundDrainer:
 
     MAX_BACKOFF = 64  # the wait after repeated SG302 is at most interval_s * MAX_BACKOFF
 
-    def __init__(self, scheduler: Scheduler, interval_s: float = 5.0) -> None:
+    def __init__(
+        self,
+        scheduler: Scheduler,
+        interval_s: float = 5.0,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         if scheduler.config.measure_on_demand != "background":
             raise ValueError("BackgroundDrainer needs Config(measure_on_demand='background')")
         self.scheduler = scheduler
         self.interval_s = interval_s
         self.wait_s = interval_s
         # one byte budget for the drainer's whole life: never max_bytes_total per loop
-        self.guard = BudgetGuard(scheduler.config.budget, scheduler.store)
+        # (refilled once per Budget.period_s)
+        self.guard = BudgetGuard(scheduler.config.budget, scheduler.store, clock=clock)
         self.last_report: MeasureReport | None = None
         self.last_error: BaseException | None = None
         self._stop = threading.Event()

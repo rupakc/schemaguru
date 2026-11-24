@@ -102,3 +102,10 @@ How to apply: `BudgetGuard` counts admitted-but-unrecorded known costs; a probe 
 the whole total is `over_probe` (SG301, not re-queued); unknown spend is ledgered as
 `measure.unknown_bytes`, never 0. `BackgroundDrainer` holds one guard for its life and backs off
 after SG302. Any exception in `Scheduler.run` re-queues the unmeasured tables before propagating.
+
+## 2026-11-24 - Unknown-cost probes are charged pessimistically; shared budgets refill per period
+Why: an unknown cost added 0, so a shared 100-byte guard admitted 5000 unknown-cost probes.
+How to apply: `BudgetGuard` charges an unknown cost at `max_bytes_per_probe` (else the total,
+never more than the total) for admission and the committed total, and ledgers it under
+`measure.unknown_bytes` (count + charge). `Budget.period_s` (default 86400, `None` = lifetime)
+refills a shared guard's total; `MeasureReport.bytes` uses `lifetime_spent_bytes` deltas.

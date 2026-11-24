@@ -115,14 +115,11 @@ def _pii_looking(subject: ObjectRef, prev: Eff, new: Eff) -> bool:
     return bool(subject.column and _PII_NAME.search(subject.column))
 
 
-def _is_new_column(subject: ObjectRef, prev: Eff) -> bool:
-    if subject.column is None:
-        return False
-    key = subject.canonical()
-    return not any(k[1] == key for k in prev)
+def _is_new_column(subject: ObjectRef, prev_subjects: Collection[str]) -> bool:
+    return subject.column is not None and subject.canonical() not in prev_subjects
 
 
-def _default(c: Change, prev: Eff, new: Eff) -> ChangeClass:
+def _default(c: Change, prev: Eff, new: Eff, prev_subjects: Collection[str]) -> ChangeClass:
     f = _fact(c)
     after = c.after
     if after is not None and after.status is Status.CONTRADICTED:
@@ -134,7 +131,7 @@ def _default(c: Change, prev: Eff, new: Eff) -> ChangeClass:
             return ChangeClass.REVIEW
         if (
             isinstance(f.subject, ObjectRef)
-            and _is_new_column(f.subject, prev)
+            and _is_new_column(f.subject, prev_subjects)
             and _pii_looking(f.subject, prev, new)
         ):
             return ChangeClass.REVIEW
@@ -147,7 +144,11 @@ def _default(c: Change, prev: Eff, new: Eff) -> ChangeClass:
         old, cur = _observed_values(c.before), _observed_values(c.after)
         if old is None or cur is None:
             return ChangeClass.REVIEW
-        return ChangeClass.REVIEW if old - cur else ChangeClass.BENIGN
+        if not old - cur:
+            return ChangeClass.BENIGN
+        if (c.after.method or "").startswith("sampled:"):
+            return ChangeClass.NOT_MEASURED  # a sample never claims a value is absent (spec 8.6)
+        return ChangeClass.REVIEW
     if f.kind.name in MEASURED_KINDS and f.provenance is Provenance.MEASURED:
         return ChangeClass.BENIGN if _verdict(c.before) == _verdict(c.after) else ChangeClass.REVIEW
     return ChangeClass.REVIEW
@@ -155,15 +156,36 @@ def _default(c: Change, prev: Eff, new: Eff) -> ChangeClass:
 
 def _not_measured(
     c: Change, checks_run: Collection[str], measured_tables: Collection[ObjectRef]
-) -> bool:
+) -> bool:  # measured_tables should be a set (membership is tested per change)
     b = c.before
     if c.change != "removed" or b is None:
         return False
     if b.provenance is Provenance.CATALOG:
         return CATALOG_CHECK not in checks_run
     if b.provenance is Provenance.MEASURED and b.kind.name in MEASURED_KINDS:
-        return b.kind.name not in checks_run or not (_table_of(b.subject) & set(measured_tables))
+        return b.kind.name not in checks_run or not any(
+            t in measured_tables for t in _table_of(b.subject)
+        )
     return False
+
+
+def _classify(
+    change: Change,
+    prev: Eff,
+    new: Eff,
+    checks_run: Collection[str] | None,
+    measured: Collection[ObjectRef],
+    prev_subjects: Collection[str],
+) -> ChangeClass:
+    if change.kind is TABLE_WITHDRAWN:
+        return ChangeClass.REVIEW
+    if checks_run is not None and _not_measured(change, checks_run, measured):
+        return ChangeClass.NOT_MEASURED
+    for c in _CUSTOM:
+        got = c.classify(change, prev, new)
+        if got is not None:
+            return got
+    return _default(change, prev, new, prev_subjects)
 
 
 def classify_change(
@@ -175,15 +197,10 @@ def classify_change(
     measured_tables: Collection[ObjectRef] = (),
 ) -> ChangeClass:
     """Classify one change; ``checks_run=None`` skips the NOT_MEASURED rule."""
-    if change.kind is TABLE_WITHDRAWN:
-        return ChangeClass.REVIEW
-    if checks_run is not None and _not_measured(change, checks_run, measured_tables):
-        return ChangeClass.NOT_MEASURED
-    for c in _CUSTOM:
-        got = c.classify(change, prev_effective, new_effective)
-        if got is not None:
-            return got
-    return _default(change, prev_effective, new_effective)
+    subjects = {k[1] for k in prev_effective}
+    return _classify(
+        change, prev_effective, new_effective, checks_run, set(measured_tables), subjects
+    )
 
 
 def classify_changes(
@@ -194,13 +211,10 @@ def classify_changes(
     checks_run: Collection[str] | None = None,
     measured_tables: Collection[ObjectRef] = (),
 ) -> list[tuple[Change, ChangeClass]]:
+    """Classify many changes; the lookup sets are built once, not per change."""
+    subjects = {k[1] for k in prev_effective}
+    measured = set(measured_tables)
     return [
-        (
-            c,
-            classify_change(
-                c, prev_effective, new_effective,
-                checks_run=checks_run, measured_tables=measured_tables,
-            ),
-        )
+        (c, _classify(c, prev_effective, new_effective, checks_run, measured, subjects))
         for c in changes
-    ]  # fmt: skip
+    ]

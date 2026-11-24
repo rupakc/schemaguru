@@ -66,7 +66,8 @@ class MeasureReport:
     errors: list[Diagnostic] = field(default_factory=list)
     bytes: int = 0
     sampled_tables: list[ObjectRef] = field(default_factory=list)
-    # fact-kind names this run produced facts for (what the run actually checked, spec 15)
+    # fact-kind names this run produced a non-ERROR fact for (what it actually checked, spec 15);
+    # a check that was attempted and errored is not in it
     checks_run: set[str] = field(default_factory=set)
     # unknown is not 0 (spec 25.1): ``bytes`` is a lower bound while either count is non-zero
     unknown_cost_probes: int = 0  # admitted without a known cost estimate
@@ -236,7 +237,7 @@ class Scheduler:
             if facts:
                 self.store.put_facts(facts)
                 report.facts_written += len(facts)
-                report.checks_run |= {f.kind.name for f in facts}
+                report.checks_run |= {f.kind.name for f in facts if f.status is not Status.ERROR}
             if ran:
                 report.measured_tables.append(ref)
 

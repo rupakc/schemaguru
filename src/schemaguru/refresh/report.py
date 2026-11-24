@@ -48,6 +48,7 @@ class RefreshReport:
     snapshot_id: str | None = None
     previous_snapshot_id: str | None = None
     checks_run: frozenset[str] = field(default_factory=frozenset)
+    missing_checks: list[str] = field(default_factory=list)
 
     def counts(self) -> dict[str, int]:
         c = Counter(cls.value for _, cls in self.changes)
@@ -59,6 +60,7 @@ class RefreshReport:
             "snapshot_id": self.snapshot_id,
             "previous_snapshot_id": self.previous_snapshot_id,
             "checks_run": sorted(self.checks_run),
+            "missing_checks": list(self.missing_checks),
             "counts": self.counts(),
             "changes": [
                 {
@@ -81,6 +83,7 @@ class RefreshReport:
                 "measured_tables": [t.canonical() for t in self.measure.measured_tables],
                 "facts_written": self.measure.facts_written,
                 "over_budget": [t.canonical() for t in self.measure.over_budget],
+                "sampled_tables": [t.canonical() for t in self.measure.sampled_tables],
                 "bytes": self.measure.bytes,
                 "errors": [d.to_dict() for d in self.measure.errors],
             },
@@ -101,6 +104,10 @@ class RefreshReport:
             f"{self.measure.facts_written} fact(s), {self.measure.bytes} bytes",
             "- changes: " + ", ".join(f"{k.value.lower()} {n[k.value]}" for k in _ORDER),
         ]
+        if self.missing_checks:
+            lines.append(
+                "- missing checks (run before, not now): " + ", ".join(self.missing_checks)
+            )
         for cls in _ORDER:
             rows = [(c, k) for c, k in self.changes if k is cls]
             if not rows:

@@ -14,7 +14,7 @@ from schemaguru.pii.detectors import (
     register_detector,
     reset_detectors,
 )
-from schemaguru.pii.mask import mask_value
+from schemaguru.pii.mask import mask_free_text, mask_text, mask_value, scrub_tree, sql_template
 from schemaguru.pii.policy import ValuePolicy
 from schemaguru.pii.sweep import sweep
 
@@ -24,8 +24,12 @@ __all__ = [
     "ValuePolicy",
     "all_detectors",
     "classify_column",
+    "mask_free_text",
+    "mask_text",
     "mask_value",
     "register_detector",
     "reset_detectors",
+    "scrub_tree",
+    "sql_template",
     "sweep",
 ]

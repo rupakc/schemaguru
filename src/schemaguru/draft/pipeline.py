@@ -33,7 +33,7 @@ from schemaguru._util.hashing import canonical_json, stable_hash
 from schemaguru._util.timeutil import require_aware, utcnow
 from schemaguru.config import Budget, Config
 from schemaguru.diagnostics import Diagnostic, Severity
-from schemaguru.draft.inputs import DraftInput, build_inputs, mask_free_text
+from schemaguru.draft.inputs import DraftInput, build_inputs
 from schemaguru.draft.provider import (
     DRAFT_SCHEMA,
     TABLE_DRAFT_SCHEMA,
@@ -47,6 +47,7 @@ from schemaguru.model.joins import JOIN_VALUE_KEYS, JoinRef
 from schemaguru.model.kinds import FactKind, KindSpec
 from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays.schema import GLOBAL_SUBJECT
+from schemaguru.pii import mask_free_text
 from schemaguru.store.protocol import Store
 
 PROMPT_NAME = "table_v1.md"

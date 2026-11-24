@@ -16,6 +16,7 @@ import importlib
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from schemaguru.config import SamplingConfig
 from schemaguru.diagnostics import Diagnostic, Severity
 from schemaguru.measure.backend import CostEstimate, MeasureResult
 from schemaguru.measure.requests import (
@@ -31,6 +32,8 @@ from schemaguru.measure.requests import (
 )
 from schemaguru.model.evidence import Evidence
 from schemaguru.model.refs import ObjectRef
+from schemaguru.pii import ValuePolicy, scrub_tree, sql_template
+from schemaguru.pii.policy import Mode
 
 CAPABILITIES = (
     "measure",
@@ -234,7 +237,43 @@ def payload_for(req: Request, payloads: Sequence[Any]) -> dict[str, Any] | None:
     return dict(_row(payloads[0]))
 
 
-def _evidence(fl_evidence: Any, plans_evidence: Sequence[Any]) -> Evidence | None:
+_RESTRICTION = {"none": 0, "masked": 1, "raw": 2}
+
+
+def _request_tables(req: Request) -> list[ObjectRef]:
+    if isinstance(req, KeyOverlapReq):
+        return [c.table_ref() for c in (*req.join.left, *req.join.right)]
+    if isinstance(req, TopValues | Freshness | PatternRate):
+        return [req.column.table_ref()]
+    return [req.table]
+
+
+def evidence_mode(req: Request | None, sampling: SamplingConfig) -> Mode:
+    """How evidence for ``req`` may be stored (spec 11): the most restrictive table policy.
+
+    ``raw`` survives only with ``store_raw_samples``; otherwise it is stored masked. Without a
+    request (a free-form ``check``) every configured mode counts, so no glob is widened.
+    """
+    if req is None:
+        modes = [sampling.llm_values, *sampling.per_glob.values()]
+    else:
+        modes = [ValuePolicy.for_table(t, sampling) for t in _request_tables(req)]
+    mode = min(modes, key=lambda m: _RESTRICTION.get(m, 0))
+    if mode == "raw" and not sampling.store_raw_samples:
+        return "masked"
+    return mode  # type: ignore[return-value]
+
+
+def _scrub_params(params: Sequence[Any], mode: Mode) -> tuple[Any, ...]:
+    if mode == "none":
+        return tuple("?" if isinstance(p, str) else p for p in params)
+    return tuple(scrub_tree(list(params), mode))
+
+
+def _evidence(
+    fl_evidence: Any, plans_evidence: Sequence[Any], *, mode: Mode = "masked"
+) -> Evidence | None:
+    """FactLang evidence as stored: values scrubbed by ``mode``, SQL kept as a template only."""
     if fl_evidence is None:
         return None
     to_dict = getattr(fl_evidence, "to_dict", None)
@@ -249,17 +288,30 @@ def _evidence(fl_evidence: Any, plans_evidence: Sequence[Any]) -> Evidence | Non
             "fraction": str(getattr(sample, "fraction", "")),
             "seed": getattr(sample, "seed", None),
         }
-    return Evidence(
-        claim_text=getattr(fl_evidence, "claim_text", None),
-        verdict=getattr(fl_evidence, "verdict", None),
-        sql=getattr(fl_evidence, "sql", None),
-        params=tuple(getattr(fl_evidence, "params", ()) or ()),
-        dialect=getattr(fl_evidence, "dialect", None),
-        tier=getattr(fl_evidence, "tier", None),
-        duration_ms=getattr(fl_evidence, "duration_ms", None),
-        bytes_processed=None if any(b is None for b in spent) else sum(int(b) for b in spent),
-        sample=sample,
-        raw=dict(raw) if isinstance(raw, Mapping) else {},
+    return _scrubbed(
+        Evidence(
+            claim_text=getattr(fl_evidence, "claim_text", None),
+            verdict=getattr(fl_evidence, "verdict", None),
+            sql=getattr(fl_evidence, "sql", None),
+            params=tuple(getattr(fl_evidence, "params", ()) or ()),
+            dialect=getattr(fl_evidence, "dialect", None),
+            tier=getattr(fl_evidence, "tier", None),
+            duration_ms=getattr(fl_evidence, "duration_ms", None),
+            bytes_processed=None if any(b is None for b in spent) else sum(int(b) for b in spent),
+            sample=sample,
+            raw=dict(raw) if isinstance(raw, Mapping) else {},
+        ),
+        mode,
+    )
+
+
+def _scrubbed(ev: Evidence, mode: Mode) -> Evidence:
+    return dataclasses.replace(
+        ev,
+        claim_text=None if ev.claim_text is None else scrub_tree(ev.claim_text, mode),
+        sql=None if ev.sql is None else sql_template(ev.sql),
+        params=_scrub_params(ev.params, mode),
+        raw=scrub_tree(dict(ev.raw), mode),
     )
 
 
@@ -274,7 +326,15 @@ def _diagnostic(err: Any) -> Diagnostic:
 class FactLangBackend:
     """``MeasureBackend`` over a FactLang connector and a store-backed catalog."""
 
-    def __init__(self, connector: Any, *, catalog: Any, **checker_kwargs: Any) -> None:
+    def __init__(
+        self,
+        connector: Any,
+        *,
+        catalog: Any,
+        sampling: SamplingConfig | None = None,
+        **checker_kwargs: Any,
+    ) -> None:
+        self._sampling = sampling if sampling is not None else SamplingConfig()
         self._caps = capabilities()
         self._checker: Any = None
         self._ir: _IR | None = None
@@ -321,7 +381,7 @@ class FactLangBackend:
             mine = ms[a:b]
             err = next((m.error for m in mine if getattr(m, "error", None) is not None), None)
             evs = [getattr(m, "evidence", None) for m in mine]
-            ev = _evidence(evs[0] if evs else None, evs)
+            ev = _evidence(evs[0] if evs else None, evs, mode=evidence_mode(r, self._sampling))
             if err is not None:
                 out[n] = MeasureResult(r, None, ev, _diagnostic(err))
             else:
@@ -355,16 +415,19 @@ class FactLangBackend:
             raw = o.to_dict() if callable(getattr(o, "to_dict", None)) else {}
             verdict = getattr(o, "verdict", None)
             out.append(
-                Evidence(
-                    claim_text=getattr(o, "claim_text", None) or getattr(o, "text", None),
-                    verdict=getattr(verdict, "value", verdict),
-                    sql=getattr(ev, "sql", None),
-                    params=tuple(getattr(ev, "params", ()) or ()),
-                    dialect=getattr(ev, "dialect", None),
-                    tier=getattr(ev, "tier", None),
-                    duration_ms=getattr(ev, "duration_ms", None),
-                    bytes_processed=getattr(ev, "bytes_processed", None),
-                    raw=dict(raw) if isinstance(raw, Mapping) else {},
+                _scrubbed(
+                    Evidence(
+                        claim_text=getattr(o, "claim_text", None) or getattr(o, "text", None),
+                        verdict=getattr(verdict, "value", verdict),
+                        sql=getattr(ev, "sql", None),
+                        params=tuple(getattr(ev, "params", ()) or ()),
+                        dialect=getattr(ev, "dialect", None),
+                        tier=getattr(ev, "tier", None),
+                        duration_ms=getattr(ev, "duration_ms", None),
+                        bytes_processed=getattr(ev, "bytes_processed", None),
+                        raw=dict(raw) if isinstance(raw, Mapping) else {},
+                    ),
+                    evidence_mode(None, self._sampling),
                 )
             )
         return out

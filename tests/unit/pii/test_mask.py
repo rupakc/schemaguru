@@ -56,3 +56,10 @@ def test_mask_idempotent_examples() -> None:
     ]:
         once = mask_value(v)[0]
         assert mask_value(once)[0] == once
+
+
+def test_mask_free_text_lives_in_pii_and_masks_shapes() -> None:
+    from schemaguru.pii import mask_free_text
+
+    text, hits = mask_free_text("Binder Error: value 'alice@example.com' is not valid")
+    assert "alice@example.com" not in text and "<email>" in text and hits >= 1

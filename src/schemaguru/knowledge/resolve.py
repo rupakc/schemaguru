@@ -17,6 +17,7 @@ from schemaguru.model.facts import Fact, Provenance, Status, Waiver
 from schemaguru.model.joins import JoinRef
 from schemaguru.model.kinds import KindSpec
 from schemaguru.model.refs import ObjectRef
+from schemaguru.pii import mask_value
 
 # Kinds whose truth is structural: CATALOG beats everything (rule 3: existence and type only).
 STRUCTURAL_KINDS = frozenset({"TYPE_NOTE"})
@@ -165,16 +166,28 @@ def _contradictions(
     for expectation in expectations if kind.name == "VALUES" else ():
         declared = _declared_values(expectation)
         obs_facts = [m for m in measured if isinstance(m.value.get("observed"), list)]
+        if declared is not None and not obs_facts:
+            if any(m.value.get("value_policy") == "none" for m in measured):
+                out.append("declared values not compared (value policy: none)")
+            continue
         if declared is not None and obs_facts:
+            # observed values stored masked: compare and render both sides as shape tokens, so a
+            # PII-shaped declared list neither false-contradicts nor echoes its raw values
+            masked = any(of.value.get("value_policy") != "raw" for of in obs_facts)
+            norm = _masked if masked else str
+            declared = sorted({norm(d) for d in declared})
             cs = bool(expectation.value.get("case_sensitive", True))
             known = {_fold(d, cs) for d in declared}
             # value -> (count, seen by an exact measurement); union over pivot and newer samples
             extra: dict[str, tuple[int | None, bool]] = {}
             for of in obs_facts:
                 for item in of.value["observed"]:
-                    if not isinstance(item, dict) or _fold(str(item.get("value")), cs) in known:
+                    if not isinstance(item, dict):
                         continue
-                    v, n = str(item.get("value")), item.get("count")
+                    v = norm(str(item.get("value")))
+                    if _fold(v, cs) in known:
+                        continue
+                    n = item.get("count")
                     n = n if isinstance(n, int) else None
                     old = extra.get(v)
                     exact = (old[1] if old else False) or not _is_sample(of)
@@ -209,6 +222,12 @@ def _contradictions(
                 else:
                     out.append(f"expected primary key {claim}; catalog primary key {truth}")
     return list(dict.fromkeys(out))
+
+
+def _masked(v: str) -> str:
+    """A value as it is stored under the masked policy (its shape token, or itself)."""
+    text, cat = mask_value(v)
+    return text if cat is not None else v
 
 
 def _fold(s: str, case_sensitive: bool) -> str:

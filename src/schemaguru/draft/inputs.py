@@ -28,8 +28,7 @@ from schemaguru.config import Config
 from schemaguru.model.facts import Fact, Provenance, Status
 from schemaguru.model.joins import JoinRef
 from schemaguru.model.refs import ObjectRef
-from schemaguru.pii import ValuePolicy, mask_value, sweep
-from schemaguru.pii.detectors import name_spans, names_enabled
+from schemaguru.pii import ValuePolicy, mask_free_text, mask_value, sweep
 from schemaguru.pii.policy import Mode
 from schemaguru.store.protocol import Store
 
@@ -72,28 +71,6 @@ class _Values:
         if cat is not None:
             self.masked.add((column, cat))
         return text
-
-
-def mask_free_text(text: str) -> tuple[str, int]:
-    """Mask personal data *inside* prose (comments, messages); return ``(text, hits)``.
-
-    The outbound :func:`~schemaguru.pii.sweep` (shapes: email, IBAN, card, ...) plus the
-    embedded person-name masking ``mask_value`` uses (``name_spans`` when names are enabled).
-    Only for free text: identifiers (table/column names) never go through name masking.
-    """
-    masked, hits = sweep(text)
-    if names_enabled():
-        spans = name_spans(masked)
-        if spans:
-            out: list[str] = []
-            pos = 0
-            for a, b in spans:
-                out.append(masked[pos:a])
-                out.append("<name>")
-                pos = b
-            out.append(masked[pos:])
-            masked, hits = "".join(out), hits + len(spans)
-    return masked, hits
 
 
 def _sweep_tree(node: Any) -> tuple[Any, int]:

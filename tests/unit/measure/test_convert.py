@@ -512,3 +512,80 @@ def test_enum_values_unchanged_by_masking_and_case_drift_still_reported() -> Non
     eff = resolve([declared, v], now=NOW, ttl_days=30)
     contradictions = [c for e in eff.values() for c in e.contradictions]
     assert any("observed also: PAID (412 rows)" in c for c in contradictions), contradictions
+
+
+def test_error_message_is_swept_before_storage() -> None:
+    col = ObjectRef(None, "shop", "customers", "email")
+    [f] = _facts(
+        TopValues(col, 20),
+        None,
+        Diagnostic("SG303", Severity.ERROR, "Conversion Error: 'alice@example.com' to INT"),
+    )
+    assert "alice@example.com" not in f.value["message"] and "<email>" in f.value["message"]
+
+
+def test_masking_that_collapses_values_marks_merged() -> None:
+    v = _by(_facts(TopValues(EMAIL_COL, 20), EMAIL_PAYLOAD), "VALUES")
+    assert v.value["merged"] is True and v.value["value_policy"] == "masked"
+    enum = _by(
+        _facts(
+            TopValues(ObjectRef(None, "shop", "orders", "status"), 20),
+            {
+                "non_null": 3,
+                "distinct": 2,
+                "values": [{"value": "a", "count": 2}, {"value": "b", "count": 1}],
+            },
+        ),
+        "VALUES",
+    )
+    assert "merged" not in enum.value
+
+
+def _contradictions_for(facts: list[Fact]) -> list[str]:
+    from schemaguru.knowledge.resolve import resolve
+
+    eff = resolve(facts, now=NOW, ttl_days=30)
+    return [c for e in eff.values() for c in e.contradictions]
+
+
+def _declared(col: ObjectRef, values: list[str]) -> Fact:
+    from schemaguru.model.kinds import FactKind
+
+    return Fact.make(
+        FactKind.VALUES,
+        col,
+        {"values": values, "case_sensitive": True, "split": None},
+        Provenance.DECLARED,
+        Status.UNVERIFIED,
+    )
+
+
+def test_pii_declared_values_are_masked_before_comparison_and_rendering() -> None:
+    v = _by(_facts(TopValues(EMAIL_COL, 20), EMAIL_PAYLOAD), "VALUES")
+    decl = _declared(EMAIL_COL, ["alice@example.com", "bob@example.com", "carol@example.com"])
+    out = _contradictions_for([decl, v])
+    assert not [c for c in out if "observed also" in c], out  # no false contradiction
+    assert "example.com" not in repr(out)
+    # a genuinely undeclared shape is still reported, without echoing raw declared values
+    phone = Fact.make(
+        v.kind,
+        EMAIL_COL,
+        {
+            **v.value,
+            "observed": [{"value": "<email>", "count": 6}, {"value": "<phone>", "count": 2}],
+        },
+        Provenance.MEASURED,
+        Status.OBSERVED,
+        method="exact",
+        observed_at=NOW,
+    )
+    out = _contradictions_for([decl, phone])
+    assert any("observed also: <phone> (2 rows)" in c for c in out), out
+    assert "example.com" not in repr(out)
+
+
+def test_policy_none_says_values_were_not_compared() -> None:
+    v = _by(_facts(TopValues(EMAIL_COL, 20), EMAIL_PAYLOAD, config=_cfg("none")), "VALUES")
+    out = _contradictions_for([_declared(EMAIL_COL, ["x@example.com"]), v])
+    assert any("values not compared (value policy: none)" in c for c in out), out
+    assert "example.com" not in repr(out)

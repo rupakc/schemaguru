@@ -37,7 +37,7 @@ from schemaguru.model.facts import Fact, Provenance, Status
 from schemaguru.model.joins import JOIN_VALUE_KEYS, JoinRef, join_verdict
 from schemaguru.model.kinds import FactKind, KindSpec
 from schemaguru.model.refs import ObjectRef
-from schemaguru.pii import ValuePolicy, mask_value
+from schemaguru.pii import ValuePolicy, mask_free_text, mask_value
 
 SOURCE = "measure"
 WILSON = "wilson95"
@@ -178,7 +178,13 @@ def to_facts(
             ctx.fact(
                 k,
                 s,
-                {**ident, "reason": reason, "code": code, "message": result.error.message},
+                {
+                    **ident,
+                    "reason": reason,
+                    "code": code,
+                    # warehouse errors can quote the offending value back
+                    "message": mask_free_text(result.error.message)[0],
+                },
                 Status.ERROR,
             )
             for k, s, ident in _targets(req)
@@ -340,11 +346,17 @@ def _top_values(ctx: _Ctx, req: TopValues, p: Mapping[str, Any]) -> list[Fact]:
         {"value": _plain(v.get("value")), "count": _int(v.get("count"))}
         for v in (p.get("values") or [])
     ]
-    stored, categories = _apply_policy(ctx, req.column, observed)
+    mode, stored, categories = _apply_policy(ctx, req.column, observed)
     value: dict[str, Any] = {**ident}
     if stored is not None:
         value["observed"] = stored
-    value.update(distinct=distinct, non_null=non_null, distinct_observed=len(observed))
+    value.update(
+        distinct=distinct, non_null=non_null, distinct_observed=len(observed), value_policy=mode
+    )
+    if categories:
+        value["masked_categories"] = list(categories)
+    if stored is not None and len(stored) < len(observed):
+        value["merged"] = True  # masking collapsed distinct values into one token
     if ctx.sample is not None:
         # seen in the sample; a rare value absent from it is not claimed absent (spec 8.6)
         n = _int(p.get("sampled_rows", non_null))
@@ -372,17 +384,19 @@ def _top_values(ctx: _Ctx, req: TopValues, p: Mapping[str, Any]) -> list[Fact]:
 
 def _apply_policy(
     ctx: _Ctx, column: ObjectRef, observed: list[dict[str, Any]]
-) -> tuple[list[dict[str, Any]] | None, list[str]]:
-    """``(values to store or None, PII categories seen)`` under the table's policy (spec 11).
+) -> tuple[str, list[dict[str, Any]] | None, list[str]]:
+    """``(stored mode, values to store or None, PII categories seen)`` (spec 11).
+
+    The stored mode is ``raw`` only when raw values were actually kept.
 
     ``none`` stores no values; ``raw`` stores them verbatim only with ``store_raw_samples``;
     otherwise each value is masked and identical tokens are merged by summing their counts.
     """
     mode = ValuePolicy.for_table(column, ctx.config.sampling)
     if mode == "none":
-        return None, []
+        return "none", None, []
     if mode == "raw" and ctx.config.sampling.store_raw_samples:
-        return observed, []
+        return "raw", observed, []
     merged: dict[Any, dict[str, Any]] = {}
     categories: list[str] = []
     for item in observed:
@@ -399,7 +413,7 @@ def _apply_policy(
             merged[key] = {"value": v, "count": n}
         elif n is not None:
             prev["count"] = n if prev["count"] is None else prev["count"] + n
-    return list(merged.values()), categories
+    return "masked", list(merged.values()), categories
 
 
 def _cardinality(ml: int | None, mr: int | None) -> str | None:

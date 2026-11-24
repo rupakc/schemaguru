@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Callable, Sequence
 
 from schemaguru.__about__ import __version__
-from schemaguru.catalog.executor import _redact
 from schemaguru.cli import commands as cmd
 from schemaguru.errors import ConfigError, SchemaGuruError
 
@@ -131,9 +131,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SystemExit as e:  # argparse: 0 for --help/--version, 2 for bad usage
         return e.code if isinstance(e.code, int) else EXIT_INVALID
     handler: Handler | None = getattr(args, "handler", None)
-    io = cmd.IO(args.format)
+    io = cmd.IO(args.format, [args.url, os.environ.get("SCHEMAGURU_URL")])
     if handler is None:
-        parser.print_usage(sys.stderr)
+        parser.print_help(sys.stderr)
         io.error("a command is required (see schemaguru --help)")
         return EXIT_INVALID
     try:
@@ -154,5 +154,5 @@ def main(argv: Sequence[str] | None = None) -> int:
         io.error(f"{type(e).__name__}: {e}")
         return EXIT_ERROR
     except Exception as e:  # a driver error must not print a traceback holding a URL
-        io.error(f"{type(e).__name__}: {_redact(str(e))}")
+        io.error(f"{type(e).__name__}: {io.scrub(str(e))}")
         return EXIT_ERROR

@@ -9,6 +9,7 @@ import importlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -35,6 +36,27 @@ _DRAFT_ONLY_KEYS = ("prompt_hash", "candidate")
 _REJECTED_KEY = "review.rejected"
 
 
+_URL_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
+_TRAILING = "'\")>]},.;:"
+
+
+def scrub(text: str, known: Sequence[str | None] = ()) -> str:
+    """``text`` with credentials removed from every URL in it and the rest left intact.
+
+    The exact strings in ``known`` (the ``--url`` value) are replaced by their redacted form
+    first; then every URL-shaped token is redacted. Never redacts a whole message.
+    """
+    for url in sorted({u for u in known if u}, key=len, reverse=True):
+        text = text.replace(url, _redact(url))
+
+    def one(m: re.Match[str]) -> str:
+        tok = m.group(0)
+        body = tok.rstrip(_TRAILING)
+        return _redact(body) + tok[len(body) :]
+
+    return _URL_TOKEN.sub(one, text)
+
+
 class UsageError(Exception):
     """Invalid input: reported on stderr, exit code 2."""
 
@@ -42,8 +64,12 @@ class UsageError(Exception):
 class IO:
     """Where output goes: results on stdout in ``fmt``; diagnostics and prompts on stderr."""
 
-    def __init__(self, fmt: str = "text") -> None:
+    def __init__(self, fmt: str = "text", known: Sequence[str | None] = ()) -> None:
         self.fmt = fmt
+        self.known = list(known)
+
+    def scrub(self, text: str) -> str:
+        return scrub(text, self.known)
 
     def raw(self, text: str) -> None:
         sys.stdout.write(text if text.endswith("\n") else text + "\n")
@@ -63,16 +89,17 @@ class IO:
             self.raw("\n".join(lines))
 
     def error(self, message: str) -> None:
-        sys.stderr.write(f"error: {_redact(message)}\n")
+        sys.stderr.write(f"error: {self.scrub(message)}\n")
 
     def warn(self, message: str) -> None:
-        sys.stderr.write(f"warning: {_redact(message)}\n")
+        sys.stderr.write(f"warning: {self.scrub(message)}\n")
 
     def diagnostics(self, items: Sequence[Diagnostic]) -> None:
         for d in items:
             where = f" [{d.location}]" if d.location else ""
             hint = f" (hint: {d.hint})" if d.hint else ""
-            sys.stderr.write(f"{d.severity.value.lower()} {d.code}{where}: {d.message}{hint}\n")
+            line = f"{d.severity.value.lower()} {d.code}{where}: {d.message}{hint}"
+            sys.stderr.write(self.scrub(line) + "\n")
 
     def prompt(self, text: str) -> str | None:
         """One line from stdin (prompt on stderr so ``--format json`` stdout stays clean)."""
@@ -400,9 +427,14 @@ def review(args: argparse.Namespace, io: IO) -> int:
             while True:
                 ans = io.prompt("accept? [y]es [n]o [e]dit [s]kip [q]uit: ")
                 key = (ans or "q").strip().lower()[:1]
+                # each decision is applied as it is made: an interrupt loses none of them
                 if key == "y":
+                    guru.accept([f.id], write_overlay=args.write_overlay)
                     accepted.append(f.id)
                 elif key == "n":
+                    guru.store.crawl_state_set(
+                        _REJECTED_KEY, {"ids": sorted(_rejected(guru) | {f.id})}
+                    )
                     rejected.append(f.id)
                 elif key == "s":
                     skipped += 1
@@ -414,16 +446,12 @@ def review(args: argparse.Namespace, io: IO) -> int:
                     if new is None:
                         continue
                     guru.store.put_facts([new])
+                    guru.accept([new.id], write_overlay=args.write_overlay)
                     accepted.append(new.id)
                 else:
                     sys.stderr.write("please answer y, n, e, s or q\n")
                     continue
                 break
-        if rejected:
-            ids = sorted(_rejected(guru) | set(rejected))
-            guru.store.crawl_state_set(_REJECTED_KEY, {"ids": ids})
-        if accepted:
-            guru.accept(accepted, write_overlay=args.write_overlay)
     data = {
         "accepted": accepted,
         "rejected": rejected,
@@ -778,7 +806,7 @@ def _doctor_checks(args: argparse.Namespace) -> list[dict[str, Any]]:
                 _check(
                     "connectivity",
                     "FAIL",
-                    f"{type(e).__name__}: {_redact(str(e))}",
+                    f"{type(e).__name__}: {scrub(str(e), [url])}",
                     "check the URL, credentials and network; install the warehouse extra",
                 )
             )

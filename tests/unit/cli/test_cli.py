@@ -516,3 +516,62 @@ def test_python_dash_m_entry_point(tmp_path: Path) -> None:
     )
     assert p.returncode == 0 and "schemaguru 0.1.0" in p.stdout
     assert main(["--version"]) == 0
+
+
+# ----- fix round 1: redaction of URLs only, review durability, help ------------------------------
+
+
+def test_errors_stay_informative_and_hide_only_the_password(run: Run) -> None:
+    for argv in (
+        ("crawl", "--url", "postgresql://bob:hunter2@nohost.invalid/db"),
+        ("doctor", "--url", "postgresql://bob:hunter2@nohost.invalid/db"),
+    ):
+        code, out, err = run(*argv)
+        text = out + err
+        assert code == 3 and "hunter2" not in text, text
+        assert text.strip() != "error: ***"
+        assert len(text.strip()) > 20  # names the failure, not just a mask
+
+
+def test_scrub_leaves_non_url_text_alone() -> None:
+    from schemaguru.cli.commands import scrub
+
+    msg = "contact ops@example.com or bob@host about it"
+    assert scrub(msg) == msg
+    url = "postgresql://bob:hunter2@h.example/db"
+    out = scrub(f"cannot open {url}: timeout; retry via ({url}) for ops@example.com", [url])
+    assert "hunter2" not in out and "bob" not in out
+    assert out.startswith("cannot open ") and "timeout" in out and "ops@example.com" in out
+    # a URL the user never passed is still caught by shape; trailing punctuation survives
+    other = scrub("tried 'mysql://u:pw@x.example/d'.")
+    assert "pw" not in other and other.startswith("tried '") and other.endswith("'.")
+    # the exact --url string is replaced even when its password holds an '@'
+    odd = "postgresql://u:p@ss@h.example/d"
+    assert "p@ss" not in scrub(f"failed on {odd}", [odd])
+
+
+def test_review_decisions_survive_ctrl_c(
+    run: Run, crawled: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drafts = seed_drafts(crawled, 4)
+    answers = iter(["y", "n", None])
+
+    def prompt(self: object, text: str) -> str | None:
+        v = next(answers)
+        if v is None:
+            raise KeyboardInterrupt
+        return v
+
+    monkeypatch.setattr("schemaguru.cli.commands.IO.prompt", prompt)
+    code, _, err = run("review", "--store", crawled)
+    assert code == 130 and "interrupted" in err
+    assert human_texts(crawled) == [str(drafts[0].value["text"])]
+    monkeypatch.undo()
+    code, out, _ = run("review", "--store", crawled, "--format", "json", stdin="q\n")
+    assert jloads(out)["reviewed"] == 2  # the accepted and the rejected one are gone
+
+
+def test_no_command_prints_full_help(run: Run) -> None:
+    code, out, err = run()
+    assert code == 2 and out == ""
+    assert "usage:" in err and "export-drafts" in err and "a command is required" in err

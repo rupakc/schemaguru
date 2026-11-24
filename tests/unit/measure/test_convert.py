@@ -453,6 +453,16 @@ def test_masked_mode_stores_shape_tokens_with_summed_counts_and_pii_fact() -> No
     assert pii.method == "exact"
 
 
+def test_pii_fact_from_a_sample_is_marked_sampled() -> None:
+    """A PII classification drawn from sampled values carries the sample's method and is an
+    estimate, like every other fact of that probe (spec 8.6: marked sampled everywhere)."""
+    key = SampleChoice("keyhash", Decimal("0.1"), 7, ("customer_id",))
+    facts = _facts(TopValues(EMAIL_COL, 20, sample=key), EMAIL_PAYLOAD, config=_cfg("masked"))
+    v, pii = _by(facts, "VALUES"), _by(facts, "PII")
+    assert pii.method == v.method == key.method_string()
+    assert pii.status is Status.ESTIMATED and pii.status is v.status
+
+
 def test_default_config_masks() -> None:
     v = _by(_facts(TopValues(EMAIL_COL, 20), EMAIL_PAYLOAD), "VALUES")
     assert v.value["observed"] == [{"value": "<email>", "count": 6}]

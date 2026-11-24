@@ -384,20 +384,10 @@ def _top_values(ctx: _Ctx, req: TopValues, p: Mapping[str, Any]) -> list[Fact]:
                 "non_null": ctx.ev(non_null, None, None, "scaled", False).__dict__,
                 "distinct": dv.__dict__,
             }
+    # the classification is as good as the values it was read from: a sampled probe's PII
+    # fact carries the sample's method and is an estimate (spec 8.6)
     pii = [
-        Fact.make(
-            FactKind.PII,
-            req.column,
-            {"category": cat, "detector": cat},
-            Provenance.MEASURED,
-            Status.OBSERVED,
-            method="exact",
-            evidence=ctx.evidence,
-            source=SOURCE,
-            observed_at=ctx.observed_at,
-            snapshot_id=ctx.snapshot_id,
-        )
-        for cat in categories
+        ctx.fact(FactKind.PII, req.column, {"category": cat, "detector": cat}) for cat in categories
     ]
     return [ctx.fact(FactKind.VALUES, req.column, value), *pii]
 

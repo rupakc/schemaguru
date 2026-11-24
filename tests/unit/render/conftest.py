@@ -17,7 +17,7 @@ class _Inline:
 
 @pytest.fixture
 def fake_factlang(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
-    """A FactLang with ``parse_filter`` and ``sql.render_join`` (real ones: Task 25)."""
+    """A FactLang with ``parse_filter`` and ``sql.render_join``/``JoinEdge`` (real signatures)."""
     import sys
     import types
 
@@ -30,7 +30,9 @@ def fake_factlang(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
             return None, [types.SimpleNamespace(severity="ERROR", message="bad")]
         return text, []
 
-    def render_join(edges: object, *, dialect: str, filters: object, aliases: object) -> _Inline:
+    def render_join(
+        edges: object, dialect: str, *, filters: object = None, aliases: object = None
+    ) -> _Inline:
         seen.update(edges=edges, dialect=dialect, filters=filters, aliases=aliases)
         return _Inline("FROM <join>")
 
@@ -43,6 +45,7 @@ def fake_factlang(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     monkeypatch.setitem(sys.modules, "factlang.semantics.refs", refs)
     sql = types.ModuleType("factlang.sql")
     sql.render_join = render_join  # type: ignore[attr-defined]
+    sql.JoinEdge = lambda left, right, cast_to=None: (left, right, cast_to)  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "factlang.sql", sql)
     monkeypatch.setattr(factlang, "parse_filter", parse_filter, raising=False)
     monkeypatch.setattr(fragments, "_capable", lambda name: True)

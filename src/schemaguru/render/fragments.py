@@ -66,35 +66,53 @@ def render_join_snippet(
                 )
             )
         return None
+    if len(set(path.tables)) != len(path.tables):
+        if bag is not None:
+            bag.add(
+                Diagnostic(
+                    "SG501",
+                    Severity.INFO,
+                    "join snippet not rendered: the path revisits a table (a self-join), which "
+                    "FactLang's render_join does not render",
+                )
+            )
+        return None
     try:
         fl = importlib.import_module("factlang")
         sql = importlib.import_module("factlang.sql")
         refs = importlib.import_module("factlang.semantics.refs")
         edges = []
-        # the same alias per table occurrence as the rendered path text (orders, orders_2)
-        aliases = dict(enumerate(path_aliases(list(path.tables))))
         for hop in path.hops:
             join = hop.edge.join
-            left = [_column(refs, c) for c in join.left]
-            right = [_column(refs, c) for c in join.right]
-            pairs = list(zip(left, right, strict=True))
+            left = tuple(_column(refs, c) for c in join.left)
+            right = tuple(_column(refs, c) for c in join.right)
             if hop.reverse:
-                pairs = [(r, lf) for lf, r in pairs]
-            edges.append(
-                refs.EdgeRef(pairs[0][0], pairs[0][1])
-                if len(pairs) == 1
-                else refs.EdgeRef(tuple(p[0] for p in pairs), tuple(p[1] for p in pairs))
-            )
+                left, right = right, left
+            # JoinEdge carries key tuples and the cast (an EdgeRef holds one column pair only)
+            edges.append(sql.JoinEdge(left, right, cast_to=join.cast_to))
+        # FactLang keys aliases by table; the same alias per table as the rendered path text
+        aliases = {
+            _table(refs, ref): alias
+            for ref, alias in zip(path.tables, path_aliases(list(path.tables)), strict=True)
+        }
         filters: dict[Any, Any] = {}
         omitted: list[str] = []
+        parse = getattr(fl, "parse_filter", None)
         for ref, text in sorted(soft_delete.items(), key=lambda kv: kv[0].canonical()):
-            if ref in path.tables:
-                expr, diags = fl.parse_filter(text)
-                if expr is not None and not [d for d in diags if _is_error(d)]:
-                    filters[_table(refs, ref)] = expr
-                else:  # never silently: the agent must know live rows are not filtered
-                    omitted.append(f"-- live-rows filter for {qname(ref)} unparseable, omitted")
-        fragment = sql.render_join(edges, dialect=dialect, filters=filters or None, aliases=aliases)
+            if ref not in path.tables:
+                continue
+            if not callable(parse):  # never silently: the agent must know live rows are unfiltered
+                omitted.append(
+                    f"-- live-rows filter for {qname(ref)} not applied "
+                    f"(the installed FactLang lacks fl.parse_filter): {text}"
+                )
+                continue
+            expr, diags = parse(text)
+            if expr is not None and not [d for d in diags if _is_error(d)]:
+                filters[_table(refs, ref)] = expr
+            else:
+                omitted.append(f"-- live-rows filter for {qname(ref)} unparseable, omitted")
+        fragment = sql.render_join(edges, dialect, filters=filters or None, aliases=aliases)
         return "\n".join([str(fragment.inline()), *omitted])
     except Exception as exc:  # a FactLang refusal costs this one snippet, never the view
         if bag is not None:

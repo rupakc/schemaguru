@@ -61,3 +61,12 @@ class StoreCatalog:
         if not cols:
             return None  # crawled table, columns not (yet) read: unknown
         return {c.ref.column or "": c.native_type for c in cols}
+
+    def family(self, column: ObjectRef) -> str | None:
+        """The crawled type family of ``column`` (a SchemaGuru ref), or None when unknown."""
+        if column.column is None:
+            return None
+        for c in self._store.columns(column.table_ref()):
+            if c.ref.column == column.column:
+                return c.family
+        return None

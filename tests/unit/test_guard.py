@@ -196,7 +196,9 @@ def test_guard_performance_at_cap() -> None:
         t0 = time.perf_counter()
         check_sql(sql, never_query=nq)
         best = min(best, time.perf_counter() - t0)
-    assert best < 0.5
+    # linear work is ~0.2 s locally; shared CI runners (Windows, coverage tracing) reach ~0.6 s.
+    # A quadratic guard on 99k characters takes minutes, so 2 s still catches the regression.
+    assert best < 2.0
 
 
 @pytest.mark.parametrize(

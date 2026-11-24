@@ -198,7 +198,9 @@ def test_classify_many_is_not_quadratic() -> None:
         changes + gone, prev, {}, checks_run={"NULL_RATE"},
         measured_tables=[ObjectRef(None, "shop", f"m{i}") for i in range(n)],
     )  # fmt: skip
-    assert time.perf_counter() - t0 < 2.0
+    # linear: ~0.7 s locally, up to ~2.4 s on shared CI runners; quadratic in 100k changes is
+    # minutes, so 10 s still catches it
+    assert time.perf_counter() - t0 < 10.0
     assert out[0][1] is ChangeClass.BENIGN and out[-1][1] is ChangeClass.NOT_MEASURED
 
 

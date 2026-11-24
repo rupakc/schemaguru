@@ -51,8 +51,9 @@ SMALL_N = 12_500
 MAX_SCALING_RATIO = 8.0
 # Generous absolute ceiling: catastrophic backtracking takes seconds, not 2 s.
 ABS_CEILING_S = 2.0
-# Below this the small run is dominated by timer and scheduler noise.
-NOISE_FLOOR_S = 0.005
+# Below this the small run is dominated by timer and scheduler noise (a Windows runner measured
+# 0.04 s for a linear 50k run against a 0.0002 s small run: ratio 8.2 from noise alone).
+NOISE_FLOOR_S = 0.01
 
 
 def _best(fn: Callable[[str], object], arg: str) -> float:

@@ -97,10 +97,19 @@ def _num(v: Any) -> Any:
     return v
 
 
-class _IR:
-    """Lazy handles on the FactLang IR names."""
+_SAFE_SEEDS = (0, 2**31 - 1)  # inside every FactLang profile's sample_seed_range
 
-    def __init__(self) -> None:
+
+class _IR:
+    """Lazy handles on the FactLang IR names.
+
+    ``seed_range`` is the dialect profile's ``sample_seed_range``: SchemaGuru's seeds are 64-bit
+    unsigned (``sampling.seed_for``) and FactLang refuses a seed outside the range (FL506), so a
+    seed is folded into it, deterministically (both sides of a join fold alike).
+    """
+
+    def __init__(self, seed_range: tuple[int, int] = _SAFE_SEEDS) -> None:
+        self.seed_range = seed_range
         ir = importlib.import_module("factlang.ir")
         refs = importlib.import_module("factlang.semantics.refs")
         self.ir = ir
@@ -128,9 +137,9 @@ class _IR:
         if s is None:
             return None
         cols = tuple(self.ident(k) for k in (key if key is not None else s.key))
-        return self.ir.SampleSpec(
-            s.method, s.fraction, s.seed, cols if s.method == "keyhash" else ()
-        )
+        lo, hi = self.seed_range
+        seed = s.seed if lo <= s.seed <= hi else lo + s.seed % (hi - lo + 1)
+        return self.ir.SampleSpec(s.method, s.fraction, seed, cols if s.method == "keyhash" else ())
 
     def metrics(self, *names: str) -> tuple[Any, ...]:
         return tuple(getattr(self.Metric, n) for n in names)
@@ -214,9 +223,10 @@ def payload_for(req: Request, payloads: Sequence[Any]) -> dict[str, Any] | None:
         out: dict[str, Any] = {"row_count": rows[0].get("row_count") if rows else None}
         if "sampled_rows" in rows[0]:
             out["sampled_rows"] = rows[0]["sampled_rows"]
+        # no columns: one ROW_COUNT plan (``plans_for``), so no per-column metrics
         out["columns"] = {
             c: {"non_null": r.get("non_null"), "distinct_keys": r.get("distinct_keys")}
-            for c, r in zip(req.columns, rows, strict=True)
+            for c, r in zip(req.columns, rows if req.columns else [], strict=True)
         }
         return out
     if isinstance(req, TopValues):
@@ -264,10 +274,31 @@ def evidence_mode(req: Request | None, sampling: SamplingConfig) -> Mode:
     return mode  # type: ignore[return-value]
 
 
+def _plain_param(p: Any) -> Any:
+    """A FactLang ``Param`` (``name``, ``value``, ``family``) as a plain dict; else unchanged.
+
+    FactLang evidence carries ``Param`` dataclasses, which neither the scrubber (it walks only
+    strings, mappings and sequences) nor JSON storage can see into.
+    """
+    if isinstance(p, Mapping) or not all(hasattr(p, a) for a in ("name", "value", "family")):
+        return p
+    return {"name": str(p.name), "family": str(p.family), "value": p.value}
+
+
 def _scrub_params(params: Sequence[Any], mode: Mode) -> tuple[Any, ...]:
-    """Parameters at any depth: ``none`` replaces every string with ``?``; else masked/raw."""
+    """Parameters at any depth: ``none`` replaces every string with ``?``; else masked/raw.
+
+    Of a FactLang ``Param`` only the value is data; its name and family are FactLang's own.
+    """
     replacement = "?" if mode == "none" else None
-    return tuple(scrub_tree(list(params), mode, replacement=replacement))
+    out: list[Any] = []
+    for p in map(_plain_param, params):
+        if isinstance(p, Mapping) and {"name", "family", "value"} <= set(p):
+            value = scrub_tree(p["value"], mode, replacement=replacement)
+            out.append({"name": p["name"], "family": p["family"], "value": value})
+        else:
+            out.append(scrub_tree(p, mode, replacement=replacement))
+    return tuple(out)
 
 
 def _evidence(
@@ -319,9 +350,47 @@ def _scrubbed(ev: Evidence, mode: Mode) -> Evidence:
 def _diagnostic(err: Any) -> Diagnostic:
     code = str(getattr(err, "code", "") or "")
     message = str(getattr(err, "message", err))
+    if code and message.startswith(code):  # FactLang messages may already lead with the code
+        message = message[len(code) :].lstrip()
     if code == "FL701":  # FactLang's own cost guard: over budget
         return Diagnostic("SG301", Severity.ERROR, f"{code} {message}".strip())
     return Diagnostic("SG303", Severity.ERROR, f"{code} {message}".strip())
+
+
+NO_BLOCK_SAMPLING = "no_block_sampling"  # == measure.scheduler.NO_BLOCK_SAMPLING
+
+
+def _profile(connector: Any) -> Any | None:
+    """FactLang's native dialect profile for ``connector``, or None (bridged/unknown)."""
+    get_profile = _attr("factlang.sql", "get_profile")
+    dialect = getattr(connector, "dialect", None)
+    if not callable(get_profile) or not isinstance(dialect, str):
+        return None
+    try:
+        return get_profile(dialect)
+    except Exception:
+        return None
+
+
+def _dialect_caps(profile: Any | None) -> frozenset[str]:
+    """Per-connector capabilities: ``no_block_sampling`` when FactLang's profile for the
+    connector's dialect cannot render a ``system`` sample (it raises FL506; e.g. DuckDB, whose
+    block sample is not repeatable), so the scheduler asks for ``bernoulli`` instead."""
+    styles = getattr(profile, "sample_styles", None)
+    if isinstance(styles, Mapping) and styles.get("system") is None:
+        return frozenset({NO_BLOCK_SAMPLING})
+    return frozenset()
+
+
+def _seed_range(profile: Any | None) -> tuple[int, int]:
+    """The non-negative part of the profile's ``sample_seed_range`` (SchemaGuru's seeds are
+    non-negative); the range every profile admits when unknown."""
+    rng = getattr(profile, "sample_seed_range", None)
+    if isinstance(rng, tuple) and len(rng) == 2 and all(isinstance(v, int) for v in rng):
+        lo, hi = max(rng[0], 0), rng[1]
+        if lo <= hi:
+            return lo, hi
+    return _SAFE_SEEDS
 
 
 class FactLangBackend:
@@ -336,14 +405,16 @@ class FactLangBackend:
         **checker_kwargs: Any,
     ) -> None:
         self._sampling = sampling if sampling is not None else SamplingConfig()
-        self._caps = capabilities()
+        self._catalog = catalog
+        profile = _profile(connector)
+        self._caps = capabilities() | _dialect_caps(profile)
         self._checker: Any = None
         self._ir: _IR | None = None
         if "measure" in self._caps:
             checker_cls = _attr("factlang", "Checker")
             assert checker_cls is not None
             self._checker = checker_cls(connector, catalog=catalog, **checker_kwargs)
-            self._ir = _IR()
+            self._ir = _IR(_seed_range(profile))
 
     def capabilities(self) -> frozenset[str]:
         return self._caps
@@ -386,8 +457,29 @@ class FactLangBackend:
             if err is not None:
                 out[n] = MeasureResult(r, None, ev, _diagnostic(err))
             else:
-                out[n] = MeasureResult(r, payload_for(r, [m.payload for m in mine]), ev, None)
+                payload = payload_for(r, [m.payload for m in mine])
+                if isinstance(r, TopValues) and payload is not None:
+                    payload = self._typed_values(r.column, payload)
+                out[n] = MeasureResult(r, payload, ev, None)
         return [o for o in out if o is not None]
+
+    def _typed_values(self, column: ObjectRef, payload: dict[str, Any]) -> dict[str, Any]:
+        """FactLang reports observed values as text (``'true'``); a boolean column's values are
+        booleans again, so they render ``TRUE``/``FALSE`` and feed the soft-delete marker."""
+        family = getattr(getattr(self, "_catalog", None), "family", None)
+        try:
+            boolean = callable(family) and family(column) == "boolean"
+        except Exception:
+            boolean = False
+        if not boolean:
+            return payload
+        as_bool = {"true": True, "false": False, "t": True, "f": False, "1": True, "0": False}
+        values = []
+        for v in payload.get("values") or []:
+            raw = v.get("value")
+            key = raw.strip().lower() if isinstance(raw, str) else None
+            values.append({**v, "value": as_bool[key]} if key in as_bool else v)
+        return {**payload, "values": values}
 
     def estimate(self, reqs: Sequence[Request]) -> list[CostEstimate]:
         if self._checker is None or self._ir is None or "estimate" not in self._caps:

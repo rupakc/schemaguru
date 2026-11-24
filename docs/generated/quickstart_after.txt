@@ -38,5 +38,7 @@ Glossary:
 Join paths (join keys, advisory; support = the weakest hop's match or coverage):
   shop.customers → shop.orders · support 100%
     orders.customer_id = customers.customer_id (N:1)
+    SQL: FROM "shop"."customers" customers INNER JOIN "shop"."orders" orders ON customers."customer_id" = orders."customer_id"
+         -- live-rows filter for shop.orders not applied (the installed FactLang lacks fl.parse_filter): deleted IS NULL OR NOT deleted
 
 Not shown: no other candidate tables.

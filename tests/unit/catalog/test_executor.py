@@ -135,15 +135,66 @@ def test_factlang_executor_adapts_result(monkeypatch: pytest.MonkeyPatch) -> Non
     mod.run_metadata = run_metadata  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "factlang.connectors", mod)
     ex = FactLangExecutor("CONN")
-    assert ex.run("SELECT 1", [5], timeout_s=3.0) == [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}]
-    assert calls == [("CONN", "SELECT 1", (5,), 3.0)]
+    got = ex.run("SELECT a, b FROM t WHERE c = ? AND d = '?'", [5], timeout_s=3.0)
+    assert got == [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}]
+    # FactLang's run_metadata binds neutral {{name}} tokens from a mapping (spec 9.1)
+    assert calls == [("CONN", "SELECT a, b FROM t WHERE c = {{p1}} AND d = '?'", {"p1": 5}, 3.0)]
+    with pytest.raises(CatalogError) as e:  # SchemaGuru's own guard still runs first
+        ex.run("SELECT 1; DROP TABLE t")
+    assert e.value.code == "SG104" and len(calls) == 1
+    with pytest.raises(CatalogError):
+        ex.run("SELECT ?", [])
 
 
 @pytest.mark.factlang
 def test_factlang_run_metadata_real() -> None:
     if not _has_run_metadata():
         pytest.skip("factlang capability run_metadata not yet available")
-    pytest.skip("wire a FactLang DuckDB connector here once connectors ship")
+    duckdb = pytest.importorskip("duckdb")
+    import factlang.connectors as flc
+
+    conn = duckdb.connect(":memory:")
+    try:
+        conn.execute("CREATE SCHEMA shop")
+        conn.execute("CREATE TABLE shop.orders (order_id INTEGER, note VARCHAR)")
+        ex = FactLangExecutor(flc.DBAPIConnector(conn, "duckdb"))
+        rows = ex.run(
+            "SELECT table_name, ? AS tag FROM information_schema.tables WHERE table_schema = ?",
+            ["it's", "shop"],
+        )
+        assert rows == [{"table_name": "orders", "tag": "it's"}]
+        assert ex.run("SHOW TABLES FROM shop") == [{"name": "orders"}]
+        # FactLang's guard admits EXPLAIN (FL703 ruling); SchemaGuru's readers never need it,
+        # so SchemaGuru's stricter guard (run first) keeps refusing it
+        for bad in ("EXPLAIN SELECT 1", "SELECT 1; SELECT 2", "SELECT * FROM t; DROP TABLE t"):
+            with pytest.raises(CatalogError):
+                ex.run(bad)
+    finally:
+        conn.close()
+
+
+@pytest.mark.factlang
+def test_every_recorded_reader_query_passes_factlangs_guard() -> None:
+    """Every metadata query a shipped reader ran against a real engine (the recorded conformance
+    fixtures) passes FactLang's FL703 guard once its ``?`` markers are FactLang tokens."""
+    import json
+    from pathlib import Path
+
+    try:
+        from factlang.connectors import check_metadata_sql as fl_check
+    except ImportError:
+        pytest.skip("factlang capability run_metadata not yet available")
+    from schemaguru.catalog.executor import _factlang_sql
+
+    root = Path(__file__).resolve().parents[2] / "fixtures" / "catalog"
+    seen = 0
+    for path in sorted(root.glob("*/queries.json")):
+        for q in json.loads(path.read_text(encoding="utf-8"))["queries"]:
+            sql, bound = _factlang_sql(q["sql"], len(q.get("params") or ()))
+            assert len(bound) == len(q.get("params") or ())
+            fl_check(sql)
+            seen += 1
+    assert seen >= 20
 
 
 def test_metadata_guard_backslash_escape_cannot_hide_a_statement() -> None:

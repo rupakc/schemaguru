@@ -67,8 +67,45 @@ def test_render_join_snippet_with_factlang(store: SQLiteStore) -> None:
     if "render_join" not in flbridge.capabilities():
         pytest.skip("factlang capability render_join not yet available")
     soft = {t("orders"): "deleted IS NULL OR NOT deleted"}
-    text = fragments.render_join_snippet(a_path(store), "duckdb", soft)
-    assert text is not None and "JOIN" in text.upper() and "deleted" in text
+    bag = DiagnosticBag()
+    text = fragments.render_join_snippet(a_path(store), "duckdb", soft, bag=bag)
+    assert text is not None, list(bag)
+    first = text.splitlines()[0]
+    assert first.startswith("FROM ") and " JOIN " in first.upper()
+    # the same aliases as the rendered path text, keyed per table for FactLang
+    assert '"orders"' in first or "orders" in first
+    assert "customer_id" in first
+    if "parse_filter" in flbridge.capabilities():
+        assert "deleted" in first
+    else:  # no FactLang filter parser: the live-rows filter is named as NOT applied
+        assert "deleted" not in first
+        assert "-- live-rows filter for shop.orders not applied" in text
+        assert "deleted IS NULL OR NOT deleted" in text
+
+
+@pytest.mark.factlang
+def test_render_join_snippet_composite_and_cast(store: SQLiteStore) -> None:
+    """A composite (and cast) hop goes to FactLang as one ``JoinEdge`` (``EdgeRef`` holds one
+    column pair only)."""
+    if "render_join" not in flbridge.capabilities():
+        pytest.skip("factlang capability render_join not yet available")
+    from schemaguru.graph import Edge
+    from schemaguru.model.joins import JoinRef
+    from schemaguru.model.refs import ObjectRef
+
+    base = a_path(store).hops[0].edge
+    c = lambda tb, cl: ObjectRef(None, "shop", tb, cl)  # noqa: E731
+    join = JoinRef(
+        (c("order_items", "order_id"), c("order_items", "line_no")),
+        (c("orders", "order_id"), c("orders", "account_id")),
+        "string",
+    )
+    edge = Edge(join, base.value, base.verdict)
+    path = GPath((Hop(edge, False),), 1.0, 0.98, False)
+    bag = DiagnosticBag()
+    text = fragments.render_join_snippet(path, "duckdb", {}, bag=bag)
+    assert text is not None, list(bag)
+    assert text.count("CAST(") == 4 and " AND " in text
 
 
 @pytest.mark.factlang
@@ -94,12 +131,28 @@ def test_snippet_aliases_match_the_path_text(store: SQLiteStore, fake_factlang: 
 
     graph = shop_graph(store)
     edge = next(e for e in graph.edges if e.key.startswith("shop.orders.account_id"))
-    p = GPath((Hop(edge, False), Hop(edge, True)), 1.0, 1.0, False, revisits=True)
+    p = GPath((Hop(edge, False),), 1.0, 1.0, False)
     text = fragments.render_join_snippet(p, "duckdb", {t("orders"): "(((broken"})
-    assert fake_factlang["aliases"] == {0: "orders", 1: "accounts", 2: "orders_2"}
-    assert "orders_2" in render_path(p)[0]
+    # FactLang keys aliases by table: the same names as the rendered path text
+    assert fake_factlang["aliases"] == {
+        (None, "shop", "orders"): "orders",
+        (None, "shop", "accounts"): "accounts",
+    }
+    assert fake_factlang["edges"] == [
+        (
+            (((None, "shop", "orders"), "account_id"),),
+            (((None, "shop", "accounts"), "account_id"),),
+            None,
+        )
+    ]
     # an unparseable filter is never dropped silently
     assert text == "FROM <join>\n-- live-rows filter for shop.orders unparseable, omitted"
+    # a revisited table is a self-join, which FactLang does not render: no snippet, SG501 info
+    revisit = GPath((Hop(edge, False), Hop(edge, True)), 1.0, 1.0, False, revisits=True)
+    assert "orders_2" in render_path(revisit)[0]
+    bag = DiagnosticBag()
+    assert fragments.render_join_snippet(revisit, "duckdb", {}, bag=bag) is None
+    assert [d.code for d in bag] == ["SG501"] and "self-join" in next(iter(bag)).message
 
 
 def test_only_checked_live_rows_filters_reach_sql(tmp_path: Path, fake_factlang: dict) -> None:  # type: ignore[type-arg]

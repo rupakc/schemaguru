@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import sys
 import time
@@ -159,8 +160,16 @@ def test_three_line_quickstart(
 
 def test_connect_helper(tmp_path: Path) -> None:
     conn = connect_url("duckdb:///:memory:")
-    assert conn.dialect == "duckdb" and conn.connector is None
+    assert conn.dialect == "duckdb"
+    # the DuckDB fallback is a FactLang connector when FactLang ships one (reads + measurement)
+    has_connector = hasattr(importlib.import_module("factlang.connectors"), "DBAPIConnector")
+    if has_connector:
+        assert conn.connector is not None and conn.connector.dialect == "duckdb"
+        assert conn.connector.connection is conn.raw
+    else:
+        assert conn.connector is None
     assert conn.executor.run("SELECT 1 AS one") == [{"one": 1}]
+    assert conn.executor.run("SELECT ? AS one", [1]) == [{"one": 1}]
     conn.close()
     with pytest.raises(SchemaGuruError, match="SG106"):
         connect_url("nosuchdb://user:secret@host/db")

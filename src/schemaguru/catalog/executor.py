@@ -7,6 +7,7 @@ runs it and converts the placeholders to its driver's paramstyle. Only this modu
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import os
 import re
@@ -135,8 +136,32 @@ class DBAPIExecutor:
                 cur.close()
 
 
+def _factlang_sql(sql: str, nparams: int) -> tuple[str, list[str]]:
+    """``?`` markers (outside literals) -> FactLang's neutral ``{{p<n>}}`` tokens, plus the
+    token names in order. Raises ``SG104`` when the counts disagree."""
+    out: list[str] = []
+    names: list[str] = []
+    for ch, lit in _scan(sql):
+        if not lit and ch == "?":
+            names.append(f"p{len(names) + 1}")
+            out.append("{{" + names[-1] + "}}")
+        else:
+            out.append(ch)
+    if len(names) != nparams:
+        raise CatalogError(
+            "SG104", f"SQL has {len(names)} placeholders but {nparams} parameters were given"
+        )
+    return "".join(out), names
+
+
 class FactLangExecutor:
-    """Runs metadata SQL through a FactLang connector (``fl.connectors.run_metadata``)."""
+    """Runs metadata SQL through a FactLang connector (``fl.connectors.run_metadata``).
+
+    SchemaGuru's readers mark parameters with ``?``; FactLang's ``run_metadata`` takes neutral
+    ``{{name}}`` tokens and a ``{name: value}`` mapping, binding them in the connector's own
+    paramstyle. SchemaGuru's guard (SG104) runs before FactLang's (FL703). One lock serialises
+    use of the connector, as for :class:`DBAPIExecutor`.
+    """
 
     def __init__(self, connector: Any) -> None:
         try:
@@ -149,11 +174,21 @@ class FactLangExecutor:
                 "(needs the FactLang 0.1 metadata capability)",
             ) from None
         self._connector = connector
+        self._lock = threading.Lock()
 
     def run(
         self, sql: str, params: Sequence[Any] = (), *, timeout_s: float | None = None
     ) -> list[dict[str, Any]]:
-        result = self._run(self._connector, sql, tuple(params), timeout_s=timeout_s)
+        check_metadata_sql(sql)
+        text, names = _factlang_sql(sql, len(params))
+        bound = dict(zip(names, params, strict=True))
+        try:
+            with self._lock:
+                result = self._run(self._connector, text, bound, timeout_s=timeout_s)
+        except Exception as e:
+            if str(getattr(e, "code", "") or str(e)[:5]).startswith("FL703"):
+                raise CatalogError("SG104", f"FactLang refused the metadata SQL: {e}") from None
+            raise
         columns = list(getattr(result, "columns", ()))
         rows = getattr(result, "rows", result)
         out: list[dict[str, Any]] = []
@@ -286,31 +321,41 @@ class Connection:
                 close()
 
 
+def _factlang_connect() -> Any | None:
+    """FactLang's URL connector factory: ``factlang.connect`` (spec 10) or, where FactLang ships
+    it, ``factlang.connectors.connect`` (SQLAlchemy URLs); None when neither is installed."""
+    for module in ("factlang", "factlang.connectors"):
+        try:
+            fn = getattr(importlib.import_module(module), "connect", None)
+        except ImportError:  # pragma: no cover - factlang is a core dependency
+            fn = None
+        if callable(fn):
+            return fn
+    return None
+
+
+def _duckdb_connector(raw: Any) -> Any | None:
+    """A FactLang ``DBAPIConnector`` over an opened DuckDB connection (measurement and catalog
+    reads go through FactLang), or None when the installed FactLang has none."""
+    try:
+        cls = getattr(importlib.import_module("factlang.connectors"), "DBAPIConnector", None)
+    except ImportError:  # pragma: no cover - factlang is a core dependency
+        return None
+    return cls(raw, "duckdb") if callable(cls) else None
+
+
 def connect(url: str) -> Connection:
     """Open ``url`` (``duckdb:///shop.duckdb``, ``snowflake://...``) for catalog reads.
 
-    FactLang's ``connect`` (it needs SQLAlchemy for most warehouses) is used when installed; its
-    connector also serves measurement. Without it, ``duckdb://`` URLs open through the DuckDB
-    driver (``duckdb:///path``, ``duckdb:///:memory:``); anything else raises ``SG106``.
+    ``duckdb://`` URLs open read-only through the DuckDB driver (a typo must not create a file)
+    and are wrapped in FactLang's ``DBAPIConnector`` when installed, so catalog reads
+    (``run_metadata``) and measurement go through FactLang. Other URLs open through FactLang's
+    ``connect`` (it needs SQLAlchemy for most warehouses); without it they raise ``SG106``.
     """
     if "://" not in url:
         raise CatalogError("SG106", f"not a connection URL: {redact_url(url)}")
     scheme = url.split("://", 1)[0].split("+", 1)[0].lower()
     dialect = _SCHEME_DIALECTS.get(scheme, scheme)
-    fl_connect = None
-    try:
-        fl_connect = getattr(importlib.import_module("factlang"), "connect", None)
-    except ImportError:  # pragma: no cover - factlang is a core dependency
-        fl_connect = None
-    failure: str | None = None
-    if callable(fl_connect):
-        try:
-            connector = fl_connect(url)
-            return Connection(
-                dialect, FactLangExecutor(connector), connector, shown_url=redact_url(url)
-            )
-        except Exception as e:
-            failure = f"FactLang could not open {redact_url(url)}: {type(e).__name__}"
     if scheme == "duckdb":
         try:
             duckdb = importlib.import_module("duckdb")
@@ -331,7 +376,22 @@ def connect(url: str) -> Connection:
                 raise CatalogError(
                     "SG106", f"cannot open {redact_url(url)}: {type(e).__name__}"
                 ) from None
-        return Connection("duckdb", DBAPIExecutor(raw, "qmark"), None, raw, redact_url(url))
+        connector = _duckdb_connector(raw)
+        executor: MetadataExecutor = DBAPIExecutor(raw, "qmark")
+        if connector is not None:
+            with contextlib.suppress(CatalogError):  # an older FactLang without run_metadata
+                executor = FactLangExecutor(connector)
+        return Connection("duckdb", executor, connector, raw, redact_url(url))
+    fl_connect = _factlang_connect()
+    failure: str | None = None
+    if fl_connect is not None:
+        try:
+            connector = fl_connect(url)
+            return Connection(
+                dialect, FactLangExecutor(connector), connector, shown_url=redact_url(url)
+            )
+        except Exception as e:
+            failure = f"FactLang could not open {redact_url(url)}: {type(e).__name__}"
     raise CatalogError(
         "SG106",
         failure

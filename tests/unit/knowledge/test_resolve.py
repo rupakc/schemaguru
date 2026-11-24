@@ -1,0 +1,290 @@
+from datetime import date, datetime, timedelta, timezone
+
+import pytest
+
+from schemaguru.knowledge.resolve import resolve
+from schemaguru.model.facts import Fact, Provenance, Status, Waiver
+from schemaguru.model.joins import JoinRef
+from schemaguru.model.kinds import FactKind
+from schemaguru.model.refs import ObjectRef
+
+NOW = datetime(2026, 11, 24, tzinfo=timezone.utc)
+TBL = ObjectRef(None, "shop", "orders")
+STATUS = ObjectRef(None, "shop", "orders", "status")
+
+
+def _ago(days: float) -> datetime:
+    return NOW - timedelta(days=days)
+
+
+def _key(kind: object, subj: ObjectRef) -> tuple[str, str]:
+    return (kind.name, subj.canonical())  # type: ignore[attr-defined]
+
+
+def test_human_beats_drafted_meaning() -> None:
+    draft = Fact.make(
+        FactKind.DESCRIPTION,
+        TBL,
+        {"text": "draft"},
+        Provenance.DRAFTED,
+        Status.UNVERIFIED,
+        observed_at=_ago(1),
+    )
+    human = Fact.make(
+        FactKind.DESCRIPTION,
+        TBL,
+        {"text": "human"},
+        Provenance.HUMAN,
+        Status.UNVERIFIED,
+        observed_at=_ago(30),
+    )
+    eff = resolve([draft, human], now=NOW, ttl_days=14)[_key(FactKind.DESCRIPTION, TBL)]
+    assert eff.primary is not None and eff.primary.id == human.id
+    assert {f.id for f in eff.all} == {draft.id, human.id}
+
+
+def test_expectation_kept_and_contradiction_shown() -> None:
+    exp = Fact.make(
+        FactKind.VALUES,
+        STATUS,
+        {"values": ["a", "b"], "case_sensitive": True},
+        Provenance.HUMAN,
+        Status.UNVERIFIED,
+    )
+    obs = Fact.make(
+        FactKind.VALUES, STATUS,
+        {
+            "case_sensitive": True,
+            "observed": [{"value": "a", "count": 5}, {"value": "c", "count": 412}],
+        },
+        Provenance.MEASURED, Status.OBSERVED, method="exact", observed_at=_ago(1),
+    )  # fmt: skip
+    eff = resolve([obs, exp], now=NOW, ttl_days=14)[_key(FactKind.VALUES, STATUS)]
+    assert eff.expectation is not None and eff.expectation.id == exp.id
+    assert eff.primary is not None and eff.primary.id == exp.id
+    assert eff.observed is not None and eff.observed.id == obs.id
+    assert len(eff.contradictions) == 1
+    assert "c (412 rows)" in eff.contradictions[0] and "a, b" in eff.contradictions[0]
+
+
+def test_declared_values_not_contradicted_when_observed_within() -> None:
+    exp = Fact.make(
+        FactKind.VALUES,
+        STATUS,
+        {"values": ["a", "b"], "case_sensitive": True},
+        Provenance.DECLARED,
+        Status.UNVERIFIED,
+    )
+    obs = Fact.make(
+        FactKind.VALUES, STATUS,
+        {"observed": [{"value": "a", "count": 5}], "case_sensitive": True},
+        Provenance.MEASURED, Status.OBSERVED, method="exact", observed_at=_ago(1),
+    )  # fmt: skip
+    eff = resolve([exp, obs], now=NOW, ttl_days=14)[_key(FactKind.VALUES, STATUS)]
+    assert eff.contradictions == ()
+
+
+def test_catalog_type_beats_note_and_both_shown() -> None:
+    col = ObjectRef(None, "shop", "orders", "created")
+    cat = Fact.make(
+        FactKind.TYPE_NOTE,
+        col,
+        {"stored_as": "STRING"},
+        Provenance.CATALOG,
+        Status.OBSERVED,
+        observed_at=_ago(1),
+    )
+    note = Fact.make(
+        FactKind.TYPE_NOTE,
+        col,
+        {"stored_as": "DATE", "means": "order date"},
+        Provenance.HUMAN,
+        Status.UNVERIFIED,
+    )
+    eff = resolve([note, cat], now=NOW, ttl_days=14)[_key(FactKind.TYPE_NOTE, col)]
+    assert eff.primary is not None and eff.primary.id == cat.id
+    assert {f.id for f in eff.all} == {cat.id, note.id}
+    assert eff.contradictions == ("note says DATE; stored as STRING",)
+
+
+def test_all_measured_retained_worst_warns() -> None:
+    j1 = JoinRef(
+        (ObjectRef(None, "shop", "orders", "customer_id"),),
+        (ObjectRef(None, "shop", "customers", "id"),),
+    )
+    old_bad = Fact.make(
+        FactKind.JOIN,
+        j1,
+        {"match_rate": 0.2},
+        Provenance.MEASURED,
+        Status.CONTRADICTED,
+        method="exact",
+        observed_at=_ago(3),
+    )
+    new_ok = Fact.make(
+        FactKind.JOIN,
+        j1,
+        {"match_rate": 0.99, "verdict": "ok"},
+        Provenance.MEASURED,
+        Status.OBSERVED,
+        method="exact",
+        observed_at=_ago(1),
+    )
+    assert old_bad.id == new_ok.id
+    eff = resolve([new_ok, old_bad], now=NOW, ttl_days=14)[("JOIN", j1.identity_key())]
+    assert eff.observed is not None and eff.observed.observed_at == new_ok.observed_at
+    # same id (identity ()): the re-measure supersedes; distinct ids are all kept.
+    other = Fact.make(
+        FactKind.NULL_RATE,
+        STATUS,
+        {"rate": 0.9},
+        Provenance.MEASURED,
+        Status.CONTRADICTED,
+        method="exact",
+        observed_at=_ago(5),
+    )
+    other2 = Fact.make(
+        FactKind.NULL_RATE,
+        STATUS,
+        {"rate": 0.1},
+        Provenance.MEASURED,
+        Status.OBSERVED,
+        method="exact",
+        observed_at=_ago(1),
+    )
+    e2 = resolve([other, other2], now=NOW, ttl_days=14)[_key(FactKind.NULL_RATE, STATUS)]
+    assert e2.observed is not None and e2.observed.value["rate"] == 0.1
+    assert len(e2.all) == 1  # same id: newest re-measure replaces
+
+
+def test_distinct_measured_all_retained_and_worst_warns() -> None:
+    a = Fact.make(
+        FactKind.PII,
+        STATUS,
+        {"category": "email"},
+        Provenance.MEASURED,
+        Status.CONTRADICTED,
+        method="shape",
+        observed_at=_ago(5),
+    )
+    b = Fact.make(
+        FactKind.PII,
+        STATUS,
+        {"category": "phone"},
+        Provenance.MEASURED,
+        Status.OBSERVED,
+        method="shape",
+        observed_at=_ago(1),
+    )
+    eff = resolve([a, b], now=NOW, ttl_days=14)[_key(FactKind.PII, STATUS)]
+    assert {f.id for f in eff.all} == {a.id, b.id}
+    assert eff.observed is not None and eff.observed.id == b.id
+    assert len(eff.contradictions) == 1  # the older contradicted measurement still warns
+
+
+def test_draft_marked_unverified() -> None:
+    d = Fact.make(
+        FactKind.PITFALL,
+        TBL,
+        {"rule": "x"},
+        Provenance.DRAFTED,
+        Status.OBSERVED,
+        observed_at=_ago(1),
+    )
+    eff = resolve([d], now=NOW, ttl_days=14)[_key(FactKind.PITFALL, TBL)]
+    assert eff.primary is not None and eff.primary.status is Status.UNVERIFIED
+    v = Fact.make(
+        FactKind.PITFALL,
+        TBL,
+        {"rule": "y"},
+        Provenance.DRAFTED,
+        Status.VERIFIED,
+        method="exact",
+        observed_at=_ago(1),
+    )
+    eff = resolve([v], now=NOW, ttl_days=14)[_key(FactKind.PITFALL, TBL)]
+    assert eff.primary is not None and eff.primary.status is Status.VERIFIED
+
+
+def test_stale_after_ttl() -> None:
+    old = Fact.make(
+        FactKind.ROW_COUNT,
+        TBL,
+        {"rows": 3},
+        Provenance.MEASURED,
+        Status.OBSERVED,
+        method="exact",
+        observed_at=_ago(15),
+    )
+    fresh = Fact.make(
+        FactKind.NULL_RATE,
+        STATUS,
+        {"rate": 0.0},
+        Provenance.MEASURED,
+        Status.OBSERVED,
+        method="exact",
+        observed_at=_ago(13),
+    )
+    res = resolve([old, fresh], now=NOW, ttl_days=14)
+    r = res[_key(FactKind.ROW_COUNT, TBL)].primary
+    assert r is not None and r.status is Status.STALE and r.id == old.id
+    f = res[_key(FactKind.NULL_RATE, STATUS)].primary
+    assert f is not None and f.status is Status.OBSERVED
+
+
+def _contradicted() -> Fact:
+    return Fact.make(
+        FactKind.NULL_RATE,
+        STATUS,
+        {"rate": 0.5},
+        Provenance.MEASURED,
+        Status.CONTRADICTED,
+        method="exact",
+        observed_at=_ago(1),
+    )
+
+
+def test_waiver_applies_and_expired_ignored() -> None:
+    f = _contradicted()
+    live = Waiver("NULL_RATE shop.orders.status", "known", date(2026, 12, 1))
+    eff = resolve([f], now=NOW, ttl_days=14, waivers=[live])[_key(FactKind.NULL_RATE, STATUS)]
+    assert eff.primary is not None and eff.primary.status is Status.WAIVED
+    assert eff.contradictions and eff.contradictions[0].startswith(
+        "WAIVED until 2026-12-01 (known): "
+    )
+
+
+def test_waiver_expired_ignored() -> None:
+    f = _contradicted()
+    dead = Waiver("NULL_RATE shop.orders.*", "known", date(2026, 11, 23))
+    eff = resolve([f], now=NOW, ttl_days=14, waivers=[dead])[_key(FactKind.NULL_RATE, STATUS)]
+    assert eff.primary is not None and eff.primary.status is Status.CONTRADICTED
+    wrong = Waiver("ROW_COUNT shop.orders.status", "k", date(2027, 1, 1))
+    eff = resolve([f], now=NOW, ttl_days=14, waivers=[wrong])[_key(FactKind.NULL_RATE, STATUS)]
+    assert eff.primary is not None and eff.primary.status is Status.CONTRADICTED
+
+
+def test_waiver_validation() -> None:
+    with pytest.raises(ValueError):
+        Waiver("VALUES", "r", date(2027, 1, 1))
+    assert Waiver("VALUES shop.*", "r", date(2027, 1, 1)).matches("VALUES", "shop.orders.status")
+    assert not Waiver("VALUES shop.orders.status", "r", date(2027, 1, 1)).matches(
+        "VALUES", "shop.orders.Status"
+    )
+
+
+def test_estimated_never_confirms() -> None:
+    exp = Fact.make(
+        FactKind.VALUES,
+        STATUS,
+        {"values": ["a"], "case_sensitive": True},
+        Provenance.HUMAN,
+        Status.UNVERIFIED,
+    )
+    est = Fact.make(
+        FactKind.VALUES, STATUS, {"observed": [{"value": "a", "count": 1}], "case_sensitive": True},
+        Provenance.MEASURED, Status.ESTIMATED, method="sampled:1%", observed_at=_ago(1),
+    )  # fmt: skip
+    eff = resolve([exp, est], now=NOW, ttl_days=14)[_key(FactKind.VALUES, STATUS)]
+    assert eff.expectation is not None and eff.expectation.status is Status.UNVERIFIED
+    assert eff.contradictions == ()

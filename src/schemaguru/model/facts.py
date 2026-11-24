@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
+from fnmatch import fnmatchcase
 from typing import Any
 
 from schemaguru._util.hashing import stable_hash
@@ -149,3 +150,33 @@ class Fact:
             observed_at=None if at is None else datetime.fromisoformat(at),
             snapshot_id=d.get("snapshot_id"),
         )
+
+
+@dataclass(frozen=True)
+class Waiver:
+    """A human acknowledgement of a contradiction, with a mandatory expiry (spec 4.4).
+
+    ``fact_pattern`` is ``"<KIND> <subject>"``: the kind name, one space, then the subject's
+    canonical form (``ObjectRef.canonical()``, or ``JoinRef.identity_key()`` for joins). The kind
+    part matches exactly; the subject part is a case-sensitive ``fnmatch`` glob, so
+    ``"VALUES shop.orders.status"`` is exact and ``"VALUES shop.orders.*"`` covers every column.
+    A waiver is active through its ``expires`` date (UTC) inclusive.
+    """
+
+    fact_pattern: str
+    reason: str
+    expires: date
+
+    def __post_init__(self) -> None:
+        kind, sep, subject = self.fact_pattern.partition(" ")
+        if not (kind and sep and subject.strip()):
+            raise ValueError(f"waiver pattern must be '<KIND> <subject>': {self.fact_pattern!r}")
+        if isinstance(self.expires, datetime) or not isinstance(self.expires, date):
+            raise ValueError("a waiver requires an 'expires' date")
+
+    def matches(self, kind_name: str, subject_key: str) -> bool:
+        kind, _, subject = self.fact_pattern.partition(" ")
+        return kind == kind_name and fnmatchcase(subject_key, subject)
+
+    def active(self, now: datetime) -> bool:
+        return now.astimezone(timezone.utc).date() <= self.expires

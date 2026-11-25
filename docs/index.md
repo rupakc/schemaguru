@@ -12,13 +12,13 @@ guru = sg.Guru.connect("duckdb:///warehouse.duckdb")
 print(guru.context("monthly revenue by customer segment"))
 ```
 
-!!! note "Status: pre-alpha (0.1.0, unreleased)"
-    Measurement runs through [FactLang](https://github.com/rupakc/factlang); its measurement
-    capabilities arrive with FactLang 0.1.0, and SchemaGuru 0.1.0 is not released before it.
-    Until then crawling, scoping, rendering, overlays and path search work, and
-    `guru.measure()` reports `SG304` ("cannot measure"). Every output on this site was
-    produced by the real library on the test **shop** warehouse, with measurement supplied by
-    the test suite's backend.
+!!! note "Status: alpha (0.1.0)"
+    Measurement runs through [FactLang](https://github.com/rupakc/factlang) (0.1.1 or later,
+    installed with SchemaGuru). Every output on this site was produced by the real library on
+    the test **shop** warehouse; the measured numbers in the generated pages come from the test
+    suite's backend, which computes them with plain SQL on that warehouse, so the pages are
+    reproducible byte for byte. The cloud warehouse readers (BigQuery, Snowflake, Redshift,
+    Databricks, Oracle) are tested against recorded metadata, not yet validated live.
 
 ## The problem: a wrong guess does not error
 

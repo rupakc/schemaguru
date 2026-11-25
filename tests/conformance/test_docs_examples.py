@@ -10,9 +10,9 @@
 * ```` ```py ```` blocks are illustrations that need a real cloud warehouse, a network or an
   API key; they must still parse.
 
-Measurement: while the installed FactLang lacks ``Checker.measure`` (it arrives with FactLang
-0.1.0), the default backend of every ``Guru`` is the test ``FakeBackend`` on the same DuckDB
-file, so the samples show measured knowledge. Once FactLang measures, the samples run on it.
+Measurement: the samples run on FactLang's ``Checker.measure`` (FactLang 0.1.1+). Should the
+installed FactLang lack it, the default backend of every ``Guru`` is the test ``FakeBackend``
+on the same DuckDB file, so the samples still show measured knowledge.
 """
 
 from __future__ import annotations
@@ -148,6 +148,26 @@ def test_python_blocks_run(page: Path, workdir: Path) -> None:
                 exec(compile(src, f"{page.name}[block {i}]", "exec"), namespace)
             except Exception as e:
                 pytest.fail(f"{page.relative_to(ROOT)} block {i} raised {e!r}:\n{src}")
+    finally:
+        _close_gurus(namespace)
+
+
+def test_readme_python_blocks_run(workdir: Path) -> None:
+    """The README's quickstart runs as written (on the shop warehouse as warehouse.duckdb)."""
+    namespace: dict[str, Any] = {"__name__": "__readme__"}
+    sources = blocks((ROOT / "README.md").read_text(encoding="utf-8"), "python")
+    assert len(sources) >= 2  # the three-line quickstart and the measured follow-up
+    assert sources[0].strip().splitlines() == [
+        "import schemaguru as sg",
+        'guru = sg.Guru.connect("duckdb:///warehouse.duckdb")',
+        'print(guru.context("monthly revenue by customer segment"))',
+    ]
+    try:
+        for i, src in enumerate(sources):
+            try:
+                exec(compile(src, f"README.md[block {i}]", "exec"), namespace)
+            except Exception as e:
+                pytest.fail(f"README.md block {i} raised {e!r}:\n{src}")
     finally:
         _close_gurus(namespace)
 

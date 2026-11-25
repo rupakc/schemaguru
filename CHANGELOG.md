@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Requires FactLang 0.1.2 (`factlang>=0.1.2,<0.2`). Hosts without bind parameters
+  (`execute(sql)`/`query(sql)`) now refuse, with `SG109`, a text value holding a line
+  terminator (CR, LF, U+0085, U+2028, U+2029), and a `'` on any dialect without a
+  doubled-quote form (BigQuery, Databricks, Spark, Hive, unknown dialects); FactLang's own
+  refusals (`FL507`, `FL500`) are reported as `SG109`. Literals follow FactLang 0.1.2's
+  dialect spellings (T-SQL `N'…'` text and ISO casts, `1`/`0` booleans on T-SQL and Oracle,
+  Oracle `TIMESTAMP 'YYYY-MM-DD HH:MM:SS'`), and each is re-checked against exactly that form.
+
 ## [0.1.0] - 2026-11-25
 
 First release.
@@ -23,7 +32,7 @@ First release.
 - Knowledge stores: SQLite (default) and Postgres (extra `postgres-store`, shared by teams and
   server replicas; `store="postgresql://..."` opens it), with migrations, full-text search and
   byte-deterministic JSON export.
-- Measurement through FactLang (`factlang>=0.1.1,<0.2`): row counts, column profiles,
+- Measurement through FactLang (`factlang>=0.1.2,<0.2`): row counts, column profiles,
   uniqueness (composite keys in full), observed values, join match in both directions,
   fan-out, freshness and pattern rates; per-probe, per-run and per-period byte budgets with a
   ledger; representative key-hash / block sampling of large tables, labelled `ESTIMATED`;

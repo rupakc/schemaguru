@@ -6,7 +6,11 @@ A raw DB-API connection, a SQLAlchemy engine, a BigQuery-shaped client and a pla
 
 from __future__ import annotations
 
+import datetime
+import re
 import sqlite3
+from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -339,15 +343,48 @@ LIARS = [
 ]
 
 
-def test_lying_subclasses_inject_without_normalising() -> None:
-    """Negative control: rendering the raw subclasses (what round 2 sent) lets OR 1=1 escape.
-    (FactLang 0.1.1 refuses LyingStr itself, for its backslashes, and formats a Decimal
-    without ``str``; a lying int still escapes through FactLang's own inlining.)"""
+def _naive_inline(
+    template: str, params: tuple[Any, ...], quote: Any = None, style: Any = None
+) -> str:
+    """What an inliner that trusts a value's own dunders would write (FactLang <= 0.1.1 did
+    for ints): ``str()`` of the value, quoted for text, prefixed for dates."""
     from schemaguru.catalog.executor import _ansi
 
-    for value, family, _ in (LIARS[1],):
+    p = params[0]
+    v = p.value
+    if isinstance(v, str):
+        lit = _ansi(str(v))
+    elif isinstance(v, __import__("datetime").date):
+        lit = f"DATE '{v.isoformat()}'"
+    else:
+        lit = str(v) if not isinstance(v, float) else repr(v)
+    return template.replace("{{" + p.name + "}}", lit)
+
+
+# FactLang 0.1.2 spells T-SQL text N'...' and dates as ISO casts
+_TSQL_SPELLING = {"'ok'": "N'ok'", "DATE '2026-01-02'": "CAST('2026-01-02' AS DATE)"}
+
+
+def test_lying_subclasses_inject_without_normalising() -> None:
+    """Negative control: spelled from their own dunders, the lying subclasses let OR 1=1
+    escape. FactLang 0.1.2 refuses every subclass itself (FL507), so the threat is shown on
+    the naive spelling SchemaGuru's own layers (plain_scalar, the literal re-check) guard
+    against, not on FactLang."""
+    from factlang.sql import RenderError
+
+    from schemaguru.catalog.executor import plain_scalar
+
+    for value, family, _ in LIARS:
         probe = _raw_probe(value, family)
-        assert _escapes(probe.inline(_ansi)), value
+        assert _escapes(_naive_inline(probe.sql_template, probe.params)), value
+        with pytest.raises(RenderError, match="FL507"):  # FactLang 0.1.2 refuses it first
+            probe.inline()
+        base = plain_scalar(value)
+        assert type(base) in (str, int, float, __import__("decimal").Decimal,
+                              __import__("datetime").date)  # fmt: skip
+        assert not _escapes(
+            _naive_inline(probe.sql_template, (replace(probe.params[0], value=base),))
+        )
 
 
 @pytest.mark.parametrize("dialect", sorted({*sg.catalog.dialects(), "sqlite"}))
@@ -360,7 +397,8 @@ def test_subclasses_are_normalised_to_their_base_content(
     probe = _raw_probe(value, family)
     conn.execute(type(probe)(probe.sql_template, probe.params, probe.arity, None, dialect, "x"),
                  timeout_s=None)  # fmt: skip
-    assert got == [f"SELECT 1 AS x WHERE a = {literal}"]  # the base content, never the lie
+    want = _TSQL_SPELLING.get(literal, literal) if dialect == "tsql" else literal
+    assert got == [f"SELECT 1 AS x WHERE a = {want}"]  # the base content, never the lie
     assert not _escapes(got[0])
 
 
@@ -375,20 +413,31 @@ def test_plain_str_subclass_keeps_its_content() -> None:
 def test_literal_recheck_catches_what_normalising_would_miss(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Belt and braces: with normalising switched off, the per-literal re-check still refuses
-    the lying subclasses (SG109) before the host runs."""
+    """Belt and braces: with normalising switched off AND an inliner that trusts the value's
+    dunders (FactLang 0.1.2 would refuse the subclass itself, so it is replaced here to reach
+    SchemaGuru's own layer), the per-literal re-check still refuses every lie (SG109) before
+    the host runs."""
     from factlang.connectors import ExecutionError
+    from factlang.sql import probe as fl_probe
 
     from schemaguru.catalog import executor
 
     monkeypatch.setattr(executor, "plain_scalar", lambda v: v)
+    monkeypatch.setattr(fl_probe, "inline_template", _naive_inline)
     got: list[str] = []
     conn = InlineConnector(lambda sql: got.append(sql) or [], "snowflake")
-    for value, family in ((LyingStr("ok"), "string"), (LyingInt(1), "integer")):
-        with pytest.raises(ExecutionError, match="SG109"):
+    for value, family, _ in LIARS:
+        if isinstance(value, str):
+            continue  # LyingStr: SchemaGuru's own backslash refusal answers first
+        with pytest.raises(ExecutionError, match=r"SG109.*did not render"):
             conn.execute(_raw_probe(value, family), timeout_s=None)
     assert got == []
-    assert executor._LITERAL.fullmatch("'a''b'") and not executor._LITERAL.fullmatch("'a\\'b'")
+    # with both swapped out, the naive inliner alone would have let them through
+    assert _escapes(
+        _naive_inline("SELECT 1 AS x WHERE a = {{v}}", _raw_probe(LyingInt(1), "integer").params)
+    )
+    assert executor.literal_matches("'a''b'", "a'b", "snowflake")
+    assert not executor.literal_matches("'a\\'b'", "a'b", "snowflake")
 
 
 # --- FactLang 0.1.1 inline rules: no doubled quote on BigQuery/Databricks; FL500 -> SG109 ------
@@ -413,9 +462,9 @@ def test_inline_refuses_a_quote_where_doubling_is_not_an_escape(dialect: str) ->
     assert got == ["SELECT 1 AS x WHERE name = 'Brien'"]
 
 
-def test_inline_maps_factlang_fl500_to_sg109() -> None:
-    """A value FactLang refuses to inline (here an int in the boolean family) is SG109 with a
-    clear message, never FactLang's raw FL500."""
+def test_inline_maps_factlang_refusal_to_sg109() -> None:
+    """A value FactLang refuses to inline (here an int in the boolean family: FL507 since
+    0.1.2) is SG109 with a clear message, never FactLang's raw code."""
     from factlang.connectors import ExecutionError
     from factlang.ir import Arity
     from factlang.sql import Param, RenderedProbe
@@ -433,5 +482,202 @@ def test_inline_maps_factlang_fl500_to_sg109() -> None:
     with pytest.raises(ExecutionError, match="SG109") as info:
         conn.execute(probe, timeout_s=None)
     msg = str(info.value)
-    assert not msg.startswith("FL500") and "FL500" not in msg.split("SG109", 1)[1]
+    assert msg.startswith("FL700 SG109:")  # the connector code, then SchemaGuru's
+    assert not re.search(r"FL5\d\d", msg.split("SG109", 1)[1])
     assert "cannot be inlined" in msg and got == []
+
+
+# --- FactLang 0.1.2 inline rules: exact types, FL507, lexer-driven quotes, line terminators ----
+
+
+def _typed_probe(value: object, family: str, dialect: str) -> Any:
+    from factlang.ir import Arity
+    from factlang.sql import Param, RenderedProbe
+
+    return RenderedProbe(
+        "SELECT 1 AS x WHERE a = {{v}}", (Param("v", value, family),), Arity.ROW_SET, None,
+        dialect, "best_effort",
+    )  # fmt: skip
+
+
+def test_inline_tsql_text_is_a_national_literal_and_passes_the_recheck(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from schemaguru.catalog import executor
+
+    checked: list[tuple[str, str]] = []
+    real = executor.literal_matches
+
+    def spy(lit: str, value: object, dialect: str) -> bool:
+        checked.append((lit, dialect))
+        return real(lit, value, dialect)
+
+    monkeypatch.setattr(executor, "literal_matches", spy)
+    got: list[str] = []
+    InlineConnector(lambda sql: got.append(sql) or [], "tsql").execute(
+        _probe("SELECT 1 AS x WHERE name = {{v}}", "tsql", v="O'Brien"), timeout_s=None
+    )
+    assert got == ["SELECT 1 AS x WHERE name = N'O''Brien'"]
+    assert checked == [("N'O''Brien'", "tsql")]
+    assert not _escapes(got[0])
+
+
+_TS = datetime.datetime(2026, 1, 2, 3, 4, 5, 600, tzinfo=datetime.timezone.utc)
+_D = datetime.date(2026, 1, 2)
+
+
+@pytest.mark.parametrize(
+    ("dialect", "value", "family", "literal"),
+    [
+        ("tsql", True, "boolean", "1"),
+        ("tsql", False, "boolean", "0"),
+        ("oracle", True, "boolean", "1"),
+        ("oracle", False, "boolean", "0"),
+        ("duckdb", True, "boolean", "TRUE"),
+        ("tsql", _D, "date", "CAST('2026-01-02' AS DATE)"),
+        ("oracle", _D, "date", "DATE '2026-01-02'"),
+        ("tsql", _TS, "timestamp", "CAST('2026-01-02 03:04:05.000600' AS DATETIME2)"),
+        ("oracle", _TS, "timestamp", "TIMESTAMP '2026-01-02 03:04:05.000600'"),
+        ("postgres", _TS, "timestamp", "TIMESTAMP '2026-01-02T03:04:05.000600+00:00'"),
+        ("postgres", _TS.replace(microsecond=0), "timestamp",
+         "TIMESTAMP '2026-01-02T03:04:05+00:00'"),
+        ("oracle", "O'Brien", "string", "'O''Brien'"),
+        ("snowflake", Decimal("2.50"), "decimal", "2.50"),
+        ("mysql", None, "string", "NULL"),
+    ],
+)  # fmt: skip
+def test_inline_dialect_spellings_of_factlang_0_1_2(
+    dialect: str, value: object, family: str, literal: str
+) -> None:
+    got: list[str] = []
+    InlineConnector(lambda sql: got.append(sql) or [], dialect).execute(
+        _typed_probe(value, family, dialect), timeout_s=None
+    )
+    assert got == [f"SELECT 1 AS x WHERE a = {literal}"]
+
+
+def test_literal_recheck_accepts_only_the_forms_of_the_dialect() -> None:
+    """Fail closed: each dialect accepts its own spelling of a value's type and nothing else
+    (a T-SQL N'..' elsewhere, a 1/0 boolean on ANSI, an ANSI timestamp on Oracle, ...)."""
+    from schemaguru.catalog.executor import literal_matches as ok
+
+    assert ok("N'O''Brien'", "O'Brien", "tsql") and not ok("'O''Brien'", "O'Brien", "tsql")
+    assert ok("'O''Brien'", "O'Brien", "duckdb") and not ok("N'O''Brien'", "O'Brien", "duckdb")
+    assert ok("1", True, "tsql") and ok("0", False, "oracle") and not ok("TRUE", True, "tsql")
+    assert ok("TRUE", True, "postgres") and not ok("1", True, "postgres")
+    assert ok("1", 1, "tsql") and ok("1", 1, "postgres")  # an integer is a number everywhere
+    assert ok("CAST('2026-01-02' AS DATE)", _D, "tsql") and not ok("DATE '2026-01-02'", _D, "tsql")
+    assert not ok("CAST('2026-01-02' AS DATE)", _D, "postgres")
+    assert ok("TIMESTAMP '2026-01-02 03:04:05'", _TS, "oracle")
+    assert not ok("TIMESTAMP '2026-01-02T03:04:05+00:00'", _TS, "oracle")
+    assert ok("TIMESTAMP '2026-01-02T03:04:05+00:00'", _TS, "trino")
+    assert not ok("CAST('2026-01-02 03:04:05' AS DATETIME2)", _TS, "trino")
+    assert not ok("'2026-01-02'", _D, "duckdb")  # a date must not be plain text
+    assert not ok("'ok'", 3, "duckdb") and not ok("3", "3", "duckdb")  # type-keyed
+    assert not ok("NULL", "x", "duckdb") and ok("NULL", None, "tsql")
+    for bad in (
+        "'a\nb'",
+        "'a\rb'",
+        "'a\x85b'",
+        "'a\u2028b'",
+        "'a\u2029b'",
+        "'a\\'b'",
+        "'a'b'",
+        "'a\x00b'",
+    ):
+        assert not ok(bad, "x", "duckdb"), repr(bad)
+    assert not ok("1 OR 1=1", 1, "duckdb") and not ok("N'a' + N'b'", "ab", "tsql")
+    assert not ok("1", object(), "duckdb")
+
+
+@pytest.mark.parametrize("terminator", ["\r", "\n", "\r\n", "\x85", "\u2028", "\u2029"])
+@pytest.mark.parametrize("dialect", ["duckdb", "tsql", "oracle"])
+def test_inline_refuses_line_terminators_with_sg109(terminator: str, dialect: str) -> None:
+    from factlang.connectors import ExecutionError
+
+    from schemaguru.catalog.executor import inline_problem
+
+    value = f"a{terminator}b"
+    assert inline_problem(value) is not None  # SchemaGuru's own layer, whatever FactLang does
+    got: list[str] = []
+    conn = InlineConnector(lambda sql: got.append(sql) or [], dialect)
+    with pytest.raises(ExecutionError, match=r"^FL700 SG109: .*line terminator") as info:
+        conn.execute(_probe("SELECT 1 AS x WHERE name = {{v}}", dialect, v=value), timeout_s=None)
+    assert "FL5" not in str(info.value)
+    assert got == []
+
+
+def test_inline_maps_factlang_fl507_to_sg109() -> None:
+    """A text value in the date family passes SchemaGuru's checks, FactLang refuses it
+    (FL507); the caller sees SG109 with FactLang's reason, not FactLang's code."""
+    from factlang.connectors import ExecutionError
+    from factlang.sql import RenderError
+
+    probe = _typed_probe("2026-01-02", "date", "duckdb")
+    with pytest.raises(RenderError, match=r"^FL507"):
+        probe.inline()  # negative control: FactLang's own refusal
+    got: list[str] = []
+    with pytest.raises(ExecutionError, match=r"^FL700 SG109: a value cannot be inlined") as info:
+        InlineConnector(lambda sql: got.append(sql) or [], "duckdb").execute(probe, timeout_s=None)
+    assert "date family" in str(info.value) and "FL507" not in str(info.value)
+    assert info.value.code == "FL700" and got == []
+
+
+class NumpyLikeFloat(float):  # numpy.float64 subclasses float and keeps its value
+    pass
+
+
+class NumpyLikeStr(str):  # numpy.str_ subclasses str and keeps its content
+    pass
+
+
+@pytest.mark.parametrize(
+    ("value", "family", "literal"),
+    [(NumpyLikeFloat(1.25), "float", "1.25"), (NumpyLikeStr("O'Brien"), "string", "'O''Brien'")],
+)
+def test_numpy_like_subclass_is_normalised_before_factlang(
+    value: object, family: str, literal: str
+) -> None:
+    from factlang.sql import RenderError
+
+    raw = _typed_probe(value, family, "postgres")
+    with pytest.raises(RenderError, match="FL507"):
+        raw.inline()  # negative control: FactLang 0.1.2 alone refuses the subclass
+    seen: list[type] = []
+    got: list[str] = []
+
+    def host(sql: str) -> list[Any]:
+        got.append(sql)
+        return []
+
+    import factlang.sql.probe as fl_probe
+
+    real = fl_probe.inline_template
+
+    def watch(template: str, params: tuple[Any, ...], *rest: Any) -> str:
+        seen.extend(type(p.value) for p in params)
+        return real(template, params, *rest)
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(fl_probe, "inline_template", watch)
+    try:
+        InlineConnector(host, "postgres").execute(raw, timeout_s=None)
+    finally:
+        mp.undo()
+    assert got == [f"SELECT 1 AS x WHERE a = {literal}"]
+    assert seen and all(t in (float, str) for t in seen)  # FactLang only ever saw base types
+
+
+@pytest.mark.parametrize("dialect", ["bigquery", "databricks", "spark", "spark2", "hive", "sqlite"])
+def test_schemaguru_refuses_a_quote_where_it_cannot_rely_on_doubling(dialect: str) -> None:
+    """SchemaGuru's own allow-list, independent of FactLang's lexer lookup: a ' is inlined only
+    on dialects whose doubled-quote form SchemaGuru knows."""
+    from factlang.connectors import ExecutionError
+
+    from schemaguru.catalog.executor import DOUBLED_QUOTE_DIALECTS
+
+    assert dialect not in DOUBLED_QUOTE_DIALECTS
+    with pytest.raises(ExecutionError, match=r"^FL700 SG109: .*doubled-quote form"):
+        InlineConnector(lambda sql: [], dialect).execute(
+            _probe("SELECT 1 AS x WHERE name = {{v}}", dialect, v="O'Brien"), timeout_s=None
+        )

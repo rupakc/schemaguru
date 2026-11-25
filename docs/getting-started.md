@@ -14,7 +14,7 @@ pip install 'schemaguru[duckdb]'
 
 SchemaGuru needs Python 3.10+. Its only required dependencies are FactLang and PyYAML; every
 warehouse driver, LLM provider and agent framework is an optional extra (see the
-[install matrix](index.md#install)). FactLang (`factlang>=0.1.1,<0.2`) is installed from PyPI
+[install matrix](index.md#install)). FactLang (`factlang>=0.1.2,<0.2`) is installed from PyPI
 with it.
 
 `schemaguru doctor` checks the installation. When the installed FactLang lacks a capability
@@ -81,7 +81,7 @@ per run). Small tables are measured exactly; tables above 50 GiB (or 500M rows) 
 and their numbers are labelled as estimates ([Sampling](guide/sampling.md)).
 
 !!! note "Measurement needs FactLang's `Checker.measure`"
-    SchemaGuru requires FactLang 0.1.1 or later, which provides it. With a FactLang build that
+    SchemaGuru requires FactLang 0.1.2 or later, which provides it. With a FactLang build that
     lacks it, `measure()` writes nothing and returns `SG304` in `report.errors`; everything
     else keeps working on catalog knowledge.
 
@@ -166,11 +166,15 @@ reader and the measurement backend from it: a DB-API connection (`duckdb`, `sqli
 BigQuery client, a FactLang connector, or a plain function `execute(sql)` /
 `execute(sql, params)` returning rows as dicts (pass `dialect=`). A function that takes no
 parameters gets every value inlined as an ANSI literal. Such an `execute(sql)` or `query(sql)`
-host has no driver binding, so a probe whose text value holds a backslash (or a NUL, or is not
-a plain scalar) is refused (`SG109`) and its final SQL must pass the read-only guard. On
-BigQuery and Databricks a text value holding `'` is refused too: their string literals have no
-doubled-quote form (BigQuery rejects `'O''Brien'`, Databricks reads it as `OBrien`). Anything
-FactLang itself declines to inline is reported as `SG109` with the reason. Pass a DB-API
+host has no driver binding, so a probe whose text value holds a backslash, a NUL or a line
+terminator (CR, LF, U+0085, U+2028, U+2029), or whose value is not a plain scalar, is refused
+(`SG109`), and its final SQL must pass the read-only guard. On BigQuery, Databricks, Spark,
+Hive and any dialect SchemaGuru does not know to double quotes, a text value holding `'` is
+refused too: their string literals have no doubled-quote form (BigQuery rejects
+`'O''Brien'`, Databricks reads it as `OBrien`). Literals are spelled for the dialect (T-SQL
+text as `N'…'`, T-SQL and Oracle booleans as `1`/`0`), and each one is re-checked against
+that spelling before the host runs the SQL. Anything FactLang itself declines to inline is
+reported as `SG109` with the reason. Pass a DB-API
 connection, an engine or a BigQuery client for full support. Anything else raises `ConfigError` `SG107`
 naming the accepted types.
 

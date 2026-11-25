@@ -348,6 +348,8 @@ ACCEPTED_CONNECTORS = (
 
 # what a host without bind parameters may receive as a literal (spec 2 G2): plain scalars only
 _INLINE_TYPES = (str, int, float, Decimal, datetime.date, type(None))
+# CR, LF, NEL, LINE SEPARATOR, PARAGRAPH SEPARATOR: never inside an inlined literal
+LINE_TERMINATORS = ("\r", "\n", "\x85", "\u2028", "\u2029")
 
 
 def inline_problem(value: object) -> str | None:
@@ -356,7 +358,11 @@ def inline_problem(value: object) -> str | None:
     Strings may not hold a backslash or NUL: whether ``\\'`` ends a literal depends on the
     server's mode (MySQL, Snowflake, Postgres with ``standard_conforming_strings=off``), so
     such a value has no spelling that is safe everywhere. Without them, doubling ``'`` is
-    unambiguous on every engine. Only plain scalars are allowed, and floats must be finite.
+    unambiguous on every engine that has the doubled form. Nor may they hold a line terminator
+    (CR, LF, U+0085, U+2028, U+2029): console tools may end a statement at a line break
+    (SQL*Plus at a blank line). FactLang 0.1.2 refuses the same set; SchemaGuru refuses it on
+    its own so the behaviour does not depend on the FactLang version. Only plain scalars are
+    allowed, and floats must be finite.
     """
     if not isinstance(value, _INLINE_TYPES):  # bool is an int; datetime is a date
         return f"a {type(value).__name__} value cannot be inlined (scalars only)"
@@ -366,6 +372,11 @@ def inline_problem(value: object) -> str | None:
         return f"a non-finite number ({value}) cannot be inlined"
     if isinstance(value, str) and ("\\" in value or "\x00" in value):
         return "a text value holding a backslash or NUL cannot be inlined safely"
+    if isinstance(value, str) and any(ch in value for ch in LINE_TERMINATORS):
+        return (
+            "a text value holding a line terminator (CR, LF, U+0085, U+2028 or U+2029) cannot "
+            "be inlined safely"
+        )
     return None
 
 
@@ -392,11 +403,57 @@ def plain_scalar(value: object) -> object:
     raise TypeError(f"a {type(value).__name__} value cannot be inlined (scalars only)")
 
 
-# one inlined literal, nothing else: NULL, a boolean, a plain number, or a quoted text (with an
-# optional DATE/TIMESTAMP prefix) whose quotes are all doubled and which holds no backslash/NUL
-_LITERAL = re.compile(
-    r"NULL|TRUE|FALSE|-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|(?:(?:DATE|TIMESTAMP) )?'(?:[^'\\\x00]|'')*'"
-)
+# the inlined literal forms FactLang 0.1.2 emits, by value type, nothing else. Quoted text holds
+# only doubled quotes, never a backslash, NUL or line terminator.
+_QUOTED = r"'(?:[^'\\\x00\r\n\x85\u2028\u2029]|'')*'"
+_NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
+_DATE = r"\d{4}-\d{2}-\d{2}"
+_TIME = r"\d{2}:\d{2}:\d{2}(?:\.\d{6})?"
+
+
+@dataclass(frozen=True)
+class _Forms:
+    """One dialect's literal spellings (each a full-match regex)."""
+
+    text: str = _QUOTED
+    boolean: str = "TRUE|FALSE"
+    date: str = f"DATE '{_DATE}'"
+    timestamp: str = rf"TIMESTAMP '{_DATE}T{_TIME}\+00:00'"
+
+
+_ANSI_FORMS = _Forms()
+_DIALECT_FORMS = {
+    # N'…' national text, BIT 1/0, ISO casts that ignore DATEFORMAT/LANGUAGE
+    "tsql": _Forms(
+        text="N" + _QUOTED,
+        boolean="1|0",
+        date=rf"CAST\('{_DATE}' AS DATE\)",
+        timestamp=rf"CAST\('{_DATE} {_TIME}' AS DATETIME2\)",
+    ),
+    # TRUE is an identifier before 23ai; an ANSI TIMESTAMP takes no 'T' and no offset
+    "oracle": _Forms(boolean="1|0", timestamp=f"TIMESTAMP '{_DATE} {_TIME}'"),
+}
+
+
+def literal_matches(lit: str, value: object, dialect: str) -> bool:
+    """Is ``lit`` exactly the literal FactLang 0.1.2 spells for ``value``'s type on
+    ``dialect``? Fail closed: an unknown type, or any other spelling, is ``False``."""
+    forms = _DIALECT_FORMS.get(dialect.lower(), _ANSI_FORMS)
+    if value is None:
+        pattern = "NULL"
+    elif isinstance(value, bool):
+        pattern = forms.boolean
+    elif isinstance(value, (int, float, Decimal)):
+        pattern = _NUMBER
+    elif isinstance(value, str):
+        pattern = forms.text
+    elif isinstance(value, datetime.datetime):
+        pattern = forms.timestamp
+    elif isinstance(value, datetime.date):
+        pattern = forms.date
+    else:
+        return False
+    return re.fullmatch(pattern, lit) is not None
 
 
 def _ansi(text: str) -> str:
@@ -419,10 +476,15 @@ def _as_rows(result: Any) -> list[dict[str, Any]]:
     return out
 
 
-# dialects whose lexers do not read a doubled ``''`` as a quote inside a string literal:
-# BigQuery rejects it (syntax error) and Databricks reads adjacent literals as one
-# (``'O''Brien'`` is ``OBrien``, a silently wrong value). FactLang 0.1.1 refuses them too.
-NO_DOUBLED_QUOTE = frozenset({"bigquery", "databricks"})
+# dialects whose lexers read a doubled ``''`` as a quote inside a string literal (FactLang
+# 0.1.2's built-in profiles that set ``doubled_quote_escape``, conformance-checked there). On
+# every other dialect text holding ``'`` is refused: BigQuery rejects ``''`` (syntax error),
+# Databricks/Spark/Hive read adjacent literals as one (``'O''Brien'`` is ``OBrien``, a silently
+# wrong value), and a dialect SchemaGuru does not know gets no benefit of the doubt.
+DOUBLED_QUOTE_DIALECTS = frozenset(
+    {"clickhouse", "duckdb", "mysql", "oracle", "postgres", "redshift", "snowflake", "trino",
+     "tsql"}
+)  # fmt: skip
 
 
 class InlineConnector:
@@ -432,11 +494,17 @@ class InlineConnector:
     way (``SG109`` refuses anything else):
 
     * only plain scalars (text, integers, booleans, finite numbers, decimals, dates,
-      timestamps, NULL); a list, NaN or infinity is refused;
-    * text holding a backslash or NUL is refused; all other text is ANSI-quoted (``'`` doubled),
-      which no server mode can read differently -- except on BigQuery and Databricks, whose
-      lexers have no doubled-quote form, where text holding ``'`` is refused;
-    * anything FactLang itself refuses to inline (``FL500``) is reported as ``SG109`` too;
+      timestamps, NULL), normalised to their exact base type first (a ``numpy.float64`` is
+      inlined as a ``float``); a list, NaN or infinity is refused;
+    * text holding a backslash, NUL or line terminator (CR, LF, U+0085, U+2028, U+2029) is
+      refused; all other text is quoted with ``'`` doubled, which no server mode can read
+      differently -- on ``DOUBLED_QUOTE_DIALECTS`` only: elsewhere (BigQuery, Databricks,
+      Spark, Hive, ...) text holding ``'`` is refused;
+    * anything FactLang itself refuses to inline (``FL507``; ``FL500``) is reported as
+      ``SG109`` too;
+    * every literal must be exactly the form FactLang 0.1.2 spells for the value's type on
+      this dialect (``N'…'`` text, ``1``/``0`` booleans and ISO casts on T-SQL; ``1``/``0``
+      and ``TIMESTAMP 'YYYY-MM-DD HH:MM:SS'`` on Oracle; ANSI elsewhere), else ``SG109``;
     * the final SQL must pass the read-only guard (``SG104``) right before the host runs it.
 
     Rows are mappings (or row objects with ``keys``/``items``). Only FactLang's public API is
@@ -461,7 +529,8 @@ class InlineConnector:
                 code="FL700",
             )
 
-        no_doubling = self.dialect.lower() in NO_DOUBLED_QUOTE
+        dialect = self.dialect.lower()
+        no_doubling = dialect not in DOUBLED_QUOTE_DIALECTS
         params = []
         for p in probe.params:
             try:  # the exact base type, read through the base class (a subclass cannot lie)
@@ -472,22 +541,24 @@ class InlineConnector:
             if why is None and no_doubling and isinstance(value, str) and "'" in value:
                 why = (
                     f"a text value holding ' cannot be inlined for {self.dialect}: its string "
-                    "literals have no doubled-quote form"
+                    "literals have no doubled-quote form SchemaGuru can rely on"
                 )
             if why is not None:
                 raise refuse(why)
             params.append(replace(p, value=value))
 
         def inline(template: str, ps: tuple[Any, ...]) -> str:
+            # spelled for the host's dialect, which is what runs the text
+            target = replace(probe, sql_template=template, params=ps, dialect=dialect)
             try:
-                return str(replace(probe, sql_template=template, params=ps).inline(_ansi))
-            except render_error as e:  # FactLang's FL500: a value it will not inline
+                return str(target.inline(_ansi))
+            except render_error as e:  # FL507 (a value it will not inline) or FL500
                 detail = re.sub(r"^FL\d{3}\s*", "", str(e))
                 raise refuse(f"a value cannot be inlined ({detail})") from None
 
-        for p in params:  # belt and braces: every rendered literal is one well-formed literal
+        for p in params:  # belt and braces: every rendered literal is exactly its type's form
             lit = inline("{{" + p.name + "}}", (p,))
-            if not _LITERAL.fullmatch(lit):
+            if not literal_matches(lit, p.value, dialect):
                 raise refuse(f"parameter {p.name!r} did not render as a single safe literal")
         sql = inline(probe.sql_template, tuple(params))
         try:

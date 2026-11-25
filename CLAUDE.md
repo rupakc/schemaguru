@@ -11,7 +11,7 @@ Design: `docs/specs/2026-11-24-schemaguru-design.md`. Wrong guesses return plaus
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"   # FactLang (factlang>=0.1.1,<0.2) comes from PyPI
+pip install -e ".[dev]"   # FactLang (factlang>=0.1.2,<0.2) comes from PyPI
 pytest -m "not integration and not live and not benchmark" --cov
 ruff check
 ruff format --check
@@ -22,7 +22,7 @@ mypy --strict src
 
 - Package `schemaguru`, `src/` layout, version `0.1.0` in `src/schemaguru/__about__.py`.
 - Python `>=3.10`; CI matrix 3.10, 3.11, 3.12, 3.13 × ubuntu, macos, windows.
-- Runtime dependencies exactly: `factlang>=0.1.1,<0.2`, `PyYAML>=6`. Everything else is an extra imported lazily inside functions. FactLang comes from PyPI via the pyproject pin `factlang>=0.1.1,<0.2`.
+- Runtime dependencies exactly: `factlang>=0.1.2,<0.2`, `PyYAML>=6`. Everything else is an extra imported lazily inside functions. FactLang comes from PyPI via the pyproject pin `factlang>=0.1.2,<0.2`.
 - **FactLang seam:** only `src/schemaguru/measure/flbridge.py`, `src/schemaguru/catalog/executor.py` and `src/schemaguru/render/fragments.py` import `factlang`; everything else uses SchemaGuru types. Enforced by `tests/architecture/test_layers.py::test_factlang_seam`.
 - **SchemaGuru never writes measurement SQL** (spec §5.2). The only SQL in `src/` is catalog-metadata SQL in `catalog/readers/*.py`, with bind parameters for every value.
 - Layer rule spec §5.1; `mypy --strict src`, `ruff check`, `ruff format --check` blocking.

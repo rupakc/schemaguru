@@ -7,7 +7,7 @@ and agents alike.
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"   # FactLang (factlang>=0.1.1,<0.2) comes from PyPI
+pip install -e ".[dev]"   # FactLang (factlang>=0.1.2,<0.2) comes from PyPI
 ```
 
 ## Checks (all blocking in CI)

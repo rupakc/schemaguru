@@ -33,7 +33,8 @@ CODES: Mapping[str, str] = MappingProxyType(
         "SG108": "an installed plugin (entry point schemaguru.<point>) failed to load and was "
         "skipped",
         "SG109": "a value cannot be inlined for a host without bind parameters (a backslash, NUL, "
-        "non-scalar or non-finite value, or a ' on BigQuery/Databricks); the probe is refused",
+        "line terminator, non-scalar or non-finite value, or a ' on a dialect without a "
+        "doubled-quote form such as BigQuery/Databricks/Spark/Hive); the probe is refused",
         "SG110": "the crawl stopped at Budget.crawl_bytes (billed metadata bytes, where the reader "
         "reports them); its checkpoint is kept and the next crawl resumes",
         "SG201": "overlay 'version' is missing or unsupported",

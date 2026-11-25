@@ -9,7 +9,7 @@
 ```bash
 git clone https://github.com/rupakc/schemaguru && cd schemaguru
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"   # FactLang (factlang>=0.1.1,<0.2) comes from PyPI
+pip install -e ".[dev]"   # FactLang (factlang>=0.1.2,<0.2) comes from PyPI
 ```
 
 ## Checks (all blocking in CI)
@@ -28,7 +28,7 @@ Test markers:
 | (none) | nothing | every push, on Python 3.10-3.13 × Linux/macOS/Windows |
 | `integration` | service containers (PostgreSQL, MySQL, ClickHouse, SQL Server, Trino) or a local engine; also the Postgres store | CI integration job; locally they skip without a DSN |
 | `live` | real cloud warehouse credentials | opt-in only (`tests/live/`) |
-| `factlang` | the real FactLang (installed from PyPI) | every push; FactLang 0.1.1 provides every capability, so none skip |
+| `factlang` | the real FactLang (installed from PyPI) | every push; FactLang 0.1.2 provides every capability, so none skip |
 | `benchmark` | time | nightly, not per pull request |
 
 The test layout: `tests/unit`, `tests/property` (Hypothesis), `tests/integration`,

@@ -24,7 +24,7 @@ Why: SchemaGuru must never write measurement SQL. FactLang owns dialects, connec
 verdicts. Amendment A adds the primitives SchemaGuru needs (raw measurement, top-k values,
 composite join keys, cost estimate, filter/join rendering, guarded metadata SQL). Amendment B adds
 sampled measurement for very large tables.
-How to apply: depend on `factlang>=0.1.1,<0.2`; FactLang comes from PyPI via that pyproject pin.
+How to apply: depend on `factlang>=0.1.2,<0.2`; FactLang comes from PyPI via that pyproject pin.
 If a primitive is missing, register it through FactLang's public API, never emit SQL strings.
 
 ## 2026-11-24 - The LLM drafts meaning; a human always wins

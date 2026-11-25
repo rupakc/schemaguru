@@ -45,7 +45,7 @@ def measured(report: object) -> bool:
     errors = getattr(report, "errors", [])
     if any(d.code == "SG304" for d in errors):
         print(
-            "note: the installed FactLang cannot measure (SchemaGuru needs FactLang 0.1.1 or "
+            "note: the installed FactLang cannot measure (SchemaGuru needs FactLang 0.1.2 or "
             "later); the views below show catalog knowledge only.\n"
         )
         return False

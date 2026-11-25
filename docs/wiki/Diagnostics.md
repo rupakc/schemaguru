@@ -70,7 +70,7 @@ holds the same list, and a test keeps that file equal to the codes the source em
 | `SG106` | a connection URL could not be opened (no FactLang connect, no built-in driver) |
 | `SG107` | the object given as a connector is not one SchemaGuru can use, or its dialect cannot be told (ConfigError naming the accepted types) |
 | `SG108` | an installed plugin (entry point schemaguru.<point>) failed to load and was skipped |
-| `SG109` | a value cannot be inlined for a host without bind parameters (a backslash, NUL, non-scalar or non-finite value, or a `'` on BigQuery/Databricks, whose literals have no doubled-quote form); the probe is refused |
+| `SG109` | a value cannot be inlined for a host without bind parameters (a backslash, NUL, line terminator (CR, LF, U+0085, U+2028, U+2029), non-scalar or non-finite value, or a `'` on a dialect whose literals have no doubled-quote form, such as BigQuery, Databricks, Spark or Hive); the probe is refused |
 | `SG110` | the crawl stopped at `Budget.crawl_bytes` (billed metadata bytes, where the reader reports them); its checkpoint is kept and the next crawl resumes |
 
 ### SG2xx: Overlays

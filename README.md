@@ -124,7 +124,7 @@ A warehouse that is not listed needs a
 
 SchemaGuru writes no measurement SQL. It states what it wants to know as
 [FactLang](https://github.com/rupakc/factlang) measurements and claims; FactLang renders
-dialect-correct SQL, runs it and reports the evidence. FactLang (`factlang>=0.1.1,<0.2`) is
+dialect-correct SQL, runs it and reports the evidence. FactLang (`factlang>=0.1.2,<0.2`) is
 installed with SchemaGuru.
 
 ## Documentation

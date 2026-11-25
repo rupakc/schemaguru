@@ -10,7 +10,7 @@
 * ```` ```py ```` blocks are illustrations that need a real cloud warehouse, a network or an
   API key; they must still parse.
 
-Measurement: the samples run on FactLang's ``Checker.measure`` (FactLang 0.1.1+). Should the
+Measurement: the samples run on FactLang's ``Checker.measure`` (FactLang 0.1.2+). Should the
 installed FactLang lack it, the default backend of every ``Guru`` is the test ``FakeBackend``
 on the same DuckDB file, so the samples still show measured knowledge.
 """

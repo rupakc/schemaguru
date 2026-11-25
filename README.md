@@ -35,7 +35,7 @@ extra:
 |---|---|---|---|
 | `bigquery` | google-cloud-bigquery | `anthropic` | Anthropic drafting provider |
 | `snowflake` | snowflake-connector-python | `openai` | OpenAI-compatible drafting provider |
-| `redshift` | redshift-connector | `mcp` | MCP server (stdio and HTTP) |
+| `redshift` | redshift-connector | `mcp` | MCP server (stdio; HTTP also needs the `server` extra) |
 | `databricks` | databricks-sql-connector | `server` | HTTP server (Starlette, uvicorn) |
 | `postgres` | psycopg 3 | `langchain` | LangChain tools and retriever |
 | `duckdb` | duckdb | `llamaindex` | LlamaIndex tools |
@@ -113,7 +113,8 @@ Every statement carries its provenance (*catalog*, *declared*, *measured*, *draf
 
 | Warehouse | Status |
 |---|---|
-| DuckDB, PostgreSQL, MySQL / MariaDB, ClickHouse, SQL Server / Synapse, Trino | catalog readers tested against real engines in CI |
+| DuckDB, PostgreSQL, MySQL / MariaDB, ClickHouse, SQL Server, Trino | catalog readers tested against real engines in CI (SQL Server 2022) |
+| Azure Synapse | supported through the T-SQL reader; not CI-tested |
 | BigQuery, Snowflake, Redshift, Databricks, Oracle | built from the documented system views and tested on recorded metadata; **not yet validated against live accounts** |
 
 A warehouse that is not listed needs a

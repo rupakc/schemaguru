@@ -139,8 +139,7 @@ listed in §25 (Design Decisions) with their reasons; the most load-bearing are:
 - Python 3.10–3.13 (matches FactLang) **[call]**; `src/` layout; `hatchling` backend.
 - **Depends on FactLang** (`factlang>=0.1,<0.2`), including the FactLang spec's
   Amendment A (§18: R1–R10), which the owner directed into FactLang 0.1.0 on 2026-11-24 for claim language, SQL rendering
-  across dialects, connectors and verdicts (owner decision). Until FactLang 0.1.0 is
-  on PyPI, development and CI install it from `git+https://github.com/rupakc/factlang@main`;
+  across dialects, connectors and verdicts (owner decision). FactLang comes from PyPI;
   SchemaGuru 0.1.0 is not released before FactLang 0.1.0.
 - Core runtime dependencies: `factlang`, `PyYAML` **[call]**. Everything else is an
   optional extra imported lazily.

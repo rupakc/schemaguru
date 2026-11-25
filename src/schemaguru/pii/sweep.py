@@ -41,14 +41,24 @@ _KV = re.compile(
     r"(?P<sep>[ \t]{0,3}[:=][ \t]{0,3}|[ \t]{1,3})(?P<val>\S{8,})",
     re.I,
 )
+# A quoted value (``"..."`` / ``'...'``) runs to its own closing quote or the end of the line,
+# leading spaces included; the quotes stay in the text.
+_QUOTED_VAL = r"[ \t]*(?!(?P=q))[^\s<](?:(?!(?P=q))[^\n])*"
+# ``"api_key": "<value>"`` / ``token: '<value>'``: the JSON and quoted forms of ``_KV`` (whose
+# ``\S{8,}`` value would swallow the quotes and miss a key followed by its closing quote).
+_KV_QUOTED = re.compile(
+    r"(?:(?<=[_-])|(?<![\w-]))"
+    r"(?P<key>api[_-]?key|access[_-]?key|key|token|secret|bearer|authorization)"
+    rf"(?P<sep>[\"']?[ \t]{{0,3}}[:=][ \t]{{0,3}}(?P<q>[\"']))(?P<val>{_QUOTED_VAL})",
+    re.I,
+)
 # ``password=<value>`` / ``pwd: <value>`` / ``"password": "<value>"``: masked whatever the
 # value's length (``password=a``, ``pwd: abc``), except a SQL type after a colon or a space
-# (``password: varchar(255)`` is a schema; ``=`` assigns, so it is always masked). A quoted value
-# keeps its quotes.
+# (``password: varchar(255)`` is a schema; ``=`` assigns, so it is always masked).
 _KV_PASSWORD = re.compile(
     r"(?:(?<=[_-])|(?<![\w-]))(?P<key>password|passwd|pwd)"
     r"(?P<sep>[\"']?[ \t]{0,3}[:=][ \t]{0,3}(?P<q>[\"'])?)"
-    r"(?P<val>(?(q)(?!(?P=q))[^\s<](?:(?!(?P=q))[^\n]){0,255}|[^\s<\"']\S*))",
+    rf"(?P<val>(?(q){_QUOTED_VAL}|[^\s<\"']\S*))",
     re.I,
 )
 _PASSWORD_KEYS = ("password", "passwd")
@@ -109,13 +119,27 @@ def _kv_ok(text: str) -> bool:
 def _password_ok(text: str) -> bool:
     m = _KV_PASSWORD.fullmatch(text)
     assert m is not None
-    return "=" in m["sep"] or _SQL_TYPE.fullmatch(m["val"]) is None
+    return "=" in m["sep"] or _SQL_TYPE.fullmatch(m["val"].strip()) is None
 
 
-def _kv_sub(text: str) -> str:
-    m = _KV.fullmatch(text) or _KV_PASSWORD.fullmatch(text)
+def _kv_quoted_ok(text: str) -> bool:
+    m = _KV_QUOTED.fullmatch(text)
     assert m is not None
-    return m["key"] + m["sep"] + "<secret>"
+    val = m["val"].strip()
+    if "=" not in m["sep"] and _SQL_TYPE.fullmatch(val):
+        return False
+    return _token_like(val)
+
+
+def _kv_sub_for(rx: re.Pattern[str]) -> Callable[[str], str]:
+    """Keep the key and separator (with any opening quote) of ``rx``'s match; mask the value."""
+
+    def sub(text: str) -> str:
+        m = rx.fullmatch(text)
+        assert m is not None
+        return m["key"] + m["sep"] + "<secret>"
+
+    return sub
 
 
 def _iban_prefix(text: str) -> int:
@@ -141,8 +165,9 @@ def _iban_sub(text: str) -> str:
 
 _RULES: tuple[_Rule, ...] = (
     ("secret", _b(d.JWT_RE.pattern), d.jwt_ok, _tok("<secret>")),
-    ("secret", _KV_PASSWORD, _password_ok, _kv_sub),
-    ("secret", _KV, _kv_ok, _kv_sub),
+    ("secret", _KV_PASSWORD, _password_ok, _kv_sub_for(_KV_PASSWORD)),
+    ("secret", _KV_QUOTED, _kv_quoted_ok, _kv_sub_for(_KV_QUOTED)),
+    ("secret", _KV, _kv_ok, _kv_sub_for(_KV)),
     ("secret", _PROVIDER_KEY, lambda _m: True, _tok("<secret>")),
     *[("secret", _glued(pat), lambda _m: True, _tok("<secret>")) for pat in _CREDENTIAL_SHAPES],
     ("email", re.compile(d.EMAIL_RE.pattern), lambda _m: True, _tok("<email>")),

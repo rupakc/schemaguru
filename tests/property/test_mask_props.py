@@ -76,6 +76,19 @@ RECALL_CORPUS: tuple[tuple[str, str], ...] = (
     ("password: hunter2hunter2", "secret"),
     ("password varchar255abc", "secret"),
     ("retry with password: hunter2hunter2", "secret"),
+    # separator-segmented keys under a path (fix round 1: all masked by 0.1.0)
+    *(
+        (prefix + key, "secret")
+        for prefix in ("/", "~/", "./")
+        for key in (
+            "licenses/AB3X-QZ9K-MN2P-WR7T-YU5V",
+            "keys/aB3x-Qz9K-mN2p-Wr7T-yU5v",
+            "reset/k2m8z-p4w7r-j6n1t-b5vq9",
+            "api/v1/keys/X7kP-2mQz-9LrT-4vBn-8cWs",
+            "tmp/Zx9Q.m2Lp.8Rt4.Vb7N.c1Kd.6Hs3",
+            "s/3f9K_x2Lq_8mZp_4vRt_7bNc_1yWs",
+        )
+    ),
 )
 
 # base64 tokens (which may hold '/') and passwords after a credential key, as 0.1.0 masked them
@@ -83,6 +96,23 @@ B64_TOKENS = (
     st.binary(min_size=18, max_size=40)
     .map(lambda b: base64.b64encode(b).decode().rstrip("="))
     .filter(lambda s: len(s) >= 24 and _v010_secret(s))
+)
+# urlsafe base64 ('-' and '_' split it into pieces) and keys written in groups ("AB3X-QZ9K-...")
+URLSAFE_TOKENS = (
+    st.binary(min_size=18, max_size=40)
+    .map(lambda b: base64.urlsafe_b64encode(b).decode().rstrip("="))
+    .filter(lambda s: _v010_secret(s))
+)
+SEGMENTED_KEYS = st.builds(
+    lambda groups, sep: sep.join(groups),
+    st.lists(st.from_regex(r"[A-Za-z0-9]{4,6}", fullmatch=True), min_size=4, max_size=8),
+    st.sampled_from(["-", "_", "."]),
+).filter(lambda s: _v010_secret(s))
+PATH_PREFIXES = st.sampled_from(["/", "~/", "./", "/keys/", "/tmp/a/", "s3://bucket/"])
+PATH_TOKENS = st.builds(
+    lambda prefix, token: prefix + token,
+    PATH_PREFIXES,
+    st.one_of(B64_TOKENS, URLSAFE_TOKENS, SEGMENTED_KEYS),
 )
 PASSWORDS = st.from_regex(r"[A-Za-z]{2,10}[0-9]{1,4}[A-Za-z0-9!#%]{0,8}", fullmatch=True)
 
@@ -102,10 +132,13 @@ def _v010_secret(v: str) -> bool:
     return shannon(v) >= 4.0
 
 
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=600, deadline=None)
 @given(
     st.one_of(
         st.sampled_from(RECALL_CORPUS),
+        PATH_TOKENS.map(lambda s: (s, "secret")),
+        URLSAFE_TOKENS.map(lambda s: (s, "secret")),
+        SEGMENTED_KEYS.map(lambda s: (s, "secret")),
         B64_TOKENS.map(lambda s: (s, "secret")),
         B64_TOKENS.map(lambda s: "/" + s[1:]).filter(_v010_secret).map(lambda s: (s, "secret")),
         PASSWORDS.filter(lambda p: len(p) >= 8).map(lambda p: (f"password: {p}", "secret")),

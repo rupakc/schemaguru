@@ -75,12 +75,14 @@ spaces). Blank values count as NULL. Detectors are plug-ins:
   mask JSON numbers, and an all-digit run is a number, not a hash.
 * **Secrets** (`<secret>`): JWTs, published token shapes (`ghp_…`, `github_pat_…`, `xoxb-…`,
   `xapp-…`, `AKIA…`, `sk_live_…`, …) even when glued to a word by `_` or `-`
-  (`token_ghp_…`), the value after a credential key (`api_key=…`, `Bearer …`), and
-  high-entropy strings. After `password`, `passwd` or `pwd` with `=` or `:` the value is
-  masked whatever its length (`password: hunter2` → `password: <secret>`), unless it is a
-  column type (`password: varchar(255)` describes a schema). A path or URL
-  (`/var/data/x.csv`, `s3://bucket/key`) is a secret only when a piece of it looks like a
-  token; a hex or UUID segment is masked in place (`/var/data/<hex32>/x.csv`).
+  (`token_ghp_…`), the value after a credential key (`api_key=…`, `Bearer …`, and quoted
+  forms such as `{"token": "…"}`, which keep their quotes), and high-entropy strings. After
+  `password`, `passwd` or `pwd` with `=` or `:` the value is masked whatever its length
+  (`password: hunter2` → `password: <secret>`, `{"password": " x"}` →
+  `{"password": "<secret>"}`), unless it is a column type (`password: varchar(255)`
+  describes a schema). A path or URL keeps the high-entropy rule on its own text (after the
+  scheme), and is also a secret when a piece of it looks like a token; a hex or UUID segment
+  is masked in place instead (`/var/data/<hex32>/x.csv`).
 * **Addresses** (`<address>`) are masked as whole values and inside sentences:
   `ship to 42 Elm Street, Springfield today` → `ship to <address> today`.
 
@@ -124,10 +126,14 @@ one, it masks. What that means in practice:
 - After `password:`, `passwd:` or `pwd:` any value is masked, a word included
   (`password: required` → `password: <secret>`); only a column type (`varchar(255)`,
   `text`, …) is kept, so a password that is literally a type name would show.
-- A path is kept unless a piece of it looks like a token (letters mixed with digits or with
-  mixed case, or 16+ high-entropy letters) or it holds a `+` and is high-entropy as a whole: a
-  path with a camel-case folder of 8+ letters is masked whole, and a token of fewer than 16
-  letters of one case with no digit, inside a path, is not detected.
+- A path or URL of 24+ varied characters is high-entropy like a token and is masked whole
+  (`/data/warehouse/2026/11/25/part-00017-snappy.parquet` → `<secret>`, and so is a long
+  `https://…` link): a key written in groups (`/licenses/AB3X-QZ9K-…`) has the same shape.
+  Only a hex or UUID segment is masked in place rather than hiding the path; when the rest of
+  such a path is made of numbers and lower-case or Title-case words it is shown, so a short
+  lower-case token beside a hex segment would show.
+- A quoted credential value runs to its closing quote or the end of the line; an unclosed quote
+  masks the rest of the line.
 - Addresses inside sentences need capitalised street names (`42 Elm Street`), except before an
   unambiguous street word (`12 baker street`); a lower-case `12 baker st` inside a sentence is
   not detected.

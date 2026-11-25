@@ -118,7 +118,7 @@ TRUTH: dict[str, tuple[list[str], list[str]]] = {
             "SomeVeryLongCamelCaseIdentifierName",
             "123e4567-e89b-12d3-a456-426614174000",
             "d41d8cd98f00b204e9800998ecf8427e",
-            "https://example.com/orders/2026/11/report-final.pdf",
+            "https://example.com/orders/report.pdf",
             "a.b.c",
             "short1x",
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1",

@@ -238,15 +238,16 @@ def _card(v: str) -> bool:
     return CARD_RE.fullmatch(v) is not None and card_ok(v)
 
 
-# A path or URL ("/var/data/x.csv", "./out/v3.csv", "s3://bucket/key"; no whitespace, so prose
-# that starts with '/' is still free text): its own shape is not a secret, so it is one only when
-# a piece of it looks random. A '/'-segment that is wholly hex or
-# a UUID is left to the outbound sweep, which masks it in place ("/var/data/<hex32>/x.csv").
+# A path or URL ("/var/data/x.csv", "s3://bucket/key"; no whitespace, so prose that starts with
+# '/' is still free text) keeps the 0.1.0 entropy rule, applied to the part after any scheme, so
+# every path 0.1.0 masked is still masked (recall over precision: a long, varied real path is
+# masked too). Two changes: a random-looking piece makes it a secret even when the rule does not
+# fire, and a '/'-segment that is wholly hex or a UUID is left to the outbound sweep, which masks
+# it in place ("/var/data/<hex32>/x.csv") instead of hiding the whole path, unless the rest of the
+# path still looks like a token.
 _PATH_START = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://|\.{1,2}/|~/|/")
 _PIECE = re.compile(r"[A-Za-z0-9]+")
 _SWEPT_SEGMENT = re.compile(rf"(?:{UUID_RE.pattern}|[0-9a-fA-F]{{20,}})(?:\.[A-Za-z0-9]{{1,8}})?")
-
-
 _CAMEL = re.compile(r"(?:[A-Z]?[a-z]+)+|[A-Z]+[a-z]*")
 
 
@@ -270,14 +271,32 @@ def _random_piece(p: str) -> bool:
     return len(p) >= 16 and shannon(p) >= 3.5
 
 
+def _plain_piece(p: str) -> bool:
+    """A number or a lower-case / Title-case word: what the rest of a hex-keyed path is."""
+    return p.isdigit() or (p.isalpha() and (p.islower() or p.istitle()))
+
+
+def _swept(segment: str) -> bool:
+    head = segment.split(".")[0]
+    return _SWEPT_SEGMENT.fullmatch(segment) is not None and bool(
+        UUID_RE.fullmatch(head) or hex_ok(head)
+    )
+
+
 def _path_secret(v: str) -> bool:
-    for segment in v.split("/"):
-        head = segment.split(".")[0]
-        if _SWEPT_SEGMENT.fullmatch(segment) and (UUID_RE.fullmatch(head) or hex_ok(head)):
-            continue  # the sweep masks it in place
-        if any(_random_piece(p) for p in _PIECE.findall(segment)):
-            return True
-    return False
+    body = v.split("://", 1)[1] if "://" in v else v
+    segments = body.split("/")
+    kept = [seg for seg in segments if not _swept(seg)]
+    pieces = [p for seg in kept for p in _PIECE.findall(seg)]
+    if any(_random_piece(p) for p in pieces):
+        return True
+    if len(kept) == len(segments):
+        return _entropy_secret(body)
+    # a hex/UUID segment is masked in place; the rest is a secret only if it still looks like one
+    rest = "/".join(kept)
+    return _entropy_secret(body) and (
+        _entropy_secret(rest) or not all(_plain_piece(p) for p in pieces)
+    )
 
 
 def _entropy_secret(v: str) -> bool:
@@ -294,8 +313,7 @@ def _secret(v: str) -> bool:
     if jwt_ok(v) and JWT_RE.fullmatch(v):
         return True
     if _PATH_START.match(v) and not any(c.isspace() for c in v):
-        # '+' is base64, almost never a path: such a value keeps the entropy rule too
-        return _path_secret(v) or ("+" in v and _entropy_secret(v))
+        return _path_secret(v)
     return _entropy_secret(v)
 
 

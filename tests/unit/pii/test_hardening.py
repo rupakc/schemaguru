@@ -55,6 +55,12 @@ ADVERSARIAL = {
     "M. ": "M. " * (N // 3),
     "path": "/" + "a1b2c3d4/" * (N // 9),
     "_ghp_": "_" + "ghp_" * (N // 4),
+    # fix round 1: quoted credential values, segmented keys under a path
+    'token": "': '{"token": "' + "a1" * (N // 2),
+    '"token":"': '"token":"' * (N // 9),
+    "password: ' '": "password: '" + " " * N + "x",
+    "segkey path": "/" + "ab1-" * (N // 4),
+    "hex path": "/" + "9f86d081884c7d659a2f/" * (N // 21),
 }
 
 
@@ -525,20 +531,33 @@ def test_zero_padded_id_not_phone() -> None:  # A1.10
 
 
 @pytest.mark.parametrize(
-    "path",
+    ("path", "masked"),
     [
-        "/var/data/x.csv",
-        "s3://bucket/key",
-        "/data/warehouse/2026/11/25/part-00017-snappy.parquet",
-        "/var/lib/postgresql/16/main/base/16384",
-        "./exports/customers_2026-11-25_v3.csv",
-        "~/Downloads/report-2026-11-25-final.xlsx",
-        "/Users/x/iPhone/MyApp/a.csv",
-        "s3://bucket/dt=2026-11-25/hour=13/part-0001.json",
+        # the A1.11 finding: a hex or UUID segment is masked in place, not the whole path
+        ("/var/data/9f86d081884c7d659a2feaa0c55ad015/x.csv", "/var/data/<hex32>/x.csv"),
+        ("/store/123e4567-e89b-12d3-a456-426614174000/report.csv", "/store/<uuid>/report.csv"),
+        ("/var/data/x.csv", "/var/data/x.csv"),
+        ("s3://bucket/key", "s3://bucket/key"),
+        ("/Users/x/iPhone/MyApp/a.csv", "/Users/x/iPhone/MyApp/a.csv"),
     ],
 )
-def test_path_not_secret(path: str) -> None:  # A1.11
-    assert mask_value(path) == (path, None)
+def test_path_not_secret(path: str, masked: str) -> None:  # A1.11
+    out, cat = mask_value(path)
+    assert out == masked and cat != "secret", out
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/data/warehouse/2026/11/25/part-00017-snappy.parquet",
+        "./exports/customers_2026-11-25_v3.csv",
+        "s3://bucket/dt=2026-11-25/hour=13/part-0001.json",
+        # the rest of a hex-keyed path that still looks like a token keeps the whole mask
+        "/9f86d081884c7d659a2feaa0c55ad015/k2m8z-p4w7r",
+    ],
+)
+def test_long_varied_path_stays_masked(path: str) -> None:  # A1.11 recall over precision
+    assert mask_value(path) == ("<secret>", "secret")
 
 
 def test_path_with_token_inside_is_masked() -> None:  # A1.11 recall
@@ -585,3 +604,47 @@ def test_detectors_have_no_type_ignore() -> None:  # A1.16
     source = Path(det.__file__).read_text("utf-8")
     assert "type: ignore" not in source
     assert "fn: Callable[[str], bool]" in source
+
+
+# --- fix round 1: quoted credential values ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "masked"),
+    [
+        ('password="hunter2long"', 'password="<secret>"'),
+        ('passwd="hunter2long"', 'passwd="<secret>"'),
+        ("password='hunter2long' ok", "password='<secret>' ok"),
+    ],
+)
+def test_quoted_password_keeps_both_quotes(text: str, masked: str) -> None:
+    assert sweep(text) == (masked, 1)
+    assert sweep(masked) == (masked, 0)
+
+
+@pytest.mark.parametrize(
+    ("text", "masked"),
+    [
+        ('{"token": "Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5aa"}', '{"token": "<secret>"}'),
+        ('{"secret": "Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5aa"}', '{"secret": "<secret>"}'),
+        ('{"api_key": "abcd1234efgh5678ijkl"}', '{"api_key": "<secret>"}'),
+        ('{"secret":"hunter2hunter2x9"}', '{"secret":"<secret>"}'),
+        ("{'access_key': 'Zx9Qm2Lp8Rt4Vb7Nc1Kd6'}", "{'access_key': '<secret>'}"),
+        ('{"authorization": "Bearer Zx9Qm2Lp8Rt4Vb7Nc1Kd6"}', '{"authorization": "<secret>"}'),
+    ],
+)
+def test_json_quoted_credential_masked(text: str, masked: str) -> None:
+    assert sweep(text) == (masked, 1)
+    assert sweep(masked) == (masked, 0)
+
+
+def test_json_quoted_schema_prose_kept() -> None:
+    for prose in ('{"token": "refresh_required"}', '{"key": "customer_id"}'):
+        assert sweep(prose) == (prose, 0), prose
+
+
+def test_quoted_password_edge_values_masked() -> None:
+    assert sweep('{"password": " hunter2"}') == ('{"password": "<secret>"}', 1)
+    long_value = "a1" * 200  # 400 chars, past any scan bound
+    out, n = sweep(f'{{"password": "{long_value}"}} tail')
+    assert n == 1 and "a1a1" not in out, out

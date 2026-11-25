@@ -74,9 +74,11 @@ The detectors, in priority order: UUID, email (including lists), IPv4/IPv6, IBAN
 card (Luhn), long hex (20+ hex characters with at least one letter; 16 would corrupt JSON
 numbers), phone (E.164 and national forms), JWT/secret-like strings, postal address heuristic,
 person-name heuristic, free text (over 60 characters with spaces). The first match decides. Blank
-values (`''`, whitespace) count as NULL. A path or URL is a secret only when a piece of it looks
-like a token; after `password`, `passwd` or `pwd` with `=` or `:` any value except a column type
-is masked; addresses are masked inside sentences too.
+values (`''`, whitespace) count as NULL. A path or URL keeps the high-entropy rule and is also a
+secret when a piece of it looks like a token, but a hex or UUID segment is masked in place
+(`/var/data/<hex32>/x.csv`); after `password`, `passwd` or `pwd` with `=` or `:` any value except a
+column type is masked, quoted JSON credential values included; addresses are masked inside
+sentences too.
 
 ### The person-name heuristic and its limits
 

@@ -18,7 +18,7 @@
 - Agents never dispatch subagents and never use `gh`.
 - No mention of any proprietary predecessor or organisation anywhere: code, docs, fixtures, commit messages (the denylist CI job). Use only generic shop-domain names (`customers, orders, order_items, products, payments, events, accounts, users, sessions`, plus `refunds`, `analytics.*` models).
 - Core dependencies unchanged: exactly `factlang>=0.1.3,<0.2` and `PyYAML>=6`. New extra `lineage = ["sqlglot>=30,<31"]`, also added to `all` and to `dev`. Every third-party import other than `factlang`/`yaml` is lazy (inside a function), as enforced by `tests/architecture/test_layers.py::test_optional_deps_lazy`.
-- Public API additive only (§3, base §19): new names and optional parameters only; no 0.1.0 name is removed or changes meaning. `tests/unit/test_guru.py::EXPORTS` is only appended to.
+- Public API additive only (§3, base §19): new names and optional parameters only; no 0.1.0 name is removed or changes meaning. New names are added to `tests/unit/test_guru.py::EXPORTS` (inserted before `"__version__"`), never removed or renamed.
 - Red-first: every behaviour change lands with a test that failed before the change. Paste the red run's one-line failure into the commit body (`red: <test id>: <error>`).
 - Guards only tighten (§2 anti-goals, §5): the read-only guard (`src/schemaguru/guard.py`), the metadata guard (`catalog/executor.py::check_metadata_sql`), masking (`src/schemaguru/pii/`) and the `InlineConnector` refusals. A false-rejection fix ships with a test proving the hostile form is still refused. Masking trades keep recall (over-masking acceptable, a leak is not), and each trade is documented.
 - Layer rules (base §5.1): add `"schemaguru.lineage": 2` to `LAYERS` in `tests/architecture/test_layers.py`. The FactLang seam stays exactly `measure/flbridge.py`, `catalog/executor.py`, `render/fragments.py`.
@@ -104,8 +104,8 @@ T18 → T19 → T20 → T21 → T22
 
 **Files:**
 - Create: `tests/fixtures/store_v010/build_v010.py`, `tests/fixtures/store_v010/shop.db`, `tests/fixtures/store_v010/facts.json`, `tests/unit/store/test_v010_store.py`
-- Modify: `src/schemaguru/model/facts.py`, `src/schemaguru/_util/hashing.py`, `src/schemaguru/_util/timeutil.py`, `src/schemaguru/config.py`, `src/schemaguru/store/{sqlite,postgres,export}.py`, `src/schemaguru/errors.py`, `src/schemaguru/knowledge/{resolve,diff}.py`, `src/schemaguru/model/refs.py`, `src/schemaguru/render/table_block.py`, `src/schemaguru/diagnostics.py`
-- Test: `tests/unit/model/test_facts.py`, `tests/unit/test_config.py`, `tests/unit/store/{contract,test_sqlite,test_export}.py`, `tests/unit/knowledge/{test_resolve,test_diff}.py`, `tests/unit/render/test_table_block.py`, `tests/property/test_model_props.py`
+- Modify: `src/schemaguru/model/facts.py`, `src/schemaguru/_util/hashing.py`, `src/schemaguru/_util/timeutil.py`, `src/schemaguru/config.py`, `src/schemaguru/store/{sqlite,postgres,export}.py`, `src/schemaguru/errors.py`, `src/schemaguru/knowledge/{resolve,diff}.py`, `src/schemaguru/model/refs.py`, `src/schemaguru/render/table_block.py`, `src/schemaguru/diagnostics.py`; `tests/golden/views/*` only if a render fix (A5.19, A5.22) moves a golden (regenerate with `SCHEMAGURU_UPDATE_GOLDEN=1`, review each diff by eye, stage the changed files explicitly)
+- Test: `tests/unit/model/test_facts.py`, `tests/unit/test_config.py`, `tests/unit/store/{contract,test_sqlite,test_export,test_migrations}.py`, `tests/unit/knowledge/{test_resolve,test_diff}.py`, `tests/unit/render/test_table_block.py`, `tests/property/test_model_props.py`
 
 **Interfaces:**
 - Produces: `tests/fixtures/store_v010/shop.db`, a SQLite store written by tag `v0.1.0` from `tests.golden.shop_knowledge.shop_store`, checkpointed to one file (`PRAGMA wal_checkpoint(TRUNCATE)`, `journal_mode=DELETE`). Also `facts.json`, the sorted `[f.to_dict() for f in store.iter_facts()]` written by v0.1.0.
@@ -119,7 +119,7 @@ T18 → T19 → T20 → T21 → T22
 | ID | After the fix | Red test |
 |---|---|---|
 | A5.1 | `Fact.from_dict` recomputes the id; a mismatch raises `ValueError("fact id mismatch …")` | `test_facts.py::test_from_dict_rejects_tampered_id` |
-| A5.2 | `stable_hash(Decimal("1.0")) == stable_hash(Decimal("1.00"))`; `date` → ISO; mixed-type keys never `TypeError`; no 0.1.0 id changes | `test_model_props.py::test_stable_hash_normalises` + `test_v010_fact_ids_still_verify` |
+| A5.2 | `stable_hash(Decimal("1.0")) == stable_hash(Decimal("1.00"))`; `date` → ISO; mixed-type keys never `TypeError`; no 0.1.0 id changes. The Decimal/date normalisation lives in the shared `_canon`, so the stored text equals the hashed text and A5.1's recomputation cannot reject a stored fact | `test_model_props.py::test_stable_hash_normalises` + `test_v010_fact_ids_still_verify` + `test_model_props.py::test_decimal_date_fact_roundtrips_id` (property over Decimal/date values: `Fact.from_dict(json.loads(canonical_json(f.to_dict()))).id == f.id`) |
 | A5.3 | `"2026-01-01T00:00:00Z"` parses on 3.10 wherever a stored timestamp is read | `test_facts.py::test_from_dict_accepts_z_suffix` |
 | A5.4 | `Config.from_env` turns `SCHEMAGURU_CRAWL__EXCLUDE="a.*,b.*"` into a tuple | `test_config.py::test_env_tuple_fields_coerced` |
 | A5.5 | `SamplingConfig.per_glob` is read-only (`TypeError` on item assignment) | `test_config.py::test_per_glob_immutable` |
@@ -135,7 +135,7 @@ T18 → T19 → T20 → T21 → T22
 | A5.15 | FTS5→LIKE→FTS5 reopen rebuilds a stale index (the backend that last wrote the index is recorded under `crawl_state` key `"_search_backend"`; no new table, so migration 3 stays Task 10's) | `test_sqlite.py::test_backend_switch_rebuilds_index` |
 | A5.16 | read-only open of a store with tables but an empty `table_docs` adds `SG706` WARNING "the read-only store's search index is empty; open it read-write once to rebuild it" | `test_sqlite.py::test_readonly_empty_index_warns` |
 | A5.17 | `snapshot` written from shuffled input stores byte-identical JSON | `contract.py::test_snapshot_bytes_deterministic` |
-| A5.18 | the store and `export_json` share one encoder (`_util.hashing.canonical_json`); `stable_hash` keeps its own encoder because ids must not change (documented in its docstring) | `test_export.py::test_store_and_export_share_encoder` |
+| A5.18 | the store and `export_json` share one encoder (`_util.hashing.canonical_json`); `stable_hash` keeps its own encoder call because ids must not change (documented in its docstring); both call the shared `_canon` (A5.2) | `test_export.py::test_store_and_export_share_encoder` |
 | A5.19 | unknown age stays non-STALE (base §4.4), and the view says `observed: date unknown` | `test_table_block.py::test_unknown_age_marked` |
 | A5.20 | an ESTIMATED fact older than the TTL becomes STALE and still renders `≈ … (sampled …)` | `test_resolve.py::test_estimated_goes_stale` |
 | A5.21 | a superseded ESTIMATED fact becomes STALE like OBSERVED | `test_resolve.py::test_superseded_estimate_stale` |
@@ -154,7 +154,8 @@ T18 → T19 → T20 → T21 → T22
 
 **Files:**
 - Modify: `src/schemaguru/pii/{detectors,mask,sweep,policy}.py`, `src/schemaguru/pii/data/names.txt`, `docs/guide/pii.md`, `docs/wiki/PII-and-Sampling-Policy.md`
-- Test: `tests/unit/pii/test_hardening.py`, `tests/property/test_mask_props.py`
+- Test: `tests/unit/pii/{test_hardening,test_policy}.py`, `tests/property/test_mask_props.py`, `tests/conformance/test_docs_examples.py`
+- A masking change may move a golden view: regenerate with `SCHEMAGURU_UPDATE_GOLDEN=1`, review each diff by eye, and stage the changed `tests/golden/views/*` files explicitly.
 
 **Interfaces:**
 - Consumes: `mask_free_text(text) -> tuple[str, int]`, `mask_value(v) -> tuple[str, str | None]`, `sweep(payload) -> tuple[str, int]` (unchanged signatures).
@@ -177,17 +178,17 @@ T18 → T19 → T20 → T21 → T22
 | A1.13 | place/brand names before a business noun (`Austin Store`) — expected `ruled out` (recall: a name list cannot tell them apart; documented) | — |
 | A1.14 | `password: varchar(255)` (a SQL type after a credential key) is not `<secret>` | `test_credential_key_with_sql_type_kept` |
 | A1.15 | `_contains` handles class-range interiors (`[a-f]` contains `c`) | `test_policy.py::test_contains_class_range_interior` |
-| A1.16 | detector functions typed `Callable[[str], bool]`; no `type: ignore` left in `detectors.py` | mypy (red = `grep -n "type: ignore" src/schemaguru/pii/detectors.py` non-empty) |
+| A1.16 | detector functions typed `Callable[[str], bool]`; no `type: ignore` left in `detectors.py` | `test_hardening.py::test_detectors_have_no_type_ignore` (reads `detectors.py`; fails while any `type: ignore` remains; `mypy --strict` stays in the gate) |
 | A1.17 | `docs/guide/pii.md` states that a hex token needs a letter and lists every token (`<email> <phone> <name> <iban> <card> <ip> <uuid> <secret> <address>`) | `tests/conformance/test_docs_examples.py::test_pii_tokens_documented` |
 
 - [ ] **Step 1:** Run the table's red-first cycle per `open` ID. For each trade, add a property test in `test_mask_props.py` asserting that every masked category in the existing corpus is still masked (`test_recall_not_reduced`).
 - [ ] **Step 2: Gate, then commit.** Commit message: `fix(pii): close the 0.1.0 masking findings without losing recall`.
 
-### Task 4: Hardening — read-only guard and InlineConnector (A2)
+### Task 4: Hardening — read-only guard and InlineConnector (A2, A9.1–A9.4)
 
 **Files:**
 - Modify: `src/schemaguru/guard.py`, `src/schemaguru/catalog/executor.py`, `src/schemaguru/draft/verify.py`, `docs/guide/security.md`
-- Test: `tests/unit/test_guard.py`, `tests/unit/catalog/test_executor.py`, `tests/unit/draft/test_verify.py`
+- Test: `tests/unit/test_guard.py`, `tests/unit/catalog/test_executor.py` (also the home of the A9.1–A9.3 tests), `tests/unit/draft/test_verify.py`
 
 **Interfaces:**
 - Consumes: `check_sql(...) -> GuardVerdict` (`guard.py:279`), `check_metadata_sql(sql)` (`executor.py:50`), `InlineConnector` (`executor.py:535`), `inline_problem(value)` (`executor.py:355`), `check_predicate` (`draft/verify.py:70`). Signatures are unchanged.
@@ -203,6 +204,10 @@ T18 → T19 → T20 → T21 → T22
 | A2.7 | `check_predicate` refuses `；` (U+FF1B) and `－－` (U+FF0D×2) outside literals | `test_verify.py::test_fullwidth_separators_refused` |
 | A2.8 | `inline_problem` refuses U+2018, U+2019, U+201A, U+201B, U+2032, U+02BC, U+FF07, U+0060 inside a string value → SG109 (a non-Unicode code page may map them to `'`) | `test_executor.py::test_inline_refuses_quote_lookalikes` (parametrised) |
 | A2.9 | a `datetime` whose `tzinfo.utcoffset` raises → `CatalogError` `SG109`, never `RuntimeError` | `test_executor.py::test_inline_raising_tzinfo_is_sg109` |
+| A9.1 | the `InlineConnector` class docstring documents the trino `… UTC` timestamp form and the databricks zone-less refusal | `test_executor.py::test_inline_connector_docstring_lists_forms` (asserts both phrases in `InlineConnector.__doc__`) |
+| A9.2 | the FL507 tests pin the reason, not only `SG109`: the message names `precision 39` and `64-bit` | `test_executor.py::test_fl507_refusals_pin_reason` |
+| A9.3 | `test_trino_rejects_the_old_timestamp_form` asserts only the old form; the zone-less form gets its own test | `test_executor.py::test_trino_rejects_the_old_timestamp_form` + `test_trino_rejects_zone_less_timestamp` |
+| A9.4 | expected `ruled out`: `literal_refusal` shipped as a public name in 0.1.1; renaming removes a released name (§3). Keep it; document it in `docs/guide/security.md` under `## Known limits` | — |
 
 - [ ] **Step 1:** Run the red-first cycle per `open` ID. Every accepted-form test sits next to a still-refused hostile form in the same test.
 - [ ] **Step 2: Gate, then commit.** Commit message: `fix(guard): tighten path and look-alike handling; false-rejection fixes keep hostile forms refused`.
@@ -238,8 +243,8 @@ T18 → T19 → T20 → T21 → T22
 ### Task 6: Hardening — readers (A4)
 
 **Files:**
-- Modify: `src/schemaguru/catalog/readers/{postgres,oracle,snowflake,bigquery,redshift,_common}.py`, `src/schemaguru/catalog/crawl.py`, `src/schemaguru/catalog/protocol.py`, `tests/conformance/record_warehouses.py`, `tests/fixtures/catalog/*/{queries,expected}.json` (regenerated, never hand-edited), `tests/integration/catalog/engines.py`, `docs/wiki/Warehouse-{PostgreSQL,Oracle,Snowflake,BigQuery,Redshift}.md`
-- Test: `tests/unit/catalog/test_readers_warehouse.py`, `tests/unit/catalog/test_reader_warehouse_helpers.py`, `tests/integration/catalog/test_reader_postgres.py`, `tests/conformance/test_readers.py`
+- Modify: `src/schemaguru/catalog/readers/{postgres,oracle,snowflake,bigquery,redshift,_common}.py`, `src/schemaguru/catalog/crawl.py`, `src/schemaguru/catalog/protocol.py`, `tests/conformance/record_warehouses.py`, `docs/wiki/Warehouse-BigQuery.md`, `tests/fixtures/catalog/*/{queries,expected}.json` (regenerated, never hand-edited), `tests/integration/catalog/engines.py`, `docs/wiki/Warehouse-{PostgreSQL,Oracle,Snowflake,BigQuery,Redshift}.md`
+- Test: `tests/unit/catalog/test_readers_warehouse.py`, `tests/unit/catalog/test_reader_warehouse_helpers.py`, `tests/integration/catalog/test_reader_postgres.py`, `tests/unit/catalog/test_crawl.py`, `tests/conformance/{test_readers,test_replay,test_wiki_facts}.py`
 
 **Interfaces:**
 - Produces: `BillingReader(Protocol)` in `catalog/protocol.py` with `bytes_billed: int` and `bytes_billed_is_lower_bound: bool`; `crawl` uses `isinstance(reader, BillingReader)` (runtime_checkable) instead of `getattr`.
@@ -297,11 +302,11 @@ T18 → T19 → T20 → T21 → T22
 - [ ] **Step 1:** Run the red-first cycle per `open` ID.
 - [ ] **Step 2: Gate, then commit.** Commit message: `fix(overlays): validation, merge and write-safety findings from 0.1.0`.
 
-### Task 8: Hardening — graph, render fragments, CLI, docs, tests, CI (A7, A8)
+### Task 8: Hardening — graph, render fragments, CLI, docs, tests, CI (A7, A8, A9.5)
 
 **Files:**
-- Modify: `src/schemaguru/graph/search.py`, `src/schemaguru/render/fragments.py`, `src/schemaguru/cli/commands.py`, `docs/guide/sampling.md`, `docs/wiki/Sampling.md`, `.github/workflows/ci.yml`, `tests/architecture/test_layers.py`, `tests/conformance/test_wiki_facts.py`, `tests/test_version.py`
-- Test: `tests/unit/graph/test_search.py`, `tests/unit/render/test_fragments.py`, `tests/unit/cli/test_cli.py`, `tests/unit/test_ci_workflow.py` (create)
+- Modify: `src/schemaguru/graph/search.py`, `src/schemaguru/render/fragments.py`, `src/schemaguru/cli/commands.py`, `docs/guide/sampling.md`, `docs/wiki/Sampling.md`, `.github/workflows/ci.yml`, `tests/architecture/test_layers.py`, `tests/conformance/test_wiki_facts.py`, `tests/test_version.py`, `src/schemaguru/config.py`, `src/schemaguru/agent/{dispatch,tools}.py` (the `check_fact` claim cap, A9.5); `tests/golden/views/*` only if a fragment fix (A7.4–A7.6) moves a golden (regenerate with `SCHEMAGURU_UPDATE_GOLDEN=1`, review each diff by eye, stage the changed files explicitly); docs regenerated by `scripts/gen_docs.py` (`docs/reference/*`, `docs/generated/*`)
+- Test: `tests/unit/graph/test_search.py`, `tests/unit/render/test_fragments.py`, `tests/unit/cli/test_cli.py`, `tests/unit/agent/test_dispatch.py`, `tests/unit/test_ci_workflow.py` (create)
 
 | ID | After the fix | Red test |
 |---|---|---|
@@ -318,10 +323,11 @@ T18 → T19 → T20 → T21 → T22
 | A8.5 | a negative control mutates a copy of the real `CLI.md` (drops one row) and the checker fails | `test_wiki_facts.py::test_negative_control_real_page` |
 | A8.6 | the real-tree walker (`_py_files` + `check_layering`) flags a violation in a tmp package tree | `test_layers.py::test_walker_flags_tmp_tree` |
 | A8.7 | importing the facade reports "imports the public facade 'schemaguru'; import the defining module" | `test_layers.py::test_facade_import_message` |
-| A8.8 | the no-op comprehension is removed (`test_layer_table_matches_spec_5_1`) | review only (no behaviour) |
+| A8.8 | the no-op comprehension is removed (`test_layer_table_matches_spec_5_1`) | none (review only, no behaviour); ledger evidence = `test tests/architecture/test_layers.py::test_layer_table_matches_spec_5_1` (the existing test) |
 | A8.9 | real-tree negative controls for nested `TYPE_CHECKING` and the I2 guard | `test_layers.py::test_nested_type_checking_real_tree` |
 | A8.10 | `tests/test_version.py` asserts `__all__[-1] == "__version__"` (expected `already fixed`) | — |
 | A8.11 | the `denylist` job fails on a push to `main` when `SCHEMAGURU_DENYLIST` is empty and skips on forks and PRs from forks | `test_ci_workflow.py::test_denylist_fails_on_main_without_secret` (parses `ci.yml`) |
+| A9.5 | `check_fact` refuses a call with more claims than `Config.check_max_claims` (default 200; `None` disables) before any warehouse spend, as a tool error with code `too_many_claims`; SchemaGuru's own cap because `measure/flbridge.py` calls `Checker.check` directly and bypasses FactLang's `max_claims`. The `check_fact` tool spec description states the cap. Then run `python3 scripts/gen_docs.py` | `tests/unit/agent/test_dispatch.py::test_check_fact_claim_cap` (201 claims refused with `too_many_claims`, the backend's `check` never called; exactly 200 accepted; `None` accepts 201) |
 
 - [ ] **Step 1:** Run the red-first cycle per `open` ID. After this task, the ledger has no `open` row.
 - [ ] **Step 2: Gate, then commit.** Commit message: `fix: graph, fragment, CLI, docs and CI findings from 0.1.0; ledger closed`.
@@ -333,7 +339,7 @@ T18 → T19 → T20 → T21 → T22
 **Files:**
 - Create: `src/schemaguru/model/lineage.py`
 - Modify: `src/schemaguru/model/kinds.py`, `src/schemaguru/model/facts.py` (`__post_init__`), `src/schemaguru/model/__init__.py`, `docs/extending/fact-kind.md`
-- Test: `tests/unit/model/test_lineage.py`, `tests/unit/knowledge/test_resolve.py`
+- Test: `tests/unit/model/test_lineage.py`, `tests/unit/model/test_kinds.py` (extend `SPEC_KINDS` with `LINEAGE`, `COLUMN_LINEAGE`), `tests/unit/knowledge/test_resolve.py`
 
 **Interfaces:**
 - Produces (in `model/kinds.py`): `FactKind.LINEAGE = _k("LINEAGE", "table", identity=("upstream", "ignore"))` and `FactKind.COLUMN_LINEAGE = _k("COLUMN_LINEAGE", "column", identity=("inputs", "ignore"))`. Also `LINEAGE_KINDS: frozenset[str] = frozenset({"LINEAGE", "COLUMN_LINEAGE"})`. Builder ruling: `ignore` is in the identity so that a human ignore entry and a replace entry with the same list never share an id; `source` is not in the identity (§4.1).
@@ -360,7 +366,7 @@ T18 → T19 → T20 → T21 → T22
 - `Fact.__post_init__`: a kind in `LINEAGE_KINDS` with status ≠ `UNVERIFIED` or provenance ∉ {DECLARED, CATALOG, HUMAN} raises `ValueError("lineage is declared or parsed, never measured or verified")`.
 
 - [ ] **Step 1: Write the failing tests** in `test_lineage.py`:
-  - `test_lineage_never_verified`: `Fact.make(FactKind.LINEAGE, t, table_lineage_value(["shop.orders"]), Provenance.HUMAN, Status.VERIFIED, evidence=Evidence())` raises; so do `Status.OBSERVED` and `Provenance.MEASURED`.
+  - `test_lineage_never_verified`: `Fact.make(FactKind.LINEAGE, t, table_lineage_value(["shop.orders"]), Provenance.HUMAN, Status.VERIFIED, evidence=Evidence())` raises; so does `Status.OBSERVED`. The MEASURED arm is `Fact.make(..., Provenance.MEASURED, Status.UNVERIFIED, method="exact", evidence=Evidence())` under `pytest.raises(ValueError, match="never measured or verified")` (with `method="exact"` the existing MEASURED-needs-a-method check cannot fire, so only the new rule can).
   - `test_value_builders_sort_and_validate`: `table_lineage_value(["b", "a", "a"])["upstream"] == ["a", "b"]`; `table_lineage_value(None)` raises; `column_lineage_value(["x"], "sum")` raises.
   - `test_id_ignores_source`: the same value with sources `dbt:manifest:model.a` and `dbt:manifest:model.b` gives the same id.
   - `test_human_replaces_parsed_per_level`: a HUMAN table-level link leaves COLUMN_LINEAGE parsed facts effective.
@@ -375,7 +381,7 @@ T18 → T19 → T20 → T21 → T22
 - [ ] **Step 2: Run them.** `pytest tests/unit/model/test_lineage.py tests/unit/knowledge/test_resolve.py -v`. Expected: FAIL (`AttributeError: LINEAGE`).
 - [ ] **Step 3: Implement** the kinds, the `__post_init__` rule and `model/lineage.py`. Export the new names from `schemaguru.model`. Add the two kinds to the built-in table in `docs/extending/fact-kind.md`.
 - [ ] **Step 4: Run them.** Same command. Expected: PASS.
-- [ ] **Step 5: Gate, then commit.** `git add src/schemaguru/model/{lineage,kinds,facts,__init__}.py docs/extending/fact-kind.md tests/unit/model/test_lineage.py tests/unit/knowledge/test_resolve.py` and `git commit -m "feat(model): LINEAGE and COLUMN_LINEAGE kinds with human-wins resolution"`.
+- [ ] **Step 5: Gate, then commit.** `git add src/schemaguru/model/{lineage,kinds,facts,__init__}.py docs/extending/fact-kind.md tests/unit/model/test_lineage.py tests/unit/model/test_kinds.py tests/unit/knowledge/test_resolve.py` and `git commit -m "feat(model): LINEAGE and COLUMN_LINEAGE kinds with human-wins resolution"`.
 
 ### Task 10: Store — migration 3, the `lineage_edges` index, and 0.1.0 forward migration
 
@@ -429,16 +435,16 @@ T18 → T19 → T20 → T21 → T22
 ### Task 11: Lineage parser (`schemaguru.lineage`, in-process)
 
 **Files:**
-- Create: `src/schemaguru/lineage/{__init__,dialects,parse,template}.py`
-- Modify: `pyproject.toml` (extra `lineage`, `all`, `dev`), `tests/architecture/test_layers.py` (`"schemaguru.lineage": 2`), `src/schemaguru/cli/commands.py` (`_MODULE_EXTRAS["sqlglot"] = "lineage"`, `_EXTRAS["lineage"] = "sqlglot"`)
-- Test: `tests/unit/lineage/{__init__,test_parse,test_dialects,test_template}.py`, `tests/property/test_lineage_props.py`
+- Create: `src/schemaguru/lineage/{__init__,dialects,parse}.py`
+- Modify: `src/schemaguru/pii/mask.py` (`definition_template`), `pyproject.toml` (extra `lineage`, `all`, `dev`), `tests/architecture/test_layers.py` (`"schemaguru.lineage": 2`), `src/schemaguru/cli/commands.py` (`_MODULE_EXTRAS["sqlglot"] = "lineage"`, `_EXTRAS["lineage"] = "sqlglot"`)
+- Test: `tests/unit/lineage/{__init__,test_parse,test_dialects}.py`, `tests/unit/pii/test_definition_template.py`, `tests/property/test_lineage_props.py`
 
 **Interfaces:**
 - Consumes: `RawName`, `ResolvedTable`, `Transform` (Task 9).
 - Produces (in `dialects.py`):
   - `SQLGLOT_DIALECTS: Mapping[str, str]`, the identity map over `bigquery clickhouse databricks duckdb mysql oracle postgres redshift snowflake trino tsql`. It is kept here because only seam modules may import FactLang; a test pins it equal to `factlang.sql.SQLGLOT_NAMES`.
   - `DBT_ADAPTERS: Mapping[str, str] = {"sqlserver": "tsql", "synapse": "tsql", "fabric": "tsql", "mariadb": "mysql", "spark": "spark"}`
-  - `sqlglot_dialect(name: str | None) -> str | None`
+  - `sqlglot_dialect(name: str | None) -> str | None`: a key of `SQLGLOT_DIALECTS` → its value; a value of `DBT_ADAPTERS` (including `spark`, which is not in `SQLGLOT_DIALECTS`) → itself; anything else → `None`.
 - Produces (in `parse.py`):
   - `FailureReason = Literal["parse_error", "too_large", "timeout", "unsupported_dialect", "worker_died"]`
   - `class LineageFailure(Exception)` with `.reason: FailureReason`; `str(e) == reason`, never SQL text.
@@ -462,11 +468,11 @@ T18 → T19 → T20 → T21 → T22
   - not attributable → `unknown` with empty inputs
 
   Only projection lineage is recorded: WHERE/JOIN ON/GROUP BY/QUALIFY columns are not inputs. Set operations merge inputs per output position. `UNNEST`/lateral inputs are the array column with transform `expression`.
-- Produces (in `template.py`): `TEMPLATE_MAX_CHARS = 20_000` and `definition_template(sql: str) -> str | None`. String literals are replaced by `?` through `schemaguru.pii.mask.sql_template` (lazy import inside the function). Numeric literals in code regions also become `?`. Returns `None` when unsure or when the result is over `TEMPLATE_MAX_CHARS` [builder call: bounds stored evidence].
+- Produces (in `schemaguru/pii/mask.py`, L3, so `lineage` (L2) never imports `pii`): `TEMPLATE_MAX_CHARS = 20_000` and `definition_template(sql: str) -> str | None`. String literals are replaced by `?` through the existing `sql_template` in the same module. Callers at L3 (crawl, dbt) hand it to `analyse_definitions` (Task 12). Numeric literals in code regions also become `?`. Returns `None` when unsure or when the result is over `TEMPLATE_MAX_CHARS` [builder call: bounds stored evidence].
 
 - [ ] **Step 1: Write the failing tests.**
-  - `test_dialects.py::test_table_matches_factlang`: `SQLGLOT_DIALECTS == factlang.sql.SQLGLOT_NAMES` (tests may import FactLang). Plus `test_dbt_adapter_aliases` and `test_unknown_dialect_none`.
-  - `test_parse.py::test_constructs` is table-driven over the families ANSI/postgres, snowflake, bigquery, tsql and clickhouse. Each case is `(dialect, sql, schema, expected_upstream, expected_columns)`. One case per §4.4 construct: plain/alias copy, cast (all three spellings), expression, aggregate (`SUM(o.amount)` → inputs `("shop.orders.amount",)`; `COUNT(*)` → inputs `()`), window, CTE, recursive CTE, subquery, `UNION ALL` (per-position merge), `INTERSECT`, `EXCEPT`, join, `UNNEST`/lateral, `QUALIFY` (no inputs), `SELECT *`, an unqualified column in a join with no schema (`unknown`), an unresolved table. Exact example:
+  - `test_dialects.py::test_table_matches_factlang`: `SQLGLOT_DIALECTS == factlang.sql.SQLGLOT_NAMES` (tests may import FactLang). Plus `test_dbt_adapter_aliases`, `test_dbt_adapter_targets_accepted` (`sqlglot_dialect("spark") == "spark"`, `sqlglot_dialect("tsql") == "tsql"`) and `test_unknown_dialect_none` (`sqlglot_dialect("nonsense") is None`).
+  - `test_parse.py::test_constructs` is table-driven over the families ANSI/postgres, snowflake, bigquery, tsql and clickhouse. Each case is `(dialect, sql, schema, expected_upstream, expected_columns)`. The matrix is every §4.4 construct below × every family listed; a cell that does not apply is a `pytest.param(..., marks=pytest.mark.skip(reason="<why>"))` that names its reason (e.g. `no QUALIFY in postgres`), never silently absent. Constructs: plain/alias copy, cast (all three spellings), expression, aggregate (`SUM(o.amount)` → inputs `("shop.orders.amount",)`; `COUNT(*)` → inputs `()`), window, CTE, recursive CTE, subquery, `UNION ALL` (per-position merge), `INTERSECT`, `EXCEPT`, join, `UNNEST`/lateral, `QUALIFY` (no inputs), `SELECT *`, an unqualified column in a join with no schema (`unknown`), an unresolved table. Exact example:
 
     ```python
     SCHEMA = {(None, "shop", "orders"): ResolvedTable("shop.orders", ("order_id", "amount", "status")),
@@ -483,7 +489,7 @@ T18 → T19 → T20 → T21 → T22
   - `test_star_over_wide_table`: 1,000 columns → 1,000 `copy` entries.
   - `test_failures_carry_no_sql`: `str(exc) == "parse_error"` for `"SELECT FROM WHERE 'secret@x.io'"`.
   - `test_columns_false_skips_column_work`.
-  - `test_template.py::test_literals_replaced`: `definition_template("CREATE VIEW v AS SELECT * FROM c WHERE email = 'a@b.co' AND id = 4242 AND t1.col2 > 1e5") == "CREATE VIEW v AS SELECT * FROM c WHERE email = ? AND id = ? AND t1.col2 > ?"`. Plus `test_unsure_or_long_is_none`.
+  - `tests/unit/pii/test_definition_template.py::test_literals_replaced`: `definition_template("CREATE VIEW v AS SELECT * FROM c WHERE email = 'a@b.co' AND id = 4242 AND t1.col2 > 1e5") == "CREATE VIEW v AS SELECT * FROM c WHERE email = ? AND id = ? AND t1.col2 > ?"`. Plus `test_unsure_or_long_is_none`.
   - `test_lineage_props.py::test_never_raises_other_than_failure`: hypothesis builds fragments ≤ 200 chars from SQL tokens and junk; `parse_lineage`/`extract_tables` return or raise `LineageFailure` only (`deadline=None`, `max_examples=300`).
 - [ ] **Step 2: Run them.** `pytest tests/unit/lineage tests/property/test_lineage_props.py -v`. Expected: FAIL (`ModuleNotFoundError: schemaguru.lineage`).
 - [ ] **Step 3: Implement** the modules and `pyproject.toml` extras (`lineage`, plus `all` and `dev`), with `sqlglot` imported only inside functions. Add the layer entry. Run `pip install -e ".[dev]"`.
@@ -498,7 +504,7 @@ T18 → T19 → T20 → T21 → T22
 - Test: `tests/unit/lineage/{test_worker,test_analyse}.py`
 
 **Interfaces:**
-- Consumes: Task 11's `extract_tables`, `parse_lineage`, `LineageFailure`, `FailureReason`, `sqlglot_dialect`, `MAX_DEFINITION_CHARS`, `definition_template`. Task 9's `table_lineage_value`, `column_lineage_value`, `FactKind.LINEAGE`/`COLUMN_LINEAGE`.
+- Consumes: Task 11's `extract_tables`, `parse_lineage`, `LineageFailure`, `FailureReason`, `sqlglot_dialect`, `MAX_DEFINITION_CHARS`. Task 9's `table_lineage_value`, `column_lineage_value`, `FactKind.LINEAGE`/`COLUMN_LINEAGE`.
 - Produces (in `worker.py`):
   - `DEFAULT_TIMEOUT_S = 5.0`
   - `@dataclass(frozen=True) ExtractRequest(sql: str, dialect: str)` and `@dataclass(frozen=True) LineageRequest(sql: str, dialect: str, schema: Mapping[RawName, ResolvedTable], columns: bool = True)`
@@ -507,14 +513,15 @@ T18 → T19 → T20 → T21 → T22
     - `__init__(self, *, timeout_s: float = DEFAULT_TIMEOUT_S, max_chars: int = MAX_DEFINITION_CHARS, memory_limit_bytes: int | None = 1 << 30, command: Sequence[str] | None = None)`
     - `map(self, requests: Sequence[ExtractRequest | LineageRequest]) -> list[WorkerResult]`, in input order
     - `restarts: int` (property), `close()`, `__enter__`/`__exit__`
-  - `main() -> None`, the entry point of `python -m schemaguru.lineage.worker`
+  - `serve(handler: Callable[[dict[str, Any]], dict[str, Any]]) -> None`: the line loop (read a JSON line from stdin, call `handler`, write the JSON reply to stdout, flush; exit on EOF). A handler may write to `sys.stdout` itself.
+  - `handle(request: dict[str, Any]) -> dict[str, Any]`: the real request handler. `main() -> None` is `serve(handle)`, the entry point of `python -m schemaguru.lineage.worker`.
 
   Mechanism [builder ruling, see §4.4]:
   - `command` defaults to `[sys.executable, "-m", "schemaguru.lineage.worker"]`. This is a fresh interpreter like `multiprocessing` `spawn`, but it never re-imports the host's `__main__` (Review Focus 1).
   - The pool starts lazily and is reused; startup is paid once per pool.
   - The protocol is one JSON object per line over stdin/stdout. The child's stderr is `DEVNULL`.
   - A reader thread feeds a `queue.Queue`. The parent waits `timeout_s` per request (`Queue.get(timeout=…)`; this works on Windows pipes too).
-  - On timeout, kill the child, wait for it, restart it, and fail that request with `timeout`.
+  - On timeout, kill the child, wait for it, restart it, and fail that request with `timeout`. The cap is per request: a definition analysed in two `map` calls (extract, then lineage) can take up to 2 × `timeout_s` (recorded in the docs, Task 21).
   - On EOF, broken pipe or a non-JSON reply, restart and fail with `worker_died`.
   - Over `max_chars` → `too_large` without sending. `sqlglot_dialect(dialect) is None` → `unsupported_dialect` without sending.
   - The child applies `resource.setrlimit(RLIMIT_AS, …)` on Linux only and disables the `sqlglot` logger.
@@ -522,7 +529,7 @@ T18 → T19 → T20 → T21 → T22
   - `@dataclass(frozen=True) DefinitionItem(target: ObjectRef, sql: str, dialect: str)`
   - `@dataclass(frozen=True) DefinitionResult(target: ObjectRef, dialect: str, sha256: str, parsed: ParsedLineage | None, failure: FailureReason | None, template: str | None)`
   - `Resolver = Callable[[Sequence[RawName], ObjectRef], Mapping[RawName, ResolvedTable]]`
-  - `analyse_definitions(items: Sequence[DefinitionItem], *, resolve: Resolver, pool: ParserPool, columns: bool = True) -> list[DefinitionResult]`. It makes two `pool.map` calls per batch (extract, then lineage) and computes `sha256` and `template` in the parent. The raw SQL lives only in `items`.
+  - `analyse_definitions(items: Sequence[DefinitionItem], *, resolve: Resolver, pool: ParserPool, template: Callable[[str], str | None], columns: bool = True) -> list[DefinitionResult]`. It makes two `pool.map` calls per batch (extract, then lineage) and computes `sha256` in the parent and `template` through the injected callable (crawl and dbt, both L3, pass `schemaguru.pii.mask.definition_template`, so `lineage` imports nothing from `pii`). The raw SQL lives only in `items`.
   - `lineage_facts(result: DefinitionResult, *, target_columns: Sequence[str], provenance: Provenance, source: str, observed_at: datetime | None, evidence: bool) -> list[Fact]`:
     - One LINEAGE fact when `upstream` or `unresolved` is non-empty.
     - One COLUMN_LINEAGE fact per parsed column that matches a target column (exact, then unique case-insensitive). Others are skipped.
@@ -531,8 +538,8 @@ T18 → T19 → T20 → T21 → T22
   - `failure_diagnostic(target: ObjectRef, reason: FailureReason) -> Diagnostic`: SG211 WARNING, message exactly `f"lineage could not be parsed for {target.canonical()}: {reason}"`, `location=target.canonical()`.
   - `extra_missing_diagnostic() -> Diagnostic`: SG212 INFO, message exactly ``"column-level lineage needs the `lineage` extra (pip install 'schemaguru[lineage]')"``.
 
-- [ ] **Step 1: Write the failing tests.** `hostile_worker.py` runs the real worker loop, except: `sql == "HANG"` sleeps 60 s, `"DIE"` calls `os._exit(3)`, and `"GARBAGE"` writes a non-JSON line. Tests in `test_worker.py`:
-  - `test_timeout_kills_and_replaces`: `ParserPool(timeout_s=0.5, command=[sys.executable, "-m", "tests.unit.lineage.hostile_worker"])` (cwd = repo root). `.map([Extract("SELECT 1 FROM a", "duckdb"), Extract("HANG", "duckdb"), Extract("SELECT 1 FROM b", "duckdb")])` returns `[((None, None, "a"),), LineageFailure("timeout"), ((None, None, "b"),)]`, with `restarts == 1` and elapsed < 5 s.
+- [ ] **Step 1: Write the failing tests.** `hostile_worker.py` calls `serve(handler)` with a handler that delegates to `handle` except: `sql == "HANG"` sleeps 60 s, `"DIE"` calls `os._exit(3)`, and `"GARBAGE"` writes a non-JSON line to `sys.stdout`. Tests in `test_worker.py`:
+  - `test_timeout_kills_and_replaces`: `ParserPool(timeout_s=0.5, command=[sys.executable, "-m", "tests.unit.lineage.hostile_worker"])` (cwd = repo root). `.map([ExtractRequest("SELECT 1 FROM a", "duckdb"), ExtractRequest("HANG", "duckdb"), ExtractRequest("SELECT 1 FROM b", "duckdb")])`, mapped through `r.reason if isinstance(r, LineageFailure) else r`, equals `[((None, None, "a"),), "timeout", ((None, None, "b"),)]` (exceptions compare by identity, so the reason is compared, not the instance), with `restarts == 1` and elapsed < 5 s.
   - `test_death_reported_and_replaced` and `test_garbage_reply_is_worker_died`.
   - `test_too_large_not_sent` (`max_chars=10`) and its negative control `test_at_limit_is_sent`.
   - `test_unsupported_dialect`.
@@ -540,7 +547,7 @@ T18 → T19 → T20 → T21 → T22
   - `test_real_worker_parses` (the default command).
   - `test_worker_from_unguarded_script` (Review Focus 1): write a tmp `.py` file with no main guard that builds a `ParserPool` and prints `map([...])`. Run it with `subprocess.run([sys.executable, script], timeout=60)` → exit 0 and the expected output.
 
-  In `test_analyse.py`: `test_facts_from_result` (the ids are deterministic across runs), `test_evidence_is_template_only` (no literal of the input appears in `fact.to_dict()`), `test_failure_diagnostic_text_fixed`, `test_column_match_case_insensitive_unique`.
+  In `test_analyse.py` (every call passes `template=definition_template`): `test_facts_from_result` (the ids are deterministic across runs), `test_evidence_is_template_only` (no literal of the input appears in `fact.to_dict()`), `test_failure_diagnostic_text_fixed`, `test_column_match_case_insensitive_unique`.
 - [ ] **Step 2: Run them.** `pytest tests/unit/lineage -v`. Expected: FAIL (module missing).
 - [ ] **Step 3: Implement** `worker.py` and `analyse.py`. Register SG211/SG212 in `CODES` (meanings from §4.4) and run `python3 scripts/gen_docs.py`.
 - [ ] **Step 4: Run them.** Same command. Expected: PASS on macOS; Linux and Windows run in CI.
@@ -586,26 +593,26 @@ T18 → T19 → T20 → T21 → T22
 ### Task 14: Crawl integration — view lineage, re-crawl replacement, privacy
 
 **Files:**
-- Create: `src/schemaguru/store/names.py`
+- Create: `src/schemaguru/store/names.py`, `tests/unit/lineage_helpers.py` (`privacy_warehouse(tmp_path)`: builds the DuckDB warehouse of the privacy test below and returns `(reader, literals)`; Task 18 and Task 22 reuse it)
 - Modify: `src/schemaguru/catalog/crawl.py`, `src/schemaguru/cli/commands.py` (crawl prints `lineage_diagnostics`), `tests/unit/catalog/fake_reader.py` (adds `ViewFakeReader`)
 - Test: `tests/unit/store/test_names.py`, `tests/unit/catalog/test_crawl_lineage.py`, `tests/unit/test_lineage_privacy.py` (part 1)
 
 **Interfaces:**
-- Consumes: `reads_view_definitions` (Task 13), `ParserPool`, `analyse_definitions`, `lineage_facts`, `failure_diagnostic`, `extra_missing_diagnostic`, `lineage_available` (Tasks 11–12), `lineage_index` (Task 10), `VIEW_SOURCE`, `LINEAGE_KINDS` (Task 9).
+- Consumes: `reads_view_definitions` (Task 13), `ParserPool`, `analyse_definitions`, `lineage_facts`, `failure_diagnostic`, `extra_missing_diagnostic`, `lineage_available` (Tasks 11–12), `definition_template` (`pii/mask.py`, Task 11), `lineage_index` (Task 10), `VIEW_SOURCE`, `LINEAGE_KINDS` (Task 9).
 - Produces: `store/names.py::resolve_relation_names(store: Store, names: Sequence[RawName], default: ObjectRef) -> dict[RawName, ResolvedTable]`. Resolution order:
   - 3-part names as written.
   - 2-part names as `(default.catalog, s, n)`, then `(None, s, n)`.
   - 1-part names as `(default.catalog, default.schema, n)`, then `(None, default.schema, n)`.
 
   Each candidate goes through `store.resolve` (exact, then unique case-insensitive). Ambiguous or not found → absent from the result (so `unresolved`).
-- Produces: `CrawlReport` gains `views_parsed: int = 0` and `lineage_diagnostics: list[Diagnostic] = field(default_factory=list)` (last fields). `crawl(...)` gains keyword-only `lineage: bool = True` and `parser_pool: ParserPool | None = None`. `lineage_diagnostics` never blocks the incremental baseline (`LAST_KEY` still depends on `errors` only).
+- Produces: `CrawlReport` gains `views_parsed: int = 0`, `lineage_s: float = 0.0` (wall time of the lineage phase; Task 19's `lineage_parse_s` reads it) and `lineage_diagnostics: list[Diagnostic] = field(default_factory=list)` (last fields). `crawl(...)` gains keyword-only `lineage: bool = True` and `parser_pool: ParserPool | None = None`. `lineage_diagnostics` never blocks the incremental baseline (`LAST_KEY` still depends on `errors` only).
 - Lineage phase, run after the walk and withdrawal in `crawl()`, only when `lineage` is set and `reads_view_definitions(reader)`:
   - **Candidates:** live views/MVs written this run (refs recorded in the on-disk `_Seen`, table `v(ref TEXT PRIMARY KEY)`), plus live views/MVs the store holds with no `lineage_state` row (found in one streaming pass). The second set covers resumed crawls.
-  - **Per batch** of `CrawlConfig.column_batch`: call `reader.view_definitions` (an exception → SG102 in `errors`). If a sha256 equals the stored `lineage_state` value, skip that view (its facts are left as they are). Otherwise analyse the definitions with `resolve=partial(resolve_relation_names, store)`, `dialect=reader.dialect`, `provenance=CATALOG`, `source=VIEW_SOURCE`, `observed_at=now()` and `evidence=True`.
+  - **Per batch** of `CrawlConfig.column_batch`: call `reader.view_definitions` (an exception → SG102 in `errors`). If a sha256 equals the stored `lineage_state` value, skip that view (its facts are left as they are). Otherwise build `DefinitionItem(target, sql, dialect=reader.dialect)` items and call `analyse_definitions(items, resolve=partial(resolve_relation_names, store), pool=pool, template=definition_template)`, then `lineage_facts(result, target_columns=…, provenance=CATALOG, source=VIEW_SOURCE, observed_at=now(), evidence=True)` per result.
   - **One transaction per batch:** retract the view's previous `view_definition` facts (`facts_for([view, *its columns], LINEAGE_KINDS)` filtered to `source == VIEW_SOURCE`), put the new facts, and set `lineage_state` to the sha256. On a failure, set `lineage_state` to `None` so the view is retried next crawl, and add SG211 to `lineage_diagnostics`.
   - **After the batch:** drop the raw texts.
   - **Withdrawal:** withdrawn views/MVs also lose their `view_definition` facts and `lineage_state`.
-  - **Without the extra:** no view facts and no state rows; one SG212 when at least one definition was read.
+  - **Without the extra** (`not lineage_available()`): `reader.view_definitions` is never called (no raw SQL is held for nothing), no view facts and no state rows; one SG212 in `lineage_diagnostics` when the reader has the `view_definitions` capability. The SG212 text is unchanged (it names the `lineage` extra).
 
 - [ ] **Step 1: Write the failing tests.**
   - `test_names.py::test_relation_names_case_and_quoting` (Review Focus 3): stored `shop.orders`, `shop."Order Items"`, `ops.Orders` + `ops.orders`. Then `(None, "SHOP", "ORDERS")` → `shop.orders`; `(None, "shop", "Order Items")` → resolved; `(None, "ops", "ORDERS")` → absent (ambiguous).
@@ -617,10 +624,10 @@ T18 → T19 → T20 → T21 → T22
     - `test_failure_is_sg211_and_crawl_continues` (a hostile pool)
     - `test_resume_parses_views_from_earlier_run`
     - `test_incremental_reads_only_changed_views`
-    - `test_without_extra_one_sg212` (monkeypatch `lineage_available` → False)
+    - `test_without_extra_one_sg212` (monkeypatch `lineage_available` → False; also asserts `view_definitions` is never called and one SG212 is reported)
     - `test_lineage_diagnostics_do_not_block_baseline`
     - `test_out_of_scope_upstream_is_unresolved` (Review Focus 4): the view reads `staging_raw.orders` under the default exclude → `unresolved == ("staging_raw.orders",)`.
-  - `test_lineage_privacy.py::test_view_literals_never_stored_or_logged`: a DuckDB view `CREATE VIEW shop.v_vip AS SELECT * FROM shop.customers WHERE email = 'maria.garcia@example.com' AND phone = '+1 415 555 0100' AND customer_id = 4242 AND note <> 'hunter2secret'`. Crawl with `caplog.set_level(logging.DEBUG)`, close the store, then read the bytes of the `.db`, `-wal` and `-shm` files plus `export_json` output. None of the literals (and none of their UTF-8/UTF-16 encodings) appear in the bytes, in `caplog.text` or in any diagnostic. The template evidence contains `email = ?`.
+  - `test_lineage_privacy.py::test_view_literals_never_stored_or_logged`: a DuckDB view (built by `lineage_helpers.privacy_warehouse`) `CREATE VIEW shop.v_vip AS SELECT * FROM shop.customers WHERE email = 'maria.garcia@example.com' AND phone = '+1 415 555 0100' AND customer_id = 73914286501 AND note <> 'hunter2secret'`. Crawl with `caplog.set_level(logging.DEBUG)`, close the store, then read the bytes of the `.db`, `-wal` and `-shm` files plus `export_json` output. None of the literals (and none of their UTF-8/UTF-16 encodings) appear in the bytes (the id literal has 11 digits so that it cannot occur by chance in the stores' sha256 hex strings), in `caplog.text` or in any diagnostic. The template evidence contains `email = ?`.
 - [ ] **Step 2: Run them.** `pytest tests/unit/store/test_names.py tests/unit/catalog/test_crawl_lineage.py tests/unit/test_lineage_privacy.py -v`. Expected: FAIL.
 - [ ] **Step 3: Implement** `names.py` and the crawl phase.
 - [ ] **Step 4: Run them.** Same command plus `pytest tests/unit/catalog -v`. Expected: PASS; the existing crawl tests are unchanged.
@@ -631,10 +638,10 @@ T18 → T19 → T20 → T21 → T22
 **Files:**
 - Modify: `src/schemaguru/overlays/dbt.py`, `src/schemaguru/overlays/__init__.py`, `src/schemaguru/guru.py`, `src/schemaguru/cli/commands.py` (`import_dbt` → `apply_dbt`; prints lineage counts), `src/schemaguru/diagnostics.py` (SG214), `.github/workflows/ci.yml` (job `no-extras`)
 - Create: `tests/fixtures/dbt/{manifest_lineage,manifest_lineage_v2,manifest_uncompiled}.json`, `tests/unit/overlays/test_dbt_lineage.py`, `tests/minimal/test_lineage_without_extra.py`
-- Test: `tests/unit/cli/test_cli.py`, `tests/unit/test_guru.py`, `tests/unit/test_ci_workflow.py`
+- Test: `tests/unit/cli/test_cli.py`, `tests/unit/test_guru.py`, `tests/unit/test_ci_workflow.py`, `tests/property/test_overlay_props.py`
 
 **Interfaces:**
-- Consumes: Tasks 9–14 (`ParserPool`, `analyse_definitions`, `lineage_facts`, `resolve_relation_names`, `DBT_ADAPTERS`, `extra_missing_diagnostic`).
+- Consumes: Tasks 9–14 (`ParserPool`, `analyse_definitions`, `lineage_facts`, `resolve_relation_names`, `DBT_ADAPTERS`, `extra_missing_diagnostic`, `definition_template` from `pii/mask.py`, passed as `template=` to `analyse_definitions`).
 - Produces:
   - `import_dbt(manifest_path, store, *, diagnostics=None, parser_pool: ParserPool | None = None) -> list[Fact]` (existing positional signature). It additionally emits:
     - `LINEAGE` per model/snapshot/seed node whose relation is in the store, built from `depends_on.nodes`. Dependencies that are ephemeral models are replaced by their own inputs, transitively and cycle-safe. Tests, macros and metrics are ignored. A relation not in the store goes to `unresolved` as `".".join(p for p in (database, schema, identifier or alias or name) if p)`. There is no fact when both lists are empty.
@@ -655,6 +662,7 @@ T18 → T19 → T20 → T21 → T22
   - `test_unresolved_relation_named`
   - `test_column_lineage_from_compiled_code` (postgres adapter; `net_revenue` ← two inputs, `aggregate`)
   - `test_adapter_alias_sqlserver_is_tsql`
+  - `test_adapter_spark_not_unsupported` (a `spark` manifest's `compiled_code` parses; no SG211 `unsupported_dialect`)
   - `test_uncompiled_manifest_one_sg214_table_level_only`
   - `test_reimport_retracts_removed_lineage` (`manifest_lineage_v2` drops one dependency → its fact is gone; descriptions from 0.1.0 kinds are untouched)
   - `test_bad_manifest_retracts_nothing`
@@ -738,7 +746,7 @@ T18 → T19 → T20 → T21 → T22
 
   Golden: `lineage_knowledge.py` builds the shop store plus a dbt model `analytics.revenue_daily` (DECLARED), a view `shop.v_paid_orders` (CATALOG) and one overlay link (HUMAN). `test_golden_lineage.py` renders each profile at STANDARD and LITE for those tables through `assert_golden`.
 - [ ] **Step 2: Run them.** `pytest tests/unit/render/test_lineage_render.py tests/golden -v`. Expected: FAIL (the new golden files are missing; everything else passes).
-- [ ] **Step 3: Implement.** Create the goldens with `SCHEMAGURU_UPDATE_GOLDEN=1 pytest tests/golden/test_golden_lineage.py` and read every file. `git diff --stat tests/golden/views` must list only the new `lineage__*` files.
+- [ ] **Step 3: Implement.** Create the goldens with `SCHEMAGURU_UPDATE_GOLDEN=1 pytest tests/golden/test_golden_lineage.py` and read every file. `git status --porcelain tests/golden/views` must show only `?? tests/golden/views/lineage__…` lines (untracked new files; `git diff --stat` cannot list them, and a ` M` line means an existing golden moved: a defect).
 - [ ] **Step 4: Run them.** `pytest tests/golden tests/unit/render -v`. Expected: PASS.
 - [ ] **Step 5: Gate, then commit.** Commit message: `feat(render): Built from / column lineage lines per profile, marked unverified`.
 
@@ -746,8 +754,8 @@ T18 → T19 → T20 → T21 → T22
 
 **Files:**
 - Create: `src/schemaguru/knowledge/lineage.py`, `src/schemaguru/render/lineage.py`
-- Modify: `src/schemaguru/guru.py` (`lineage`, `alineage`), `src/schemaguru/agent/tools.py` (`TOOL_NAMES`, spec, `ToolHost.lineage`), `src/schemaguru/agent/dispatch.py` (`_lineage` in `_HANDLERS`), `src/schemaguru/cli/{main,commands}.py`, `src/schemaguru/server/app.py` (route plus the docstring table), `src/schemaguru/__init__.py` (export `LineageResult`), `docs/generated/tools.json`, `docs/reference/cli.md` (regenerated), `docs/wiki/CLI.md`, `docs/guide/{agents,server}.md`, `docs/wiki/{Agent-Integration,Server}.md`
-- Test: `tests/unit/knowledge/test_lineage_traverse.py`, `tests/unit/agent/test_lineage_tool.py`, `tests/unit/cli/test_cli.py`, `tests/unit/server/test_app.py`, `tests/unit/test_guru.py` (`EXPORTS` += `"LineageResult"` before `"__version__"`), `tests/unit/test_lineage_antigoals.py`, `tests/unit/test_lineage_privacy.py` (part 2)
+- Modify: `src/schemaguru/guru.py` (`lineage`, `alineage`), `src/schemaguru/agent/tools.py` (`TOOL_NAMES`, spec, `ToolHost.lineage`), `src/schemaguru/agent/dispatch.py` (`_lineage` in `_HANDLERS`), `src/schemaguru/agent/prompt.py` (`USAGE` gains one line: "Use `lineage` to see what a table or column is built from or feeds; it is declared or parsed, never measured, and never a join path."), `src/schemaguru/cli/{main,commands}.py`, `src/schemaguru/server/app.py` (route plus the docstring table), `src/schemaguru/__init__.py` (export `LineageResult`), `docs/generated/tools.json`, `docs/reference/cli.md` (regenerated), `docs/wiki/CLI.md`, `docs/guide/{agents,server}.md`, `docs/wiki/{Agent-Integration,Server}.md`
+- Test: `tests/unit/knowledge/test_lineage_traverse.py`, `tests/unit/agent/test_lineage_tool.py`, `tests/unit/agent/test_tools.py` (append `lineage` to `SPEC_TOOLS` and to the maxLength-caps test; assert the `ref` argument has `maxLength` 512), `tests/acceptance/test_spec_acceptance.py` (append `lineage` to the tool list in `test_g8_agent_native_surfaces`), `tests/unit/cli/test_cli.py`, `tests/unit/server/test_app.py`, `tests/unit/test_guru.py` (`EXPORTS` += `"LineageResult"`, inserted before `"__version__"`), `tests/unit/test_lineage_antigoals.py`, `tests/unit/test_lineage_privacy.py` (part 2), `tests/unit/lineage_helpers.py` (adds `alpha_beta_guru(tmp_path) -> Guru`: a Guru over tables `shop.alpha` and `shop.beta` with no JOIN facts and `LINEAGE beta ← alpha`; Task 22 reuses it)
 
 **Interfaces:**
 - Consumes: `LineageIndex`/`lineage_index` (Task 10), `resolve_lineage` (Task 9), `ToolHost`, `_result`, `outbound_mode`, `ToolError` (`agent/dispatch.py`).
@@ -791,18 +799,18 @@ T18 → T19 → T20 → T21 → T22
     - `test_unresolved_leaf`
     - `test_deterministic_order`
   - `test_lineage_tool.py`:
-    - `test_tool_listed_last_with_schema`
+    - `test_tool_listed_last_with_schema` (also: `lineage` is in `SPEC_TOOLS`, `ref` has `maxLength` 512, and `USAGE` mentions `lineage`)
     - `test_tool_result_shape`
     - `test_bad_args_sg803`
     - `test_adapters_and_mcp_expose_lineage` (`importorskip("mcp")`; the `extras` CI job forbids the skip)
   - `test_cli.py::test_lineage_text_and_json`
   - `test_app.py::test_get_lineage` and `test_get_lineage_bad_depth_400`
-  - `test_lineage_antigoals.py`: tables `shop.alpha` and `shop.beta` with no JOIN facts and `LINEAGE beta ← alpha`.
+  - `test_lineage_antigoals.py`: uses `lineage_helpers.alpha_beta_guru` (tables `shop.alpha` and `shop.beta` with no JOIN facts and `LINEAGE beta ← alpha`).
     - `test_find_path_refuses`: `guru.find_path("shop.alpha", "shop.beta")` is a `Refusal`.
     - `test_scope_does_not_add_upstream`: `guru.context("alpha")` does not list `shop.beta` through expansion.
     - `test_graph_reads_no_lineage`: the `Guru._current_graph` store call kinds are exactly `["JOIN", "ENTITY_TYPE"]` (a spy).
     - `test_snippet_unaffected`: the `find_join_path` result for the pair is an error with no SQL.
-  - `test_lineage_privacy.py::test_literals_absent_from_every_surface`: the Task 14 warehouse, crawled. None of the four literals appears in any of: `guru.context(...)` for all four profiles; `describe_table` and `lineage` tool results; `schema_context`; HTTP `/lineage`, `/tables/shop.v_vip`, `/facts?subject=shop.v_vip`; CLI `lineage --format json`; `guru.diagnostics`; `caplog.text`.
+  - `test_lineage_privacy.py::test_literals_absent_from_every_surface`: `lineage_helpers.privacy_warehouse` (Task 14), crawled. None of the four literals appears in any of: `guru.context(...)` for all four profiles; `describe_table` and `lineage` tool results; `schema_context`; HTTP `/lineage`, `/tables/shop.v_vip`, `/facts?subject=shop.v_vip`; CLI `lineage --format json`; `guru.diagnostics`; `caplog.text`.
 - [ ] **Step 2: Run them.** `pytest tests/unit/knowledge/test_lineage_traverse.py tests/unit/agent tests/unit/cli tests/unit/server tests/unit/test_lineage_antigoals.py tests/unit/test_lineage_privacy.py tests/unit/test_guru.py -v`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Regenerate with `python3 scripts/gen_docs.py`. Add the `lineage` row to `docs/wiki/CLI.md` and the route row to the server docs and docstring table.
 - [ ] **Step 4: Run them.** Same command plus `pytest tests/conformance`. Expected: PASS.
@@ -822,7 +830,7 @@ T18 → T19 → T20 → T21 → T22
   - `changed_set(shape: ScaleShape, fraction: float = 0.01, seed: int = 1) -> frozenset[int]`
   - `synthetic_join_facts(shape) -> Iterator[Fact]`: MEASURED `JOIN` facts for the declared FK pairs with deterministic match rates, labelled `method="exact"`, `source="benchmark:synthetic"` and documented as synthetic.
 - Produces (in `questions.py`): `QUESTIONS: tuple[str, ...]` (200 fixed shop-domain questions), `path_pairs(shape: ScaleShape, n: int = 200) -> list[tuple[ObjectRef, ObjectRef]]` and `lineage_refs(shape: ScaleShape, n: int = 200) -> list[ObjectRef]` (views at depth ≥ 2).
-- Produces (in `harness.py`): `run(shape: ScaleShape, workdir: Path, *, runner_class: str) -> dict[str, Any]`, plus a CLI `python3 -m benchmarks.scale.harness --tables N [--columns-per-table 50] --out PATH --runner-class NAME [--workdir DIR]`. The crawl phases run in a child process (`subprocess` of `python3 -m benchmarks.scale.harness --phase crawl …`), so the peak RSS (`resource.getrusage(RUSAGE_SELF).ru_maxrss`, normalised to bytes: Linux KiB, macOS bytes) belongs to the crawl alone; the parser worker's peak is `RUSAGE_CHILDREN` of that child. The result JSON has exactly these keys:
+- Produces (in `harness.py`): `run(shape: ScaleShape, workdir: Path, *, runner_class: str) -> dict[str, Any]`, plus a CLI `python3 -m benchmarks.scale.harness --tables N [--columns-per-table 50] --out PATH --runner-class NAME [--workdir DIR]`. The crawl phases run in a child process (`subprocess` of `python3 -m benchmarks.scale.harness --phase crawl …`), so the peak RSS (`resource.getrusage(RUSAGE_SELF).ru_maxrss`, normalised to bytes: Linux KiB, macOS bytes; `resource` is imported lazily inside the function, and on Windows the RSS metrics are `None` and are skipped by `compare`) belongs to the crawl alone; the parser worker's peak is `RUSAGE_CHILDREN` of that child. The result JSON has exactly these keys:
 
   ```json
   {"version": "0.2.0", "shape": {...ScaleShape...}, "size": {"tables": 0, "columns": 0, "views": 0},
@@ -833,10 +841,10 @@ T18 → T19 → T20 → T21 → T22
                "lineage_upstream_p95_ms": 0, "lineage_downstream_p95_ms": 0, "store_bytes": 0},
    "known_limits": [], "nightly": null}
   ```
-  Here `incremental_ratio = crawl_incremental_s / crawl_full_s` with 1% changed. Context latency is measured from the local store with a warm cache disabled (distinct questions). All p95 values come from 200 samples.
+  Here `incremental_ratio = crawl_incremental_s / crawl_full_s` with 1% changed, and `lineage_parse_s` is the full crawl's `CrawlReport.lineage_s` (Task 14). Context latency is measured from the local store with a warm cache disabled (distinct questions). All p95 values come from 200 samples.
 - Produces (in `compare.py`):
   - `HARD_TARGETS = {"crawl_peak_rss_bytes": 2 * 2**30, "incremental_ratio": 0.10, "context_p95_ms": 200.0, "lineage_upstream_p95_ms": 50.0, "lineage_downstream_p95_ms": 50.0}` (each value is an upper bound)
-  - `REGRESSION_GATED = ("crawl_full_s", "path_p95_ms", "graph_build_s", "lineage_parse_s", "store_bytes")`, `TOLERANCE = 0.25`
+  - `REGRESSION_GATED = ("crawl_full_s", "path_p95_ms", "graph_build_s", "lineage_parse_s")` (`store_bytes` is reported, never gated: spec §6.1), `TOLERANCE = 0.25`
   - `compare(result: Mapping[str, Any], baselines: Sequence[Mapping[str, Any]]) -> list[str]`: the problems. Only baselines with the same `environment.runner_class` and `size.tables` count. With none, regression gating is skipped and the note `no baseline for <class> at <N> tables: regression gate inactive` is returned separately via `compare_notes(...) -> list[str]`.
   - CLI: `python3 -m benchmarks.scale.compare RESULT --baseline-dir benchmarks/results`; exits 1 on problems.
 
@@ -847,7 +855,7 @@ T18 → T19 → T20 → T21 → T22
     - `test_lineage_acyclic_depth_bounded`
     - `test_pages_bounded_memory` (`tracemalloc` peak < 16 MiB listing 50,000 tables)
     - `test_changed_set_size`
-    - `test_harness_small_run` (`tables=2_000`, tmp workdir; every metric key present and numeric; runs in < 120 s)
+    - `test_harness_small_run` (`tables=2_000`, tmp workdir; every metric key present, numeric or, for the RSS keys on Windows, `None`; runs in < 120 s; marked `skipif(sys.platform == "win32")`)
   - `test_scale_compare.py`:
     - `test_hard_target_miss`
     - `test_regression_over_25_percent`
@@ -898,9 +906,9 @@ T18 → T19 → T20 → T21 → T22
   - The overlay syntax with ignore semantics (the §4.9 example)
   - What agents see (the copy from Task 17 and Task 18)
   - Privacy of view SQL (sha256 + literal-free template only)
-  - Limits (1,000,000 chars, 5 s per definition, the 1 GiB memory cap on Linux only, `SELECT *` over unknown tables, projection-only lineage, never a join path, never verified)
+  - Limits (1,000,000 chars, 5 s per parser request (a definition takes two: extract, then lineage), the 1 GiB memory cap on Linux only, `SELECT *` over unknown tables, projection-only lineage, never a join path, never verified)
   - Diagnostics SG211–SG214, SG705
-- README gains a lineage example of ≤ 8 lines: `guru.import_dbt("target/manifest.json")`, then `print(guru.lineage("analytics.revenue_daily", depth=2))` (it renders `lineage_text`), and a mention of `pip install 'schemaguru[lineage]'`.
+- README gains a lineage example of ≤ 8 lines: `guru.import_dbt("target/manifest.json")`, then `print(guru.handle_tool_call("lineage", {"ref": "analytics.revenue_daily", "depth": 2})["text"])` (`guru.lineage(...)` returns a `LineageResult`, which has no `__str__`), and a mention of `pip install 'schemaguru[lineage]'`.
 - `CHANGELOG.md` gets `## [0.2.0] - UNRELEASED` with Added (lineage, tools, `view_definitions`, scale benchmark), Changed, Fixed (one line per `fixed` ledger area) and Known limits (the `ruled out` user-visible items and benchmark `known_limits`).
 
 - [ ] **Step 1:** Write the pages and edits. Run `python3 scripts/gen_docs.py && python3 scripts/build_demo_export.py`.
@@ -917,6 +925,7 @@ T18 → T19 → T20 → T21 → T22
 - Consumes: everything above. No new library names.
 
 - [ ] **Step 1: Write the acceptance tests** (`test_release_020.py`, one test per 0.2.0 goal and anti-goal):
+  - `test_version_is_020`: `schemaguru.__version__ == "0.2.0"` and `CHANGELOG.md` has a `## [0.2.0] - YYYY-MM-DD` heading (no `UNRELEASED`). This is the red-first test.
   - `test_l1_sources`: a DuckDB shop with a view, `manifest_lineage.json` and `tests/fixtures/overlays/lineage.yaml` → LINEAGE facts with provenance DECLARED, CATALOG and HUMAN, sources `dbt:manifest:*`, `view_definition` and `overlay:*:*`.
   - `test_l2_truthful`: every lineage fact is `UNVERIFIED`; a rendered agent view and the tool text contain `unverified` and never `measured`/`VERIFIED` on lineage lines.
   - `test_l3_agent_surfaces`: `guru.lineage`, `handle_tool_call("lineage")`, `cli.main(["lineage", …])`, HTTP `/lineage` via Starlette `TestClient`, and `"lineage"` in the MCP tool list (`importorskip("mcp")`) and in every adapter's tool names.
@@ -924,11 +933,11 @@ T18 → T19 → T20 → T21 → T22
   - `test_h1_ledger_closed`: every `ITEM_IDS` row's state is `fixed`, `already fixed` or `ruled out` (reuse `tests/conformance/test_hardening_ledger.py::parse_ledger`).
   - `test_s1_results_published`: `benchmarks/results/0.2.0.json` has `size.tables == 500_000` and `size.columns == 25_000_000`. Each `HARD_TARGETS` metric meets its bound or is named in `known_limits`, and that name appears in CHANGELOG `0.2.0`. `.github/workflows/bench.yml` exists.
   - `test_antigoal_no_verified_lineage` (the `Fact.make` VERIFIED lineage raises)
-  - `test_antigoal_no_lineage_join_edge` (reuse the Task 18 alpha/beta setup → `Refusal`)
-  - `test_antigoal_no_raw_definition_anywhere` (reuse the Task 14/18 privacy helper)
+  - `test_antigoal_no_lineage_join_edge` (reuse `lineage_helpers.alpha_beta_guru` → `Refusal`)
+  - `test_antigoal_no_raw_definition_anywhere` (reuse `lineage_helpers.privacy_warehouse`)
   - `test_antigoal_hostile_sql_cannot_hang` (the `HANG` hostile worker through `crawl` finishes with SG211 `timeout` within `timeout_s + 10` s)
-  - `test_antigoal_guards_only_tightened`: every `fixed` ledger row in A1/A2 names a test that still passes, and the `tests/unit/test_guard.py`/`tests/unit/catalog/test_executor.py` hostile-form tests are collected (`pytest --collect-only -q` lists them).
-- [ ] **Step 2: Run them.** `pytest tests/acceptance/test_release_020.py -v`. Expected: FAIL only on the version-dependent assertions, then PASS after Step 3. Any other failure is a defect: fix it in the owning area with a red test first.
+  - `test_antigoal_guards_only_tightened`: collection and existence checks only (it never runs tests inside a test; the gate runs them): every `fixed` A1/A2 ledger row names a test file that exists and defines that test, and `pytest --collect-only -q tests/unit/test_guard.py tests/unit/catalog/test_executor.py` lists the hostile-form tests.
+- [ ] **Step 2: Run them.** `pytest tests/acceptance/test_release_020.py -v`. Expected: FAIL on `test_version_is_020` (and nothing else), then PASS after Step 3. Any other failure is a defect: fix it in the owning area with a red test first.
 - [ ] **Step 3: Set the version and date.** Bump `__version__` and `tests/test_version.py` to `0.2.0`; date the CHANGELOG heading.
 - [ ] **Step 4: Full verification.** Run the gate; then `pytest -m integration -rs` with the CI containers up; `pytest tests/acceptance -rs` in a venv with `.[dev,mcp,anthropic,langchain,llamaindex,openai-agents]` and `SCHEMAGURU_FORBID_SKIPS=1`; `mkdocs build --strict`; `python3 -m build && twine check dist/*`. All pass. Do not tag and do not publish; the controller releases.
 - [ ] **Step 5: Commit.** `git add src/schemaguru/__about__.py tests/test_version.py CHANGELOG.md tests/acceptance/test_release_020.py docs/specs/2026-11-25-schemaguru-0.2.0-hardening-ledger.md` and `git commit -m "chore(release): 0.2.0 acceptance sweep and version"`.

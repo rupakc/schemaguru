@@ -8,7 +8,7 @@ order, and evidence that matches the state.
 | State | Evidence |
 |---|---|
 | `open` | the task that owns it (`Task 3`) |
-| `already fixed` | `commit <sha> · test <path>::<name>`: the commit that made the code right and a test proven to fail without that change |
+| `already fixed` | `commit <sha> · test <path>::<name>`: the commit that made the code right and a test proven to fail without that change (one pair per half when an item has several) |
 | `fixed` | `test <path>::<name>`: the red-first test of the fixing task |
 | `ruled out` | a one-line reason, plus `· docs: <page>` when the item is user-visible |
 
@@ -23,8 +23,8 @@ Audited against `main` at `710e21f` (Task 1). Tasks 2–8 turn the `open` rows i
 | A1.4 | names not in the name list not masked | open | Task 3 |
 | A1.5 | lone-surname possessives (`Garcia's order`) not masked | open | Task 3 |
 | A1.6 | addresses inside sentences not swept | open | Task 3 |
-| A1.7 | `password=hunter2` (< 8 chars) not masked; the `=` form is masked since `c918616`, the `pwd: abc` form still leaks | open | Task 3 |
-| A1.8 | credential glued to word chars (`x_<key>`); `x_sk_live_…` is masked, `token_ghp_…` still leaks | open | Task 3 |
+| A1.7 | `password=hunter2` (< 8 chars) not masked | already fixed | commit c918616 · test tests/unit/pii/test_hardening.py::test_short_and_glued_credentials_are_masked |
+| A1.8 | credential glued to word chars (`x_<key>`); only keyword-adjacent and `x_api_key=` forms are masked, a bare `x_sk_live_…` or `token_ghp_…` in prose still leaks | open | Task 3 |
 | A1.9 | `github_pat_` / `xapp-` prefixes not covered | already fixed | commit 60b51f9 · test tests/unit/pii/test_hardening.py::test_bare_credentials_masked_in_prose |
 | A1.10 | zero-padded ids masked as phone (`0012345678901` → `<phone>`) | open | Task 3 |
 | A1.11 | path-like values masked as secret (a hex segment in a path → `<secret>`) | open | Task 3 |
@@ -59,7 +59,7 @@ Audited against `main` at `710e21f` (Task 1). Tasks 2–8 turn the `open` rows i
 | A4.1 | Postgres `NOT VALID` FKs reported enforced | open | Task 6 |
 | A4.2 | Postgres unique indexes not reported | open | Task 6 |
 | A4.3 | Postgres integration test lacks partitioned / unanalysed tables | open | Task 6 |
-| A4.4 | reader `row_count` estimate unlabelled (must be CATALOG, never MEASURED) | already fixed | commit d131b6c · test tests/unit/render/test_table_block.py::test_catalog_row_count_is_labelled_catalog_stats |
+| A4.4 | reader `row_count` estimate unlabelled (must be CATALOG provenance, never MEASURED exact) | already fixed | commit c1642f6 · test tests/unit/measure/test_scheduler.py::test_large_table_uses_system_sample · commit d131b6c · test tests/unit/render/test_table_block.py::test_catalog_row_count_is_labelled_catalog_stats |
 | A4.5 | Oracle `ALL_PART_TABLES` joined on nullable `c.owner` | open | Task 6 |
 | A4.6 | Oracle materialized-view comments | open | Task 6 |
 | A4.7 | Snowflake clustering expressions read as names | open | Task 6 |

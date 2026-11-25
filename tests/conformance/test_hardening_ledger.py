@@ -3,7 +3,7 @@ in one of four states, with evidence a reader can check:
 
 * ``open`` names the task that owns it (``Task 3``);
 * ``already fixed`` names the fixing commit and a test that pins it
-  (``commit <sha> · test <path>::<name>``);
+  (``commit <sha> · test <path>::<name>``), one such pair per half of an item that has several;
 * ``fixed`` names the red-first test (``test <path>::<name>``);
 * ``ruled out`` gives a one-line reason (and ``· docs: <page>`` when the item is user-visible).
 
@@ -30,10 +30,12 @@ ITEM_IDS: tuple[str, ...] = tuple(f"{area}.{i}" for area, n in _COUNTS for i in 
 
 _ROW = re.compile(r"\|\s*(A\d\.\d+)\s*\|")
 _TEST = r"test (?P<path>[\w./-]+\.py)::(?P<name>\w+)"
+_PAIR = r"commit (?P<sha>[0-9a-f]{7,40}) · " + _TEST
+_UNNAMED_PAIR = r"commit [0-9a-f]{7,40} · test [\w./-]+\.py::\w+"
 _EVIDENCE = {
     "open": re.compile(r"Task \d+"),
     "fixed": re.compile(_TEST),
-    "already fixed": re.compile(r"commit (?P<sha>[0-9a-f]{7,40}) · " + _TEST),
+    "already fixed": re.compile(rf"{_UNNAMED_PAIR}(?: · {_UNNAMED_PAIR})*"),
     "ruled out": re.compile(r"(?P<reason>.+?)(?: · docs: (?P<docs>\S+))?"),
 }
 
@@ -59,15 +61,16 @@ def evidence_problems(item_id: str, state: str, evidence: str, root: Path = ROOT
     problems: list[str] = []
     if state == "ruled out" and len(m.group("reason").strip()) < 10:
         problems.append(f"{item_id}: a ruled-out reason needs at least 10 characters")
-    if state in ("fixed", "already fixed"):
-        path, name = m.group("path"), m.group("name")
+    pattern = _PAIR if state == "already fixed" else _TEST
+    for ref in re.finditer(pattern, evidence) if state in ("fixed", "already fixed") else ():
+        path, name = ref.group("path"), ref.group("name")
         test_file = root / path
         if not test_file.is_file():
             problems.append(f"{item_id}: test file {path} does not exist")
         elif not re.search(rf"^\s*def {re.escape(name)}\(", test_file.read_text("utf-8"), re.M):
             problems.append(f"{item_id}: {path} defines no test {name}")
-    if state == "already fixed" and not _commit_exists(m.group("sha"), root):
-        problems.append(f"{item_id}: commit {m.group('sha')} is not in the repository")
+        if state == "already fixed" and not _commit_exists(ref.group("sha"), root):
+            problems.append(f"{item_id}: commit {ref.group('sha')} is not in the repository")
     return problems
 
 
@@ -139,12 +142,20 @@ def test_parse_ledger_rejects_bad_rows() -> None:
         "A1.9": ("`github_pat_`/`xapp-`", "already fixed", f"commit {sha} · test {THIS_TEST}")
     }
     assert parse_ledger("| A2.1 | path check | open | Task 4 |")["A2.1"][1] == "open"
+    two = f"commit {sha} · test {THIS_TEST} · commit {sha} · test {THIS_TEST}"
+    assert parse_ledger(f"| A4.4 | rows | already fixed | {two} |")["A4.4"][2] == two
     bad_rows = {
         "listed more than once": good + "\n" + good,
         "unknown state": "| A2.1 | path check | done | Task 4 |",
         "does not exist": GOOD.format(sha=sha, test="tests/nope/test_missing.py::test_x"),
         "defines no test": GOOD.format(sha=sha, test=THIS_TEST.replace("lists", "skips")),
         "not in the repository": GOOD.format(sha="0" * 12, test=THIS_TEST),
+        "commit 000000000000 is not": GOOD.format(
+            sha=sha, test=f"{THIS_TEST} · commit {'0' * 12} · test {THIS_TEST}"
+        ),
+        "tests/nope/test_second.py does not exist": GOOD.format(
+            sha=sha, test=f"{THIS_TEST} · commit {sha} · test tests/nope/test_second.py::test_x"
+        ),
         "does not match": "| A2.1 | path check | open | later |",
         "at least 10 characters": "| A2.4 | SHOW | ruled out | no |",
     }

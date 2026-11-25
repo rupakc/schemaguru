@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import re
 import sys
 from pathlib import Path
@@ -231,9 +232,17 @@ FACTLANG_PUBLIC = {
 _FACTLANG_MODULE = re.compile(r"factlang(?:\.[A-Za-z_]\w*)*")
 
 
+def _is_module(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def check_factlang_public(source: str, filename: str = "<module>") -> list[str]:
-    """Violations: a FactLang module outside ``FACTLANG_PUBLIC``, imported by statement or named
-    as a string (``importlib.import_module("factlang.x")``, ``_attr("factlang.x", ...)``)."""
+    """Violations: a FactLang module outside ``FACTLANG_PUBLIC``, imported by statement (also as
+    a name, ``from factlang import semantics``) or named as a string
+    (``importlib.import_module("factlang.x")``, ``_attr("factlang.x", ...)``)."""
     tree = ast.parse(source, filename)
     named: list[tuple[int, str]] = []
     for node in _all_imports(tree):
@@ -241,6 +250,13 @@ def check_factlang_public(source: str, filename: str = "<module>") -> list[str]:
             named += [(node.lineno, a.name) for a in node.names]
         elif node.level == 0 and node.module is not None:
             named.append((node.lineno, node.module))
+            if node.module.split(".")[0] == "factlang":
+                # an imported name that is itself a FactLang module counts as that module
+                named += [
+                    (node.lineno, f"{node.module}.{a.name}")
+                    for a in node.names
+                    if _is_module(f"{node.module}.{a.name}")
+                ]
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Constant)
@@ -269,10 +285,14 @@ def test_negative_control_factlang_public_modules_only() -> None:
         "import factlang.sql.probe\n",
         "import importlib\nm = importlib.import_module('factlang.semantics.refs')\n",
         "def f():\n    return _attr('factlang.connectors.base', 'X')\n",
+        "from factlang import semantics\nIdent = semantics.refs.Ident\n",  # a private submodule
+        "from factlang.sql import probe\n",
     ):
         assert len(check_factlang_public(bad)) == 1, bad
     ok = "from factlang.sql import Param\nimport factlang\nx = 'factlang.ir'\ny = 'a factlang.x'\n"
     assert check_factlang_public(ok) == []
+    names = "from factlang import Checker, connectors\nfrom factlang.syntax import FILTER_KEYWORDS"
+    assert check_factlang_public(names) == []
 
 
 def test_optional_deps_lazy() -> None:

@@ -101,3 +101,25 @@ def test_search_survives_vacuum(store: SQLiteStore) -> None:
         store._conn.execute("DELETE FROM tables WHERE ref=?", (f"shop.filler{i}",))
     store._conn.execute("VACUUM")
     assert [r.table for r, _ in store.search("orders", 3)] == ["orders"]
+
+
+def test_facts_for_filters_kinds_in_sql(store: SQLiteStore) -> None:
+    """The kind filter runs in SQL on the ``(subject_key, kind)`` index, not in Python after
+    loading every fact of the subjects."""
+    from tests.unit.store.contract import _desc, _rows
+
+    a = tref("orders")
+    store.put_facts([_desc(a, "x"), _rows(a, 3)])
+    seen: list[str] = []
+    store._conn.set_trace_callback(seen.append)
+    try:
+        assert [f.kind.name for f in store.facts_for([a], ["ROW_COUNT"])] == ["ROW_COUNT"]
+    finally:
+        store._conn.set_trace_callback(None)
+    (sql,) = [s for s in seen if s.lstrip().upper().startswith("SELECT ID, DATA FROM FACTS")]
+    assert " AND kind IN (" in sql, sql
+    plan = store._conn.execute(
+        "EXPLAIN QUERY PLAN SELECT id, data FROM facts WHERE subject_key IN (?) AND kind IN (?)",
+        ["k", "ROW_COUNT"],
+    ).fetchall()
+    assert any("facts_subject_kind" in str(row) for row in plan), plan

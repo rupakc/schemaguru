@@ -537,3 +537,15 @@ def test_one_row_is_singular_and_tiny_rates_are_bounded() -> None:
     assert pct(0.00005) == "<0.01%"
     assert pct(0.0001) == "0.01%"
     assert pct(0.99995) == ">99.99%"
+
+
+def test_catalog_row_count_is_labelled_catalog_stats(tmp_path: Path) -> None:
+    """A reader's row count (catalog statistics, an estimate) is shown as such and never as a
+    measured number: with no ROW_COUNT fact the block says ``(catalog stats)``."""
+    orders = t("orders")
+    kept = [f for f in shop_facts() if not (f.kind is FactKind.ROW_COUNT and f.subject == orders)]
+    with shop_store(tmp_path / "shop.db", kept) as s:
+        text = AGENT.render_table(collect(s, orders, NOW, CONFIG), DetailLevel.FULL)
+    (line,) = [ln for ln in text.splitlines() if ln.strip().endswith("rows (catalog stats)")]
+    assert line.strip() == "10,000 rows (catalog stats)"
+    assert "rows (measured" not in text

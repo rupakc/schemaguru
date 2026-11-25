@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import sys
 from pathlib import Path
 
@@ -216,6 +217,62 @@ def test_factlang_seam() -> None:
             path.read_text(encoding="utf-8"), module_name(path), str(path)
         )
     assert not problems, "\n".join(problems)
+
+
+# FactLang's public modules (its SemVer-covered API); anything deeper is private to FactLang.
+FACTLANG_PUBLIC = {
+    "factlang",
+    "factlang.ir",
+    "factlang.sql",
+    "factlang.connectors",
+    "factlang.agent",
+    "factlang.syntax",
+}
+_FACTLANG_MODULE = re.compile(r"factlang(?:\.[A-Za-z_]\w*)*")
+
+
+def check_factlang_public(source: str, filename: str = "<module>") -> list[str]:
+    """Violations: a FactLang module outside ``FACTLANG_PUBLIC``, imported by statement or named
+    as a string (``importlib.import_module("factlang.x")``, ``_attr("factlang.x", ...)``)."""
+    tree = ast.parse(source, filename)
+    named: list[tuple[int, str]] = []
+    for node in _all_imports(tree):
+        if isinstance(node, ast.Import):
+            named += [(node.lineno, a.name) for a in node.names]
+        elif node.level == 0 and node.module is not None:
+            named.append((node.lineno, node.module))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and _FACTLANG_MODULE.fullmatch(node.value)
+        ):
+            named.append((node.lineno, node.value))
+    return [
+        f"{filename}:{line}: '{mod}' is not a public FactLang module"
+        for line, mod in named
+        if mod.split(".")[0] == "factlang" and mod not in FACTLANG_PUBLIC
+    ]
+
+
+def test_factlang_public_modules_only() -> None:
+    assert _py_files(), f"no source files found under {SRC}"
+    problems: list[str] = []
+    for path in _py_files():
+        problems += check_factlang_public(path.read_text(encoding="utf-8"), str(path))
+    assert not problems, "\n".join(problems)
+
+
+def test_negative_control_factlang_public_modules_only() -> None:
+    for bad in (
+        "from factlang.semantics.refs import Ident\n",
+        "import factlang.sql.probe\n",
+        "import importlib\nm = importlib.import_module('factlang.semantics.refs')\n",
+        "def f():\n    return _attr('factlang.connectors.base', 'X')\n",
+    ):
+        assert len(check_factlang_public(bad)) == 1, bad
+    ok = "from factlang.sql import Param\nimport factlang\nx = 'factlang.ir'\ny = 'a factlang.x'\n"
+    assert check_factlang_public(ok) == []
 
 
 def test_optional_deps_lazy() -> None:

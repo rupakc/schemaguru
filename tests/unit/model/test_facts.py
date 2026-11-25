@@ -210,3 +210,14 @@ def test_error_fact_never_replaces_exact_measurement() -> None:
     assert method_class("exact", Status.ERROR) == "error"
     assert method_class("sampled:x", Status.ESTIMATED) == "sampled"
     assert method_class(None) == "exact"
+
+
+def test_missing_identity_field_raises() -> None:
+    """An identity field absent from the payload would merge facts that differ in it (two
+    FRESHNESS columns of one table), so building the id refuses; present-but-None is fine."""
+    table = ORD.table_ref()
+    with pytest.raises(ValueError, match="FRESHNESS value lacks identity field"):
+        Fact.make(FactKind.FRESHNESS, table, {"max": None}, Provenance.CATALOG, Status.OBSERVED)
+    a = Fact.make(FactKind.FRESHNESS, table, {"column": None}, Provenance.CATALOG, Status.OBSERVED)
+    b = Fact.make(FactKind.FRESHNESS, table, {"column": "x"}, Provenance.CATALOG, Status.OBSERVED)
+    assert a.id != b.id

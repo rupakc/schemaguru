@@ -162,3 +162,24 @@ def test_extending_page_names_protocol_methods(page: str) -> None:
     text = _read(page)
     missing = {p.__name__: missing_members(text, p) for p in PROTOCOL_PAGES[page]}
     assert all(not v for v in missing.values()), missing
+
+
+def test_sampling_thresholds_stated() -> None:
+    """Both "large table" thresholds are stated with when each applies: catalog bytes when
+    known, the row count only when bytes are unknown (``measure/sampling.py``)."""
+    wiki = " ".join(_read("Sampling").split())
+    assert "50 GiB by catalog bytes, or, only when bytes are unknown, 500 million rows" in wiki
+    guide = " ".join((WIKI.parent / "guide" / "sampling.md").read_text(encoding="utf-8").split())
+    assert "`bytes ≥ sample_threshold_bytes` (50 GiB), or, with bytes unknown," in guide
+    assert "`row_count ≥ sample_threshold_rows` (500M)" in guide
+
+
+def test_wiki_sync_explains_a_missing_wiki_repository() -> None:
+    """The wiki sync fails with an actionable error when ``<repo>.wiki.git`` does not exist yet
+    (GitHub creates it only with the first page), instead of a bare ``git clone`` failure."""
+    wf = (WIKI.parent.parent / ".github" / "workflows" / "wiki.yml").read_text(encoding="utf-8")
+    step = wf.split("- name: Clone the wiki repository", 1)[1].split("- name:", 1)[0]
+    assert 'if ! git -c http.extraheader="$auth" clone "$WIKI_URL" wiki; then' in step
+    assert "::error::Cannot clone $WIKI_URL" in step
+    assert "enable the wiki" in step and "create any page once" in step
+    assert "exit 1" in step

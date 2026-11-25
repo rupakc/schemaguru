@@ -3,10 +3,11 @@
 Measurement turns guesses into numbers. Every number comes from a read-only FactLang probe
 — SchemaGuru never writes measurement SQL itself — and is stored with its method and time.
 
-!!! warning "Needs FactLang 0.1.0"
-    The probes run through FactLang's `Checker.measure`. With a FactLang that lacks it,
-    `measure()` returns `SG304` and writes nothing. The examples on this page show measured
-    output because the docs test supplies the test suite's backend.
+!!! note "Runs through FactLang"
+    The probes run through FactLang's `Checker.measure` (FactLang 0.1.1 or later). With a
+    FactLang that lacks it, `measure()` returns `SG304` and writes nothing. The generated
+    outputs on this site use the test suite's backend so that they are reproducible byte for
+    byte.
 
 ## What is measured
 

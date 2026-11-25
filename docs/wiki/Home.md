@@ -48,11 +48,11 @@ unless the page says otherwise. Two things matter for what you can do today:
 
 - **Measurement needs FactLang.** SchemaGuru never writes measurement SQL itself; every number
   comes from [FactLang](https://github.com/rupakc/factlang) claims and primitives. The measurement
-  capabilities (`Checker.measure`, sampling, join snippets, filter parsing) arrive with
-  FactLang 0.1.0. Until then a crawl, overlays, scoping, rendering and the agent tools all work,
-  and `measure()` reports diagnostic `SG304` instead of measuring. `schemaguru doctor` shows which
-  FactLang capabilities are present. The worked examples in this wiki were generated with the
-  test suite's stand-in backend, and each one says so.
+  capabilities (`Checker.measure`, sampling, join snippets, filter parsing) come with
+  FactLang 0.1.1 or later, installed with SchemaGuru; with an older FactLang, `measure()`
+  reports diagnostic `SG304` instead of measuring. `schemaguru doctor` shows which FactLang
+  capabilities are present. The worked examples in this wiki were generated with the test
+  suite's stand-in backend (reproducible byte for byte), and each one says so.
 - **Server mode and the Postgres store are optional extras.** `schemaguru serve` (extra `server`) and
   `PostgresStore` (extra `postgres-store`) are for shared deployments; see [[Server]] and [[Store]].
 

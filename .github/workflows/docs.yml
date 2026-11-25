@@ -24,8 +24,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # Until FactLang 0.1.0 is on PyPI, install it from git first.
-      - run: pip install "factlang @ git+https://github.com/rupakc/factlang@main"
       - name: Build the wheel and install it
         run: |
           pip install build

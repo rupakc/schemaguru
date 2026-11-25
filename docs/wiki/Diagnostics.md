@@ -161,7 +161,7 @@ holds the same list, and a test keeps that file equal to the codes the source em
 
 | You see | Usually means | Do |
 |---|---|---|
-| `SG304` | FactLang lacks `Checker.measure` (before FactLang 0.1.0) or no connector | upgrade FactLang; meanwhile overlays, scoping and rendering work |
+| `SG304` | the installed FactLang lacks `Checker.measure`, or there is no connector | upgrade FactLang; meanwhile overlays, scoping and rendering work |
 | `SG301` | one probe is estimated over `max_bytes_per_probe` | raise the cap for that run, or let [[Sampling]] apply |
 | `SG302` | the run's byte total is spent | the rest is queued; run again later or raise `max_bytes_total` |
 | `SG203` | an overlay names a table the store does not have | crawl first, check the name, or remove the entry |

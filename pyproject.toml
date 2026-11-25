@@ -23,7 +23,7 @@ classifiers = [
   "Topic :: Database",
   "Typing :: Typed",
 ]
-dependencies = ["factlang>=0.1,<0.2", "PyYAML>=6"]
+dependencies = ["factlang>=0.1.1,<0.2", "PyYAML>=6"]
 
 [project.optional-dependencies]
 bigquery = ["google-cloud-bigquery>=3"]
@@ -150,11 +150,6 @@ omit = [
   "src/schemaguru/agent/adapters/*",
   "src/schemaguru/draft/providers/anthropic.py",
   "src/schemaguru/draft/providers/openai_compat.py",
-  # TODO(Task 25): remove these three FactLang seam omissions. They cannot run before
-  # FactLang ships the capabilities they call; Task 25 lifts the skips and this omission.
-  "src/schemaguru/measure/flbridge.py",
-  "src/schemaguru/catalog/executor.py",
-  "src/schemaguru/render/fragments.py",
 ]
 
 [tool.coverage.report]

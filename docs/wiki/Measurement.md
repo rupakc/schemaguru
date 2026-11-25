@@ -111,7 +111,7 @@ guru.measure(all=True, budget=sg.Budget(max_bytes_total=2 << 30))
 ## Results and failures
 
 Real output of `guru.measure(all=True)` on the shop fixture (2026-11-24; numbers from the test
-suite's stand-in backend, because FactLang 0.1.0's `Checker.measure` is not released yet):
+suite's stand-in backend, which computes them with plain SQL on the same warehouse):
 
 ```text
 MeasureReport(measured_tables=[...14 tables...], facts_written=121, over_budget=[], errors=[],

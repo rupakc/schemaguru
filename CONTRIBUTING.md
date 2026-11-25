@@ -7,14 +7,13 @@ and agents alike.
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
-pip install "factlang @ git+https://github.com/rupakc/factlang@main"   # until FactLang 0.1.0 is on PyPI
-pip install -e ".[dev]"
+pip install -e ".[dev]"   # FactLang (factlang>=0.1.1,<0.2) comes from PyPI
 ```
 
 ## Checks (all blocking in CI)
 
 ```bash
-pytest
+pytest -m "not integration and not live and not benchmark" --cov
 ruff check
 ruff format --check
 mypy --strict src

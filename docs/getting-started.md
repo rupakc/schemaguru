@@ -14,8 +14,8 @@ pip install 'schemaguru[duckdb]'
 
 SchemaGuru needs Python 3.10+. Its only required dependencies are FactLang and PyYAML; every
 warehouse driver, LLM provider and agent framework is an optional extra (see the
-[install matrix](index.md#install)). Until FactLang 0.1.0 is on PyPI, install it from git
-first: `pip install "factlang @ git+https://github.com/rupakc/factlang@main"`.
+[install matrix](index.md#install)). FactLang (`factlang>=0.1.1,<0.2`) is installed from PyPI
+with it.
 
 `schemaguru doctor` checks the installation. When the installed FactLang lacks a capability
 SchemaGuru uses (measurement, cost estimates, sampling, composite joins, metadata SQL), its
@@ -33,8 +33,8 @@ print(guru)
 
 `Guru.connect` opens the URL through FactLang's `connect()` when it is installed, and
 otherwise opens `duckdb://` URLs with the DuckDB driver itself (read-only: SchemaGuru never
-writes to a warehouse, and a mistyped path does not create a file). Other warehouses need
-FactLang's `connect()` (FactLang 0.1.0); without it the URL fails with `SG106`.
+writes to a warehouse, and a mistyped path does not create a file). Other warehouses open
+through FactLang's `connect()` (installed with SchemaGuru) and the warehouse's driver extra.
 
 * **The store.** Knowledge lives in one SQLite file, by default
   `./.schemaguru/<name>.db` (`name="default"`). Pass `store=` to put it elsewhere.
@@ -80,9 +80,10 @@ Measurement runs read-only FactLang probes within a budget (default: 1 GiB per p
 per run). Small tables are measured exactly; tables above 50 GiB (or 500M rows) are sampled
 and their numbers are labelled as estimates ([Sampling](guide/sampling.md)).
 
-!!! warning "Until FactLang 0.1.0"
-    With a FactLang that lacks `Checker.measure`, `measure()` writes nothing and returns
-    `SG304` in `report.errors`. Everything else keeps working on catalog knowledge.
+!!! note "Measurement needs FactLang's `Checker.measure`"
+    SchemaGuru requires FactLang 0.1.1 or later, which provides it. With a FactLang build that
+    lacks it, `measure()` writes nothing and returns `SG304` in `report.errors`; everything
+    else keeps working on catalog knowledge.
 
 ## Add what people know
 

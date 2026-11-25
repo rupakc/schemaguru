@@ -8,8 +8,7 @@ authoritative rules are the same as in `CLAUDE.md`; this file repeats them for t
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
-pip install "factlang @ git+https://github.com/rupakc/factlang@main"   # until FactLang 0.1.0 is on PyPI
-pip install -e ".[dev]"
+pip install -e ".[dev]"   # FactLang (factlang>=0.1.1,<0.2) comes from PyPI
 pytest -m "not integration and not live and not benchmark" --cov
 ruff check
 ruff format --check
@@ -20,7 +19,7 @@ mypy --strict src
 
 - Package `schemaguru`, `src/` layout, version `0.1.0` in `src/schemaguru/__about__.py`.
 - Python `>=3.10`; CI matrix 3.10, 3.11, 3.12, 3.13 × ubuntu, macos, windows.
-- Runtime dependencies exactly: `factlang>=0.1,<0.2`, `PyYAML>=6`. Everything else is an extra imported lazily inside functions. Until FactLang 0.1.0 is on PyPI, CI and dev install `factlang @ git+https://github.com/rupakc/factlang@main` (pyproject dependency stays `factlang>=0.1,<0.2`; CI pre-installs from git).
+- Runtime dependencies exactly: `factlang>=0.1.1,<0.2`, `PyYAML>=6`. Everything else is an extra imported lazily inside functions. FactLang is installed from PyPI everywhere (CI, docs, dev).
 - **FactLang seam:** only `src/schemaguru/measure/flbridge.py`, `src/schemaguru/catalog/executor.py` and `src/schemaguru/render/fragments.py` import `factlang`; everything else uses SchemaGuru types. Enforced by `tests/architecture/test_layers.py::test_factlang_seam`.
 - **SchemaGuru never writes measurement SQL** (spec §5.2). The only SQL in `src/` is catalog-metadata SQL in `catalog/readers/*.py`, with bind parameters for every value.
 - Layer rule spec §5.1; `mypy --strict src`, `ruff check`, `ruff format --check` blocking.
@@ -123,4 +122,4 @@ Checks that LLM sample values are masked by default, raw only on explicit opt-in
 Each wiki page opens with a three-line summary and ends with see-also links. Examples use only the generic shop domain. Never mentions any originating company, product or dataset.
 
 ### release-engineer
-Runs the full gate, checks the version in `__about__.py` and the changelog, builds with `python -m build`, runs `twine check`, and hands the owner the exact tag and publishing steps.
+Runs the full gate, checks the version in `__about__.py` and the changelog, builds with `python -m build`, runs `twine check`, and hands the owner the exact tag. Pushing a `v<version>` tag runs `.github/workflows/release.yml`: it checks the tag equals `__version__`, builds and `twine check`s, publishes to PyPI by Trusted Publishing (environment `pypi`, no token) and creates the GitHub Release with the built files and generated notes. Never create or push a tag without the owner.

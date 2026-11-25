@@ -103,9 +103,10 @@ no usable measured join touches shop.orders, shop.customers (broken joins are re
 Each path can render a `FROM ... JOIN ... ON ...` snippet in the warehouse's dialect, including
 casts for cross-family keys, all columns of composite keys and each table's effective
 soft-delete predicate, through FactLang's `fl.sql.render_join`. The snippet is advisory text for
-the agent; SchemaGuru never executes it. When the installed FactLang lacks `render_join` (true
-before FactLang 0.1.0), no snippet is offered (info `SG501`) and the join keys above are what the
-agent gets. That is why the examples on this page show keys and no SQL.
+the agent; SchemaGuru never executes it. When the installed FactLang lacks `render_join`, or
+the Guru has no dialect, no snippet is offered (info `SG501`) and the join keys above are what the
+agent gets. The examples on this page were generated without a dialect, so they show keys and
+no SQL.
 
 ## See also
 

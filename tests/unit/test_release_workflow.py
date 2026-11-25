@@ -6,6 +6,7 @@ whose ``__init__`` needs dependencies the job does not install.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -31,10 +32,16 @@ def test_version_command_does_not_import_the_package() -> None:
 
 def test_version_command_runs_without_dependencies() -> None:
     # -I: isolated mode, no site env vars; cwd = repo root as in the job.
+    # Windows cannot start a process without SYSTEMROOT (and COMSPEC).
+    env: dict[str, str] = {}
+    if os.name == "nt":
+        for key in ("SYSTEMROOT", "COMSPEC"):
+            if key in os.environ:
+                env[key] = os.environ[key]
     result = subprocess.run(
         [sys.executable, "-I", "-c", _version_command()],
         cwd=ROOT,
-        env={},
+        env=env,
         capture_output=True,
         text=True,
         check=False,

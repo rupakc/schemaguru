@@ -20,8 +20,13 @@ Properties:
   Concurrent readers in the same process are safe; measurement writes go through the same
   connection.
 - **Full-text search** with SQLite FTS5 (BM25 over table name tokens, column names, comments,
-  descriptions and use cases). If your Python's SQLite lacks FTS5, search falls back to a slower
-  `LIKE` scan and diagnostic `SG701` is recorded. `schemaguru doctor` tells you which you have.
+  descriptions, use cases and the glossary terms mapped to the table). If your Python's SQLite
+  lacks FTS5, search falls back to a slower `LIKE` scan and diagnostic `SG701` is recorded.
+  `schemaguru doctor` tells you which you have. The store remembers which of the two last wrote
+  its index and rebuilds the index when that changes; a read-only store whose index is empty
+  warns `SG706` (open it read-write once to rebuild it).
+- **Transactions** nest: an inner `transaction()` is a savepoint, so an exception that leaves it
+  undoes only its own writes.
 - **Migrations** are numbered SQL files in `store/migrations/` (`0001_initial.sql`,
   `0002_scope.sql`), applied on open. The store records its schema version; opening a store
   written by a newer SchemaGuru with an older one is refused with `SG702`, so an old library can

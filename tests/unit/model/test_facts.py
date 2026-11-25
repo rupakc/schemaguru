@@ -221,3 +221,45 @@ def test_missing_identity_field_raises() -> None:
     a = Fact.make(FactKind.FRESHNESS, table, {"column": None}, Provenance.CATALOG, Status.OBSERVED)
     b = Fact.make(FactKind.FRESHNESS, table, {"column": "x"}, Provenance.CATALOG, Status.OBSERVED)
     assert a.id != b.id
+
+
+def test_from_dict_rejects_tampered_id() -> None:
+    f = Fact.make(
+        FactKind.NULL_RATE, ORD, {"rate": 0.1}, Provenance.MEASURED, Status.OBSERVED,
+        method="exact", observed_at=NOW,
+    )  # fmt: skip
+    assert Fact.from_dict(f.to_dict()) == f
+    tampered = {**f.to_dict(), "id": "sha256:" + "0" * 64}
+    with pytest.raises(ValueError, match="fact id mismatch"):
+        Fact.from_dict(tampered)
+    # an id is not a free label: a different identity under the same id is refused too
+    moved = {**f.to_dict(), "subject": CUS.to_dict()}
+    with pytest.raises(ValueError, match="fact id mismatch"):
+        Fact.from_dict(moved)
+
+
+def test_from_dict_accepts_z_suffix() -> None:
+    f = Fact.make(
+        FactKind.ROW_COUNT, ORD.table_ref(), {"rows": 1}, Provenance.CATALOG, Status.OBSERVED,
+        observed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )  # fmt: skip
+    d = {**f.to_dict(), "observed_at": "2026-01-01T00:00:00Z"}
+    assert Fact.from_dict(d).observed_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
+    from schemaguru.model.structure import Table
+
+    t = Table(ORD.table_ref(), "table", created_at=NOW)
+    td = {**t.to_dict(), "created_at": "2026-11-24T00:00:00Z"}
+    assert Table.from_dict(td).created_at == NOW
+
+
+def test_subject_key_in_model() -> None:
+    import importlib
+
+    import schemaguru.model as model
+
+    diff_mod = importlib.import_module("schemaguru.knowledge.diff")
+
+    assert model.subject_key(ORD) == "shop.orders.customer_id"
+    assert model.subject_key(JOIN) == JOIN.identity_key()
+    assert diff_mod.subject_key is model.subject_key  # the old import path still works
+    assert "subject_key" in model.__all__

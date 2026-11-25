@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import typing
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, TypeVar
@@ -18,6 +18,36 @@ from schemaguru.errors import ConfigError
 def _check(name: str, value: object, allowed: tuple[str, ...]) -> None:
     if value not in allowed:
         raise ConfigError(f"{name}: {value!r} is not one of {list(allowed)}")
+
+
+class _ReadOnlyMap(Mapping[str, str]):
+    """A read-only copy of a mapping, for a frozen config field (item assignment raises
+    ``TypeError``). Unlike ``MappingProxyType`` it pickles and deep-copies."""
+
+    __slots__ = ("_data",)
+
+    def __init__(self, data: Mapping[str, str]) -> None:
+        self._data = dict(data)
+
+    def __getitem__(self, key: str) -> str:
+        return self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __eq__(self, other: object) -> bool:
+        return dict(self._data) == other if isinstance(other, Mapping) else NotImplemented
+
+    __hash__ = None  # type: ignore[assignment]  # equal to a dict, so unhashable like one
+
+    def __repr__(self) -> str:
+        return repr(self._data)
+
+    def __reduce__(self) -> tuple[type[_ReadOnlyMap], tuple[dict[str, str]]]:
+        return (_ReadOnlyMap, (self._data,))
 
 
 @dataclass(frozen=True)
@@ -48,6 +78,8 @@ class SamplingConfig:
     design_effect: float = 2.0
 
     def __post_init__(self) -> None:
+        # read-only and detached from the caller's dict: a frozen config never changes under you
+        object.__setattr__(self, "per_glob", _ReadOnlyMap(self.per_glob))
         _check("sampling.llm_values", self.llm_values, ("masked", "raw", "none"))
         _check("sampling.measurement", self.measurement, ("auto", "off", "force"))
 

@@ -18,3 +18,11 @@ def require_aware(dt: datetime) -> datetime:
 def to_iso(dt: datetime) -> str:
     """Fixed-width UTC text (``2026-11-24T00:00:00.000000Z``) that sorts chronologically."""
     return require_aware(dt).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def parse_iso(text: str) -> datetime:
+    """A stored ISO-8601 timestamp; a trailing ``Z`` means UTC on every Python (3.10's
+    ``datetime.fromisoformat`` rejects it)."""
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    return datetime.fromisoformat(text)

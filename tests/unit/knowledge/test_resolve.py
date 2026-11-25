@@ -1,4 +1,7 @@
+import re
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -133,6 +136,13 @@ def test_all_measured_retained_worst_warns() -> None:
     assert old_bad.id == new_ok.id
     eff = resolve([new_ok, old_bad], now=NOW, ttl_days=14)[("JOIN", j1.identity_key())]
     assert eff.observed is not None and eff.observed.observed_at == new_ok.observed_at
+    assert eff.contradictions == ()  # the older contradiction was re-measured away
+    # the other way round, the newest (worst) measurement warns, with its time and value
+    new_bad = replace(old_bad, observed_at=_ago(0))
+    eff = resolve([new_ok, new_bad], now=NOW, ttl_days=14)[("JOIN", j1.identity_key())]
+    assert eff.contradictions == (
+        f'measured contradiction at {_ago(0).isoformat()}: {{"match_rate":0.2}}',
+    )
     # same id (identity ()): the re-measure supersedes; distinct ids are all kept.
     other = Fact.make(
         FactKind.NULL_RATE,
@@ -155,6 +165,11 @@ def test_all_measured_retained_worst_warns() -> None:
     e2 = resolve([other, other2], now=NOW, ttl_days=14)[_key(FactKind.NULL_RATE, STATUS)]
     assert e2.observed is not None and e2.observed.value["rate"] == 0.1
     assert len(e2.all) == 1  # same id: newest re-measure replaces
+    assert e2.contradictions == ()
+    worst = resolve([replace(other, observed_at=_ago(0)), other2], now=NOW, ttl_days=14)
+    assert worst[_key(FactKind.NULL_RATE, STATUS)].contradictions == (
+        f'measured contradiction at {_ago(0).isoformat()}: {{"rate":0.9}}',
+    )
 
 
 def test_distinct_measured_all_retained_and_worst_warns() -> None:
@@ -455,7 +470,8 @@ def test_newest_error_is_a_warning_never_the_pivot() -> None:
     assert any("over_budget" in m for m in eff.contradictions)
     by_id = {f.id: f for f in eff.all}
     assert by_id[good.id].status is Status.OBSERVED  # the error superseded nothing
-    assert by_id[older.id].status is Status.ESTIMATED  # sampled facts keep their status
+    # the older sample is superseded by the newer exact measurement, like an exact one would be
+    assert by_id[older.id].status is Status.STALE
     # an error older than the good measurement no longer warns
     old_err = Fact.make(
         FactKind.NULL_RATE, col, {"rate": None, "reason": "probe_error"}, Provenance.MEASURED,
@@ -506,3 +522,63 @@ def test_values_with_different_split_do_not_supersede() -> None:
     eff = resolve([bad, ok], now=NOW, ttl_days=14)[_key(FactKind.VALUES, STATUS)]
     assert next(f for f in eff.all if f.id == bad.id).status is Status.CONTRADICTED
     assert len(eff.contradictions) == 1
+
+
+def test_estimated_goes_stale(tmp_path: Path) -> None:
+    def est(days: float) -> Fact:
+        return Fact.make(
+            FactKind.NULL_RATE, STATUS, {"rate": 0.25}, Provenance.MEASURED, Status.ESTIMATED,
+            method="sampled:system:0.01:7", observed_at=_ago(days),
+        )  # fmt: skip
+
+    fresh = resolve([est(3)], now=NOW, ttl_days=14)[_key(FactKind.NULL_RATE, STATUS)]
+    assert fresh.primary is not None and fresh.primary.status is Status.ESTIMATED
+    old = resolve([est(30)], now=NOW, ttl_days=14)[_key(FactKind.NULL_RATE, STATUS)]
+    assert old.primary is not None and old.primary.status is Status.STALE
+    # a stale estimate still renders as an estimate, never as an exact-looking number
+    from schemaguru.model.detail import DetailLevel
+    from schemaguru.render import collect, get_profile
+    from tests.golden.shop_knowledge import CONFIG, shop_store, t
+
+    later = datetime(2026, 12, 24, 12, tzinfo=timezone.utc)  # 34 days after the measurements
+    with shop_store(tmp_path / "shop.db") as s:
+        text = get_profile("agent").render_table(
+            collect(s, t("events"), later, CONFIG), DetailLevel.FULL
+        )
+    assert re.search(r"null ≈ 0% \(sampled 1%", text), text
+    assert "distinct ≥ 190 (sampled 1%, lower bound)" in text
+
+
+def test_superseded_estimate_stale() -> None:
+    sample = _nr("email", Status.ESTIMATED, 3, method="sampled:1%")
+    exact = _nr("email", Status.OBSERVED, 1)
+    eff = _eff_nr(sample, exact)
+    assert next(f for f in eff.all if f.id == sample.id).status is Status.STALE
+    assert eff.observed is not None and eff.observed.id == exact.id
+    # a sample newer than the exact pivot is not superseded and stays an estimate
+    newer = _nr("email", Status.ESTIMATED, 0, method="sampled:1%")
+    eff = _eff_nr(newer, exact)
+    assert next(f for f in eff.all if f.id == newer.id).status is Status.ESTIMATED
+
+
+def test_sampled_extra_seen_exactly() -> None:
+    exp = Fact.make(
+        FactKind.VALUES, STATUS, {"values": ["a"], "case_sensitive": True, "split": None},
+        Provenance.HUMAN, Status.UNVERIFIED,
+    )  # fmt: skip
+
+    def obs(status: Status, method: str, days: float, items: list[tuple[str, int]]) -> Fact:
+        return Fact.make(
+            FactKind.VALUES, STATUS,
+            {"case_sensitive": True, "split": None,
+             "observed": [{"value": v, "count": n} for v, n in items]},
+            Provenance.MEASURED, status, method=method, observed_at=_ago(days),
+        )  # fmt: skip
+
+    exact = obs(Status.OBSERVED, "exact", 3, [("a", 1), ("z", 4)])
+    sample = obs(Status.ESTIMATED, "sampled:1%", 1, [("z", 2), ("q", 1)])
+    for facts in ([exp, exact, sample], [sample, exact, exp]):
+        eff = resolve(facts, now=NOW, ttl_days=14)[_key(FactKind.VALUES, STATUS)]
+        (msg,) = eff.contradictions
+        # z: seen by the sample AND by the exact measurement -> not marked [sampled]
+        assert msg == "declared values a - observed also: z (4 rows), q (1 rows) [sampled]"

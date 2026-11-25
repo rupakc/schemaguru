@@ -3,7 +3,7 @@
 from schemaguru.model.chains import Chain, FilterStep, NoteStep, Step
 from schemaguru.model.evidence import Evidence
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
-from schemaguru.model.joins import JOIN_VALUE_KEYS, JoinRef, join_verdict, support
+from schemaguru.model.joins import JOIN_VALUE_KEYS, JoinRef, join_verdict, subject_key, support
 from schemaguru.model.kinds import FactKind, KindSpec, get_kind, register_fact_kind
 from schemaguru.model.refs import ObjectRef, WarehouseId
 
@@ -26,5 +26,6 @@ __all__ = [
     "get_kind",
     "join_verdict",
     "register_fact_kind",
+    "subject_key",
     "support",
 ]

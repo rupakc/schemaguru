@@ -10,9 +10,9 @@ from fnmatch import fnmatchcase
 from typing import Any
 
 from schemaguru._util.hashing import stable_hash
-from schemaguru._util.timeutil import require_aware
+from schemaguru._util.timeutil import parse_iso, require_aware
 from schemaguru.model.evidence import Evidence
-from schemaguru.model.joins import JoinRef
+from schemaguru.model.joins import JoinRef, subject_key
 from schemaguru.model.kinds import KindSpec, get_kind
 from schemaguru.model.refs import ObjectRef
 
@@ -58,6 +58,23 @@ def method_class(method: str | None, status: Status | None = None) -> str:
     if status is Status.ERROR:
         return "error"
     return "sampled" if (method or "").startswith("sampled:") else "exact"
+
+
+def _fact_id(
+    kind: KindSpec,
+    subject: ObjectRef | JoinRef,
+    value: Mapping[str, Any],
+    provenance: Provenance,
+    status: Status,
+    method: str | None,
+) -> str:
+    ident: list[Any] = [kind.name, subject_key(subject), provenance.value]
+    ident.append(_value_identity(kind, value))
+    if provenance is Provenance.MEASURED:
+        # Exact and sampled measurements of one subject coexist: a newer sample must never
+        # overwrite an older exact number in the store (spec 8.5: never compare methods).
+        ident.append(method_class(method, status))
+    return stable_hash(ident)
 
 
 @dataclass(frozen=True)
@@ -118,15 +135,7 @@ class Fact:
     ) -> Fact:
         """Build a fact; the id is always computed (never supplied)."""
         spec = get_kind(kind) if isinstance(kind, str) else kind
-        subject_key = (
-            subject.identity_key() if isinstance(subject, JoinRef) else subject.canonical()
-        )
-        ident: list[Any] = [spec.name, subject_key, provenance.value, _value_identity(spec, value)]
-        if provenance is Provenance.MEASURED:
-            # Exact and sampled measurements of one subject coexist: a newer sample must never
-            # overwrite an older exact number in the store (spec 8.5: never compare methods).
-            ident.append(method_class(method, status))
-        fid = stable_hash(ident)
+        fid = _fact_id(spec, subject, value, provenance, status, method)
         return cls(
             fid, spec, subject, value, provenance, status, method, evidence, source,
             observed_at, snapshot_id,
@@ -153,23 +162,35 @@ class Fact:
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> Fact:
+        """The fact ``d`` describes. The id is recomputed, never trusted: a stored id that does
+        not match the fact's identity raises ``ValueError("fact id mismatch ...")``."""
         subj = d["subject"]
         subject: ObjectRef | JoinRef = (
             JoinRef.from_dict(subj) if "left" in subj else ObjectRef.from_dict(subj)
         )
         at = d.get("observed_at")
         ev = d.get("evidence")
+        kind = get_kind(d["kind"])
+        value = dict(d["value"])
+        provenance, status = Provenance(d["provenance"]), Status(d["status"])
+        method = d.get("method")
+        fid = _fact_id(kind, subject, value, provenance, status, method)
+        if d["id"] != fid:
+            raise ValueError(
+                f"fact id mismatch: stored {d['id']!r}, but the {kind.name} fact on "
+                f"{subject_key(subject)} has id {fid!r}"
+            )
         return cls(
-            id=d["id"],
-            kind=get_kind(d["kind"]),
+            id=fid,
+            kind=kind,
             subject=subject,
-            value=dict(d["value"]),
-            provenance=Provenance(d["provenance"]),
-            status=Status(d["status"]),
-            method=d.get("method"),
+            value=value,
+            provenance=provenance,
+            status=status,
+            method=method,
             evidence=None if ev is None else Evidence.from_dict(ev),
             source=d.get("source"),
-            observed_at=None if at is None else datetime.fromisoformat(at),
+            observed_at=None if at is None else parse_iso(at),
             snapshot_id=d.get("snapshot_id"),
         )
 

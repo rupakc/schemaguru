@@ -397,7 +397,7 @@ def test_hazard_paths_render_truthfully(tmp_path: Path) -> None:
     assert "newest started_at: 2026-11-19, age 1.5 days (measured 2026-11-20)" in sessions
     assert "40% of values look like UUID" in sessions
     assert "  live rows: (name <> '') (human, unchecked)" in accounts
-    assert "→ shop.customers.email (draft candidate, not measured)" in accounts
+    assert "→ shop.customers.email (candidate, not measured) (draft)" in accounts
     assert "FRESH started_at max=2026-11-19 measured 2026-11-20" in verifier
     assert "PK session_id NOT unique see warning" in verifier
 
@@ -549,3 +549,61 @@ def test_catalog_row_count_is_labelled_catalog_stats(tmp_path: Path) -> None:
     (line,) = [ln for ln in text.splitlines() if ln.strip().endswith("rows (catalog stats)")]
     assert line.strip() == "10,000 rows (catalog stats)"
     assert "rows (measured" not in text
+
+
+def test_draft_error_marked_draft(tmp_path: Path) -> None:
+    from schemaguru.model.joins import JOIN_VALUE_KEYS
+
+    F = FactKind
+    tab = "products"
+
+    def d(kind: Any, subject: Any, value: dict[str, Any], status: Status) -> Fact:
+        return Fact.make(kind, subject, {**value, "reason": "planted reason"}, Provenance.DRAFTED,
+                         status, source="llm:test-model", observed_at=DRAFTED_AT)  # fmt: skip
+
+    def drafts(status: Status) -> list[Fact]:
+        return [
+            d(F.DESCRIPTION, c(tab, "name"), {"text": "planted column text"}, status),
+            d(F.USE_CASES, t(tab), {"questions": ["planted question"]}, status),
+            d(F.PITFALL, t(tab), {"rule": "planted rule", "fix": "x", "severity": "warn"}, status),
+            d(F.SOFT_DELETE, t(tab), {"predicate": "planted_flag IS NULL"}, status),
+            d(F.TYPE_NOTE, c(tab, "name"), {"stored_as": "VARCHAR", "means": "planted"}, status),
+            d(F.PII, c(tab, "name"), {"category": "planted_pii", "detector": "llm"}, status),
+            d(F.JOIN, j("products.name", "customers.customer_id"),
+              {**{k: None for k in JOIN_VALUE_KEYS}, "candidate": True}, status),
+        ]  # fmt: skip
+
+    markers = ("planted", "customers.customer_id")
+    seen = 0
+    for status in (Status.ERROR, Status.UNMEASURABLE):
+        with shop_store(tmp_path / f"{status.value}.db", [*shop_facts(), *drafts(status)]) as s:
+            k = collect(s, t(tab), NOW, CONFIG)
+            for profile in ("agent", "planner", "verifier", "router"):
+                for line in get_profile(profile).render_table(k, DetailLevel.FULL).splitlines():
+                    if any(m in line for m in markers):
+                        seen += 1
+                        assert "(draft)" in line, (status, profile, line)
+    assert seen >= 14  # negative control: the planted drafts are rendered
+
+
+def test_unknown_age_marked(tmp_path: Path) -> None:
+    """A measured or catalog fact with no ``observed_at`` is never judged stale (its age is
+    unknown, base spec 4.4), and the view says so instead of implying it is current."""
+    from schemaguru.knowledge.resolve import resolve
+
+    orders = t("orders")
+    undated = [
+        Fact.make(FactKind.ROW_COUNT, orders, {"rows": 10_000}, Provenance.MEASURED,
+                  Status.OBSERVED, method="exact"),
+        Fact.make(FactKind.ROW_COUNT, t("customers"), {"rows": 500}, Provenance.CATALOG,
+                  Status.OBSERVED),
+    ]  # fmt: skip
+    eff = resolve(undated, now=NOW, ttl_days=CONFIG.fact_ttl_days)
+    assert {e.primary.status for e in eff.values() if e.primary} == {Status.OBSERVED}
+    kept = [f for f in shop_facts() if f.kind is not FactKind.ROW_COUNT]
+    with shop_store(tmp_path / "shop.db", [*kept, *undated]) as s:
+        text = AGENT.render_table(collect(s, orders, NOW, CONFIG), DetailLevel.FULL)
+        cust = AGENT.render_table(collect(s, t("customers"), NOW, CONFIG), DetailLevel.FULL)
+    assert "10,000 rows (measured, observed: date unknown)" in text
+    assert "rows (catalog stats, observed: date unknown)" in cust
+    assert "stale" not in next(ln for ln in text.splitlines() if "10,000 rows" in ln)

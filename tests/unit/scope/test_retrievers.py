@@ -124,8 +124,9 @@ def test_glossary_maps_tables(shop: SQLiteStore) -> None:
     gmv = refs(r.search("gmv by week", k=3))
     assert gmv[0] == "order_items"  # no text hit at all: the metric alone brings it in
     assert r.search("ghost", k=3) == []
-    # partial term ("churned" alone) does not fire the glossary entry
-    assert "events" not in refs(r.search("churned", k=4))
+    # partial term ("churned" alone) does not fire the glossary entry: the store's own text
+    # match on the indexed term (spec 7.2) is all there is, no glossary boost on top
+    assert r.search("churned", k=4) == shop.search("churned", 4 * r.oversample)[:4]
 
 
 class Fixed:

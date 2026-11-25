@@ -67,3 +67,28 @@ def test_diff_value_compare_is_type_insensitive_after_roundtrip() -> None:
 def test_diff_order_deterministic() -> None:
     x = [_nr(0.1), _nr(0.2)]
     assert diff([], x) == diff([], list(reversed(x)))
+
+
+def test_unrun_checks_not_removed() -> None:
+    nr = _nr(0.1)
+    rows = Fact.make(FactKind.ROW_COUNT, TBL, {"rows": 3}, Provenance.CATALOG, Status.OBSERVED)
+    desc = Fact.make(
+        FactKind.DESCRIPTION, TBL, {"text": "orders"}, Provenance.HUMAN, Status.UNVERIFIED
+    )
+    before = [nr, rows, desc]
+    # without checks_run every vanished fact is a removal (0.1.0 behaviour)
+    assert {c.before.id for c in diff(before, []) if c.before} == {nr.id, rows.id, desc.id}
+    # a check that did not run says nothing about its facts: never "removed"
+    got = diff(before, [], checks_run=frozenset())
+    assert [(c.kind.name, c.change) for c in got] == [("DESCRIPTION", "removed")]
+    got = diff(before, [], checks_run=frozenset({"NULL_RATE", "carried:ROW_COUNT"}))
+    assert {c.kind.name for c in got} == {"DESCRIPTION", "NULL_RATE"}
+    got = diff(before, [], checks_run=frozenset({"CATALOG"}))
+    assert {c.kind.name for c in got} == {"DESCRIPTION", "ROW_COUNT"}
+    # additions and value changes are reported whatever ran
+    nr2 = _nr(0.4)
+    got = diff([nr], [nr2, rows], checks_run=frozenset())
+    assert [(c.kind.name, c.change) for c in got] == [
+        ("NULL_RATE", "value"),
+        ("ROW_COUNT", "added"),
+    ]

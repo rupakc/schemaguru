@@ -27,10 +27,8 @@ def store(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SQLiteStore]:
         yield s
 
 
-@pytest.mark.parametrize("profile", PROFILES)
-@pytest.mark.parametrize("qi", range(len(QUESTIONS)))
-def test_golden_view(store: SQLiteStore, profile: str, qi: int) -> None:
-    question = QUESTIONS[qi]
+def golden_view(store: SQLiteStore, profile: str, question: str) -> str:
+    """The view of ``question`` under ``profile`` with the golden settings (budget, scope)."""
     counter = CharTokenCounter()
     graph = shop_graph(store)
     renderer = ViewRenderer(store, now=NOW, cfg=CONFIG, profile=profile, graph=graph)
@@ -53,7 +51,13 @@ def test_golden_view(store: SQLiteStore, profile: str, qi: int) -> None:
     )
     assert view.tokens <= BUDGET
     assert not view.diagnostics
-    assert_golden(f"{profile}__q{qi + 1}.txt", view.text)
+    return view.text
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+@pytest.mark.parametrize("qi", range(len(QUESTIONS)))
+def test_golden_view(store: SQLiteStore, profile: str, qi: int) -> None:
+    assert_golden(f"{profile}__q{qi + 1}.txt", golden_view(store, profile, QUESTIONS[qi]))
 
 
 @pytest.mark.parametrize("profile", PROFILES)

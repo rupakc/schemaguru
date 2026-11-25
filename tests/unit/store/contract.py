@@ -340,14 +340,14 @@ def test_decimal_and_datetime_values_roundtrip(store: Any, tmp_path: Path) -> No
     store.put_facts([f])
     (got,) = store.facts_for([tref("orders")], None)
     assert got.id == f.id
-    # canonical encoding: Decimal -> its string, aware datetime -> UTC ISO text, numbers intact
-    assert got.value == {"rows": "12.50", "at": NOW.isoformat(), "n": 3}
+    # canonical encoding: Decimal -> its normalised text, aware datetime -> UTC ISO text
+    assert got.value == {"rows": "12.5", "at": NOW.isoformat(), "n": 3}
     store.snapshot()
     from schemaguru.store.export import export_json
 
     out = tmp_path / "e.json"
     export_json(store, out)
-    assert b'"rows":"12.50"' in out.read_bytes()
+    assert b'"rows":"12.5"' in out.read_bytes()
 
 
 def _desc(ref: ObjectRef, text: str) -> Fact:
@@ -410,3 +410,117 @@ def test_embeddings_reject_empty(store: Any) -> None:
     store.upsert_tables([Table(tref("orders"), "table")])
     with pytest.raises(ValueError, match="empty"):
         store.embeddings_put("m", [(tref("orders"), "h", [])])
+
+
+def _raw(store: Any, sql: str, params: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
+    """Raw rows through the backend's own query helper (``?`` placeholders on both)."""
+    if type(store).__name__ == "PostgresStore":
+        sql = sql.replace("?", "%s")
+    return [tuple(r) for r in store._q(sql, params)]
+
+
+def test_nested_transaction_savepoint(store: Any) -> None:
+    with store.transaction():
+        store.upsert_tables([tbl("outer_before")])
+        with pytest.raises(RuntimeError), store.transaction():
+            store.upsert_tables([tbl("inner")])
+            store.put_facts([_desc(tref("outer_before"), "inner words")])
+            raise RuntimeError("inner block fails")
+        store.upsert_tables([tbl("outer_after")])
+    assert store.table(tref("outer_before")) is not None
+    assert store.table(tref("outer_after")) is not None
+    assert store.table(tref("inner")) is None  # only the inner block's writes rolled back
+    assert store.facts_for([tref("outer_before")], None) == []
+    assert store.search("inner", 5) == []
+    # three levels: the middle one fails, the innermost (already released) goes with it
+    with store.transaction():
+        with pytest.raises(ValueError), store.transaction():
+            with store.transaction():
+                store.upsert_tables([tbl("deepest")])
+            raise ValueError("middle fails")
+        store.upsert_tables([tbl("top")])
+    assert store.table(tref("deepest")) is None and store.table(tref("top")) is not None
+
+
+def test_reindex_on_subject_change(store: Any) -> None:
+    # a column of shop.orders and the catalog-qualified table shop.orders.status share one
+    # canonical key, so the same fact id can move between the two tables
+    column = ObjectRef(None, "shop", "orders", "status")
+    table = ObjectRef("shop", "orders", "status")
+    store.upsert_tables([tbl("orders"), Table(table, "table")])
+    first = _desc(column, "zebra crossing")
+    moved = _desc(table, "zebra crossing")
+    assert first.id == moved.id and first.subject != moved.subject
+    store.put_facts([first])
+    assert [r for r, _ in store.search("zebra", 5)] == [tref("orders")]
+    store.put_facts([moved])
+    assert [r for r, _ in store.search("zebra", 5)] == [table]  # the old table's doc follows
+
+
+def test_iter_schemas_streams(store: Any) -> None:
+    store.upsert_schemas([Schema(None, f"s{i:04d}") for i in range(2500)])
+    sizes: list[int] = []
+    real = store._q
+
+    def spy(*a: Any, **kw: Any) -> Any:
+        rows = real(*a, **kw)
+        sizes.append(len(rows))
+        return rows
+
+    store._q = spy
+    try:
+        it = store.iter_schemas()
+        first = next(it)
+        store.upsert_schemas([Schema(None, "zzz")])  # writes interleave with an open iterator
+        names = [first.name, *(s.name for s in it)]
+    finally:
+        del store._q
+    assert names[:2] == ["s0000", "s0001"] and len(names) >= 2500
+    assert names == sorted(names) and len(set(names)) == len(names)
+    assert sizes and max(sizes) < 2500  # read in pages, never one fetch of every row
+
+
+def test_glossary_terms_searchable(store: Any) -> None:
+    store.upsert_tables([tbl("orders"), tbl("payments"), tbl("misc")])
+    glob = ObjectRef(None, None, "_global")
+    term = Fact.make(
+        FactKind.GLOSSARY, glob,
+        {"term": "net revenue", "definition": "paid minus refunded",
+         "maps_to": [tref("orders").to_dict(), tref("payments").to_dict()]},
+        Provenance.HUMAN, Status.UNVERIFIED,
+    )  # fmt: skip
+    assert store.search("net revenue", 5) == []
+    store.put_facts([term])
+    assert sorted(r.table for r, _ in store.search("net revenue", 5)) == ["orders", "payments"]
+    assert store.search("revenue", 5)[0][0] in (tref("orders"), tref("payments"))
+    # the term stays searchable when the table is re-crawled, and goes when the term goes
+    store.upsert_columns(tref("orders"), [col("orders", "id", 1)])
+    assert "orders" in [r.table for r, _ in store.search("revenue", 5)]
+    store.delete_facts([term.id])
+    assert store.search("revenue", 5) == []
+
+
+def test_snapshot_bytes_deterministic(store: Any) -> None:
+    from decimal import Decimal
+
+    from schemaguru._util.hashing import canonical_json
+
+    facts = [
+        Fact.make(FactKind.ROW_COUNT, tref(f"t{i}"), {"rows": i, "n": Decimal("1.50"),
+                  "note": "café ✓", "nested": {"b": 1, "a": [2.5, None]}},
+                  Provenance.CATALOG, Status.OBSERVED, observed_at=NOW)
+        for i in range(30)
+    ] + [_desc(tref("orders"), "Bestellungen für Kunden")]  # fmt: skip
+    rows: list[list[tuple[Any, ...]]] = []
+    for order in (facts, list(reversed(facts)), facts[7:] + facts[:7]):
+        store.delete_facts([f.id for f in facts])
+        for f in order:
+            store.put_facts([f])
+        sid = store.snapshot()
+        got = _raw(store, "SELECT fact_id, data FROM snapshot_facts WHERE snapshot_id=? "
+                   "ORDER BY fact_id", (sid,))  # fmt: skip
+        assert {f.snapshot_id for f in store.snapshot_facts(sid)} == {sid}
+        rows.append(got)
+    assert rows[0] == rows[1] == rows[2]  # the same facts give the same bytes, whatever order
+    by_id = {f.id: f for f in facts}
+    assert [d for _, d in rows[0]] == [canonical_json(by_id[i].to_dict()) for i, _ in rows[0]]

@@ -39,6 +39,20 @@ def test_newer_store_refused(tmp_path: Path) -> None:
         SQLiteStore(p, readonly=True)
 
 
+def test_newer_store_refused_has_code(tmp_path: Path) -> None:
+    p = tmp_path / "n.db"
+    SQLiteStore(p).close()
+    con = sqlite3.connect(p)
+    con.execute("INSERT INTO schema_version(version, applied_at) VALUES (999, 'x')")
+    con.commit()
+    con.close()
+    for readonly in (False, True):
+        with pytest.raises(StoreVersionError) as info:
+            SQLiteStore(p, readonly=readonly)
+        assert info.value.code == "SG702"
+    assert StoreVersionError("x").code == "SG702"
+
+
 def test_readonly_on_unmigrated_refused(tmp_path: Path) -> None:
     p = tmp_path / "e.db"
     sqlite3.connect(p).close()

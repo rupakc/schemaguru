@@ -308,6 +308,11 @@ def join_number(m: Fact, key: str) -> str:
 # ----- fact phrases ------------------------------------------------------------------------
 
 
+def is_estimate(f: Fact) -> bool:
+    """A sampled number: ESTIMATED, or any later status (STALE, CONTRADICTED) of a sample."""
+    return f.status is _S.ESTIMATED or method_class(f.method) == "sampled"
+
+
 def is_draft(f: Fact) -> bool:
     """Drafted and not VERIFIED: tagged ``(draft)`` whatever the status (ERROR included)."""
     return f.provenance is _P.DRAFTED and f.status is not _S.VERIFIED
@@ -320,8 +325,9 @@ def tag(f: Fact) -> str:
 def phrase(f: Fact) -> str:
     """How a fact is known, in words: never "verified" unless a claim passed."""
     d = day(f.observed_at)
-    at = f" {d}" if d else ""
     s, p = f.status, f.provenance
+    # a measured or catalog fact of unknown age is never stale (base spec 4.4): say so
+    at = f" {d}" if d else (", observed: date unknown" if p in (_P.MEASURED, _P.CATALOG) else "")
     if is_draft(f):
         return "draft"
     if s is _S.VERIFIED:
@@ -634,7 +640,8 @@ class _Analyser:
         how = phrase(f)
         text = f"live rows: {_wrap(self.pred(pred))} ({how})"
         self.a.live_rows = text
-        self.keyed(None, LITE_UP, f"SOFT_DELETE {_wrap(self.pred(pred))} {how.replace(', ', ' ')}")
+        word = "(draft)" if is_draft(f) else how.replace(", ", " ")
+        self.keyed(None, LITE_UP, f"SOFT_DELETE {_wrap(self.pred(pred))} {word}")
         markers = f.value.get("marker_columns")
         names = [str(m) for m in markers] if isinstance(markers, list) else []
         present = [n for n in names if n in self.cols]
@@ -866,13 +873,13 @@ class _Analyser:
             if u is not None:
                 how = f"unmeasurable: {self.reason(u)}"
             elif p.provenance is _P.DRAFTED:
-                how = "draft candidate, not measured"
+                how = "candidate, not measured"
             else:
                 how = f"{phrase(p)}, not measured"
             self.used.append(p)
-            text = f"→ {target}{cast} ({how})"
-            self.a.keys.append(f"{lead} → {target} ({how})")
-            self.keyed(col, LITE_UP, f"JOIN {lcols} -> {target} {how.replace(', ', ' ')}")
+            text = f"→ {target}{cast} ({how}){tag(p)}"
+            self.a.keys.append(f"{lead} → {target} ({how}){tag(p)}")
+            self.keyed(col, LITE_UP, f"JOIN {lcols} -> {target} {how.replace(', ', ' ')}{tag(p)}")
         else:
             self.used.append(m)
             v = m.value
@@ -929,7 +936,7 @@ class _Analyser:
             cat = pii.primary.value.get("category")
             # first on the line: the agent learns the column is personal before any value
             self.cols[name].notes.insert(0, (LITE_UP, f"PII {cat}{tag(pii.primary)}"))
-            self.keyed(name, LITE_UP, f"PII {ident(name)} category={cat}")
+            self.keyed(name, LITE_UP, f"PII {ident(name)} category={cat}{tag(pii.primary)}")
             self.used.append(pii.primary)
         if name not in self.markers:
             self.values(name)
@@ -938,7 +945,7 @@ class _Analyser:
         dist = pick_measured(k.get("DISTINCT", name))
         if dist is not None:
             est = dist.value.get("estimate")
-            if dist.status is _S.ESTIMATED and isinstance(est, Mapping):
+            if is_estimate(dist) and isinstance(est, Mapping):
                 self.note(
                     name, FULL_ONLY, "distinct " + estimate_text(est, fraction_of(dist), rate=False)
                 )
@@ -1157,7 +1164,7 @@ class _Analyser:
         rate = m.value.get("rate")
         est = m.value.get("estimate")
         q = ident(name)
-        if m.status is _S.ESTIMATED and isinstance(est, Mapping):
+        if is_estimate(m) and isinstance(est, Mapping):
             self.note(name, FULL_ONLY, "null " + estimate_text(est, fraction_of(m)))
             self.used.append(m)
         elif m.value.get("dead") is True:
@@ -1179,7 +1186,7 @@ class _Analyser:
             means, rate = self.free(str(m.value.get("means"))), m.value.get("rate")
             est = m.value.get("estimate")
             self.used.append(m)
-            if m.status is _S.ESTIMATED and isinstance(est, Mapping):
+            if is_estimate(m) and isinstance(est, Mapping):
                 self.note(
                     name,
                     STANDARD_UP,
@@ -1266,7 +1273,7 @@ class _Analyser:
             self.a.hedges.append(
                 "unmeasured: nothing here has been measured yet; figures are declared or drafted"
             )
-        if any(f.status is _S.ESTIMATED for f in self.used):
+        if any(is_estimate(f) for f in self.used):
             self.a.hedges.append("sampled table: ≈ and ≥ figures are estimates from a sample")
 
     def provenance(self) -> None:
@@ -1283,7 +1290,7 @@ class _Analyser:
                 d
                 for f in used
                 if f.provenance is _P.MEASURED
-                and f.status is not _S.ESTIMATED
+                and not is_estimate(f)
                 and (d := day(f.observed_at)) is not None
             }
         )
@@ -1292,11 +1299,7 @@ class _Analyser:
                 f"measured {days[0]}" if len(days) == 1 else f"measured {days[0]} to {days[-1]}"
             )
         fracs = sorted(
-            {
-                fr
-                for f in used
-                if f.status is _S.ESTIMATED and (fr := _fraction(fraction_of(f))) is not None
-            }
+            {fr for f in used if is_estimate(f) and (fr := _fraction(fraction_of(f))) is not None}
         )
         if fracs:
             parts.append("sampled " + ", ".join(pct(fr) for fr in fracs))

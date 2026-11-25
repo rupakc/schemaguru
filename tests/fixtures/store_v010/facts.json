@@ -1,0 +1,1609 @@
+[
+ {
+  "evidence": null,
+  "id": "sha256:096ba238f92ebe6f79e768dc415190d5467a9bd00f98d62ca001f761fe0ef1bb",
+  "kind": "NEVER_QUERY",
+  "method": null,
+  "observed_at": null,
+  "provenance": "HUMAN",
+  "snapshot_id": null,
+  "source": "overlay:schemaguru.yaml",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "broken_child"
+  },
+  "value": {
+   "reason": "abandoned migration copy"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:147c6c1bf32c66d648e977ce04a049c7fa542acd9287ad07c1ce8fe0147fafea",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "accounts"
+  },
+  "value": {
+   "rows": 100
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:1b533e89c1f019cd11f5d75f1d762b478b307736cb01ffb46448ba35e8e81444",
+  "kind": "DESCRIPTION",
+  "method": null,
+  "observed_at": "2026-11-19T08:00:00+00:00",
+  "provenance": "DRAFTED",
+  "snapshot_id": null,
+  "source": "llm:test-model",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "events"
+  },
+  "value": {
+   "text": "One row per tracked user event."
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:1c2caaf63cb0a06095816c11fca113ee677c7a2e40adb0acb2b2ea8a7de5b781",
+  "kind": "JOIN",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "cast_to": null,
+   "left": [
+    {
+     "catalog": null,
+     "column": "parent_id",
+     "schema": "shop",
+     "table": "ref_child"
+    }
+   ],
+   "right": [
+    {
+     "catalog": null,
+     "column": "id",
+     "schema": "shop",
+     "table": "ref_parent"
+    }
+   ]
+  },
+  "value": {
+   "cardinality": "N:1",
+   "coverage": 0.003,
+   "distinct_left": 3,
+   "distinct_right": 1000,
+   "fan_in": 1000.0,
+   "left_non_null": 3000,
+   "match_rate": 1.0,
+   "matched": 3,
+   "max_left_per_key": 1000,
+   "max_right_per_key": 1,
+   "row_match_rate": 1.0,
+   "verdict": "OK"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:2084c3c5887e5c4a6bc710700cea2e67ddb5653884ac07ff2d0f81865b62ee11",
+  "kind": "PRIMARY_KEY",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "order_items"
+  },
+  "value": {
+   "columns": [
+    "order_id",
+    "line_no"
+   ],
+   "complete": true,
+   "distinct_keys": 20000,
+   "duplicate_keys": 0,
+   "max_rows_per_key": 1,
+   "non_null": 20000,
+   "row_count": 20000,
+   "unique": true
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:27afa947b5a141e8c4094b96b1a58112a4630e6ac5908172338de92dae3d2a30",
+  "kind": "DESCRIPTION",
+  "method": null,
+  "observed_at": null,
+  "provenance": "HUMAN",
+  "snapshot_id": null,
+  "source": "overlay:schemaguru.yaml",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "customers"
+  },
+  "value": {
+   "text": "One row per customer account holder."
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:2b98076225ef1da70f88bdf5f8b5408b72b6c8953d4257b646922dadd118cce2",
+  "kind": "USE_CASES",
+  "method": null,
+  "observed_at": null,
+  "provenance": "HUMAN",
+  "snapshot_id": null,
+  "source": "overlay:schemaguru.yaml",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "customers"
+  },
+  "value": {
+   "questions": [
+    "customer segments",
+    "retention"
+   ]
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:2f0c2fc99d1769c82075ce0f24196f03a303a7744989cc22da34d3ded2aa42a6",
+  "kind": "PITFALL",
+  "method": null,
+  "observed_at": null,
+  "provenance": "HUMAN",
+  "snapshot_id": null,
+  "source": "overlay:schemaguru.yaml",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "orders"
+  },
+  "value": {
+   "fix": "SUM(amount) nets refunds; count paid orders by status instead",
+   "rule": "a refund is a second payment row with a negative amount",
+   "severity": "critical"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:3017755b1c6de7fc87317d669ee263177bd39fcdfd8eb373bd56e142cb326cec",
+  "kind": "PRIMARY_KEY",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "orders"
+  },
+  "value": {
+   "columns": [
+    "order_id"
+   ],
+   "complete": true,
+   "distinct_keys": 10000,
+   "duplicate_keys": 0,
+   "max_rows_per_key": 1,
+   "non_null": 10000,
+   "row_count": 10000,
+   "unique": true
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:39aa926f7b37a1aa7325fdea77b0e18b68e2a9ce04ebe91151e67625bff15b65",
+  "kind": "PITFALL",
+  "method": null,
+  "observed_at": null,
+  "provenance": "HUMAN",
+  "snapshot_id": null,
+  "source": "overlay:schemaguru.yaml",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": null,
+   "table": "_global"
+  },
+  "value": {
+   "fix": null,
+   "rule": "timestamps stored as text are UTC",
+   "severity": "warn"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:39c19aa84282b79114d7a857fc95ad5536c3abfda356799eaaa07276c537a3af",
+  "kind": "NULL_RATE",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": "phone",
+   "schema": "shop",
+   "table": "customers"
+  },
+  "value": {
+   "dead": false,
+   "non_null": 900,
+   "rate": 0.1,
+   "rows": 1000
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:3c356efd1fb37927dd1d46de1b6c0303a1ec3a1400332f2c338204505040229f",
+  "kind": "JOIN",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "cast_to": null,
+   "left": [
+    {
+     "catalog": null,
+     "column": "parent_id",
+     "schema": "shop",
+     "table": "broken_child"
+    }
+   ],
+   "right": [
+    {
+     "catalog": null,
+     "column": "id",
+     "schema": "shop",
+     "table": "ref_parent"
+    }
+   ]
+  },
+  "value": {
+   "cardinality": "1:1",
+   "coverage": 0.01,
+   "distinct_left": 1000,
+   "distinct_right": 1000,
+   "fan_in": 1.0,
+   "left_non_null": 1000,
+   "match_rate": 0.01,
+   "matched": 10,
+   "max_left_per_key": 1,
+   "max_right_per_key": 1,
+   "row_match_rate": 0.01,
+   "verdict": "BROKEN"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:3c77323c8afcaaa0b5a0a3bb1769c266d34802abad32222d59d3721deefaa6e5",
+  "kind": "JOIN",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "cast_to": null,
+   "left": [
+    {
+     "catalog": null,
+     "column": "session_id",
+     "schema": "shop",
+     "table": "events"
+    }
+   ],
+   "right": [
+    {
+     "catalog": null,
+     "column": "order_id",
+     "schema": "shop",
+     "table": "orders"
+    }
+   ]
+  },
+  "value": {
+   "cardinality": null,
+   "coverage": 0.0,
+   "distinct_left": 5000,
+   "distinct_right": 10000,
+   "fan_in": 4.0,
+   "left_non_null": 20000,
+   "match_rate": 0.0,
+   "matched": 0,
+   "max_left_per_key": 4,
+   "max_right_per_key": null,
+   "row_match_rate": 0.0,
+   "verdict": "BROKEN"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:42a8a2285eec733b2b340266dcdc328ce5495029529af7d73f18833731d3362f",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "ref_child"
+  },
+  "value": {
+   "rows": 3000
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:44d0b6f68ec2e125d560eb359efb3b63fcb0397c28bc202d74679aa63f78bb79",
+  "kind": "VALUES",
+  "method": "sampled:system:0.01:42",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "ESTIMATED",
+  "subject": {
+   "catalog": null,
+   "column": "kind",
+   "schema": "shop",
+   "table": "events"
+  },
+  "value": {
+   "approximate": true,
+   "case_sensitive": true,
+   "complete": false,
+   "distinct": 3,
+   "fraction": "0.01",
+   "non_null": 200,
+   "observed": [
+    {
+     "count": 67,
+     "value": "buy"
+    },
+    {
+     "count": 67,
+     "value": "click"
+    },
+    {
+     "count": 66,
+     "value": "view"
+    }
+   ],
+   "sampled_rows": 200,
+   "seen_in_sample": true,
+   "split": null
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:4b9948cc8412a07f817821222e5af18709fd933d9f629ee8cd0255b7b715efbe",
+  "kind": "TYPE_NOTE",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": "created_at",
+   "schema": "shop",
+   "table": "orders"
+  },
+  "value": {
+   "holds": true,
+   "matching": 10000,
+   "means": "ISO-8601 timestamp",
+   "non_null": 10000,
+   "pattern": "____-__-__T%Z",
+   "rate": 1.0,
+   "stored_as": "string"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:4d6d0fb4cd8f06dc431300c1171b60dbed33e3d10e7e7e4c5e7d89da5ca23308",
+  "kind": "VALUES",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": "deleted",
+   "schema": "shop",
+   "table": "orders"
+  },
+  "value": {
+   "case_sensitive": true,
+   "distinct": 1,
+   "non_null": 300,
+   "observed": [
+    {
+     "count": 300,
+     "value": true
+    }
+   ],
+   "split": null
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:5372e9609e58fe9d6dae5961a45b2f85683785937e01c3c95f6c49a92e388e0a",
+  "kind": "JOIN",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "cast_to": null,
+   "left": [
+    {
+     "catalog": null,
+     "column": "session_id",
+     "schema": "shop",
+     "table": "events"
+    }
+   ],
+   "right": [
+    {
+     "catalog": null,
+     "column": "session_id",
+     "schema": "shop",
+     "table": "sessions"
+    }
+   ]
+  },
+  "value": {
+   "cardinality": "N:1",
+   "coverage": 1.0,
+   "distinct_left": 5000,
+   "distinct_right": 5000,
+   "fan_in": 4.0,
+   "left_non_null": 20000,
+   "match_rate": 1.0,
+   "matched": 5000,
+   "max_left_per_key": 4,
+   "max_right_per_key": 1,
+   "row_match_rate": 1.0,
+   "verdict": "OK"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:58245ecb8a0cf9917dd0dba65cdcaa8b163b63e4486bbd6f9678c2d0ada9fa32",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "events"
+  },
+  "value": {
+   "rows": 20000
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:5e3e8776e19b8607ea83d438cdcfceb32ad3bca7fe3c23c62bb01da294a1e020",
+  "kind": "VALUES",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": "status",
+   "schema": "shop",
+   "table": "orders"
+  },
+  "value": {
+   "case_sensitive": true,
+   "distinct": 4,
+   "non_null": 10000,
+   "observed": [
+    {
+     "count": 5000,
+     "value": "paid"
+    },
+    {
+     "count": 2588,
+     "value": "refunded"
+    },
+    {
+     "count": 2000,
+     "value": "cancelled"
+    },
+    {
+     "count": 412,
+     "value": "PAID"
+    }
+   ],
+   "split": null
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:6736611a94e3122bfe52e2a785bdaf167dd0d207ada468b3f9a2c1be2c1c0302",
+  "kind": "JOIN",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "cast_to": null,
+   "left": [
+    {
+     "catalog": null,
+     "column": "product_id",
+     "schema": "shop",
+     "table": "order_items"
+    }
+   ],
+   "right": [
+    {
+     "catalog": null,
+     "column": "product_id",
+     "schema": "shop",
+     "table": "products"
+    }
+   ]
+  },
+  "value": {
+   "cardinality": "N:1",
+   "coverage": 1.0,
+   "distinct_left": 200,
+   "distinct_right": 200,
+   "fan_in": 100.0,
+   "left_non_null": 20000,
+   "match_rate": 1.0,
+   "matched": 200,
+   "max_left_per_key": 200,
+   "max_right_per_key": 1,
+   "row_match_rate": 1.0,
+   "verdict": "OK"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:79e1fd9cae86d7c38d28516432a04a0a1a40e95df89436da7402a340c12e228a",
+  "kind": "ENTITY_TYPE",
+  "method": null,
+  "observed_at": "2026-11-19T08:00:00+00:00",
+  "provenance": "DRAFTED",
+  "snapshot_id": null,
+  "source": "llm:test-model",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "orders"
+  },
+  "value": {
+   "entity": "order",
+   "key": [
+    "order_id"
+   ]
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:7c1da059381d6f587ee157a7b2cfb2e31b5989dd37c1e4f8ae6aea9b4f4f9b2c",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "anon_enum_t"
+  },
+  "value": {
+   "rows": 10000
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:7ca735be3855f7f945a0b13e285dd297b3cfc84ce1230aec5faa52e4e0a36493",
+  "kind": "GLOSSARY",
+  "method": null,
+  "observed_at": null,
+  "provenance": "HUMAN",
+  "snapshot_id": null,
+  "source": "overlay:schemaguru.yaml",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": null,
+   "table": "_global"
+  },
+  "value": {
+   "definition": "sum of payments.amount over paid orders",
+   "maps_to": [
+    {
+     "catalog": null,
+     "column": null,
+     "schema": "shop",
+     "table": "orders"
+    },
+    {
+     "catalog": null,
+     "column": null,
+     "schema": "shop",
+     "table": "payments"
+    }
+   ],
+   "term": "revenue"
+  }
+ },
+ {
+  "evidence": {
+   "bytes_processed": null,
+   "claim_text": "drafted claim",
+   "dialect": null,
+   "duration_ms": null,
+   "params": [],
+   "raw": {},
+   "sample": null,
+   "sql": null,
+   "tier": null,
+   "verdict": "PASS"
+  },
+  "id": "sha256:7cc4b04ed3cdcee6afe7cd2f35a10bb131c50dc7d2ebddc08999611ccb0fb214",
+  "kind": "SOFT_DELETE",
+  "method": "exact",
+  "observed_at": "2026-11-19T08:00:00+00:00",
+  "provenance": "DRAFTED",
+  "snapshot_id": null,
+  "source": "llm:test-model",
+  "status": "VERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "orders"
+  },
+  "value": {
+   "marker_columns": [
+    "deleted"
+   ],
+   "predicate": "deleted IS NULL OR NOT deleted"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:808c1734155dc4b9f877afa5c1deec9c7bc08a1d1529ea43b08cfbaeecc8fdfe",
+  "kind": "DISTINCT",
+  "method": "sampled:system:0.01:42",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "ESTIMATED",
+  "subject": {
+   "catalog": null,
+   "column": "session_id",
+   "schema": "shop",
+   "table": "events"
+  },
+  "value": {
+   "approximate": true,
+   "distinct_keys": 190,
+   "estimate": {
+    "approximate": true,
+    "high": null,
+    "low": 190,
+    "lower_bound": true,
+    "method": "sample_lower_bound",
+    "value": 190
+   },
+   "fraction": "0.01",
+   "sampled_rows": 200
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:831c4c1320482cb054fce234b3e732de23e2ae697947f15bff04016fe928d2c5",
+  "kind": "VALUES",
+  "method": null,
+  "observed_at": null,
+  "provenance": "HUMAN",
+  "snapshot_id": null,
+  "source": "overlay:schemaguru.yaml",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": "status",
+   "schema": "shop",
+   "table": "orders"
+  },
+  "value": {
+   "case_sensitive": true,
+   "split": null,
+   "values": [
+    "paid",
+    "refunded",
+    "cancelled"
+   ]
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:86b40361c910ec0528e5d9413d55d90e5993b0726352d6f442fc89fb507d4868",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "sessions"
+  },
+  "value": {
+   "rows": 5000
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:91b63b76310608137c2a0a7619156577b844f56b2376487d705598583eb75300",
+  "kind": "USE_CASES",
+  "method": null,
+  "observed_at": "2026-11-19T08:00:00+00:00",
+  "provenance": "DRAFTED",
+  "snapshot_id": null,
+  "source": "llm:test-model",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "orders"
+  },
+  "value": {
+   "questions": [
+    "revenue",
+    "order volume",
+    "basket size"
+   ]
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:91c76355ccddcbc338a1c22c3c12e0d3554091b1262d45604791123d24be5fd4",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "orders"
+  },
+  "value": {
+   "rows": 10000
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:9337a0797c553aa49d39e251d54f9575dbdff9202d0afdfa6517bf3ce28aa4aa",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "order_items"
+  },
+  "value": {
+   "rows": 20000
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:9413cffb8dca1f30a4ad4c8f5a9999e3a2a4f56c2f3f6ba3bdfd273cb3aa85ed",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": null,
+  "status": "UNMEASURABLE",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "empty_t"
+  },
+  "value": {
+   "reason": "empty_table",
+   "rows": null
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:9474a8e80933cca818152f255bebe7ac7f05a193e7cb7a0d69d4a50c2b003a5d",
+  "kind": "NULL_RATE",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": "c",
+   "schema": "shop",
+   "table": "all_null_t"
+  },
+  "value": {
+   "dead": true,
+   "non_null": 0,
+   "rate": 1.0,
+   "rows": 100
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:9703452c8a20babc5016e1e2980bced60b9094813a3da0e952e0a797874229d7",
+  "kind": "VALUES",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": "segment",
+   "schema": "shop",
+   "table": "customers"
+  },
+  "value": {
+   "case_sensitive": true,
+   "distinct": 3,
+   "non_null": 1000,
+   "observed": [
+    {
+     "count": 334,
+     "value": "retail"
+    },
+    {
+     "count": 333,
+     "value": "wholesale"
+    },
+    {
+     "count": 333,
+     "value": "vip"
+    }
+   ],
+   "split": null
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:97c551caed6425c757ce3bd29bf59875618683e5a2f59a51b53dba9809703f42",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "all_null_t"
+  },
+  "value": {
+   "rows": 100
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:9a9e9b2d2c7e1dc2a6c0e04bec532ed71ed79b623b9a02dfc7c0245c66f67f9c",
+  "kind": "TYPE_NOTE",
+  "method": null,
+  "observed_at": null,
+  "provenance": "HUMAN",
+  "snapshot_id": null,
+  "source": "overlay:schemaguru.yaml",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": "started_at",
+   "schema": "shop",
+   "table": "sessions"
+  },
+  "value": {
+   "means": "UTC start",
+   "stored_as": null
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:a2af31bd8b8620c31fa272600cc93f19800204786d4ae6c9d459f6ac9861b615",
+  "kind": "PII",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": "email",
+   "schema": "shop",
+   "table": "customers"
+  },
+  "value": {
+   "category": "email",
+   "detector": "email"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:a59cc9367dfea0904e66eb8e72b01ee31ad662b874c21138a19a696e486bd24d",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "broken_child"
+  },
+  "value": {
+   "rows": 1000
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:a82922cd8999202f00cb1281c97d5c960f0817f3617c33e64b13b5f509fb3bd4",
+  "kind": "NULL_RATE",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": "deleted",
+   "schema": "shop",
+   "table": "orders"
+  },
+  "value": {
+   "dead": false,
+   "non_null": 300,
+   "rate": 0.97,
+   "rows": 10000
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:adea440b3c92cf52ea667b7b1437fe6cff50d769b6bdc0a047ffc41c0cd7042e",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-10-01T06:00:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "products"
+  },
+  "value": {
+   "rows": 200
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:b78c112c0e7bb0846ee2da80083e9015b2433b0ae190c31578cb5023181afa11",
+  "kind": "JOIN",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "cast_to": null,
+   "left": [
+    {
+     "catalog": null,
+     "column": "order_id",
+     "schema": "shop",
+     "table": "payments"
+    }
+   ],
+   "right": [
+    {
+     "catalog": null,
+     "column": "order_id",
+     "schema": "shop",
+     "table": "orders"
+    }
+   ]
+  },
+  "value": {
+   "cardinality": "1:1",
+   "coverage": 0.05,
+   "distinct_left": 500,
+   "distinct_right": 10000,
+   "fan_in": 1.0,
+   "left_non_null": 500,
+   "match_rate": 1.0,
+   "matched": 500,
+   "max_left_per_key": 1,
+   "max_right_per_key": 1,
+   "row_match_rate": 1.0,
+   "verdict": "OK"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:b7d3b1a3f657c025f2cadecbe6e17ee9d9be681ce926cff0e422476b05145c0f",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "payments"
+  },
+  "value": {
+   "rows": 500
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:bb6d70f3f11ec632db038c9c25996c0e1e8a1a1f11e4b71de1900c9a671f4f50",
+  "kind": "DESCRIPTION",
+  "method": null,
+  "observed_at": "2026-11-19T08:00:00+00:00",
+  "provenance": "DRAFTED",
+  "snapshot_id": null,
+  "source": "llm:test-model",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "orders"
+  },
+  "value": {
+   "text": "One row per order."
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:c0a61a67bf0e910b625f53892ab41078de5c64663337eb316675ee9ffcfa0489",
+  "kind": "DISTINCT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": "email",
+   "schema": "shop",
+   "table": "customers"
+  },
+  "value": {
+   "distinct_keys": 1000
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:c2482de9d8c4531671962d9971dbc9aa142f83046400302b05cec85280e1234e",
+  "kind": "DESCRIPTION",
+  "method": null,
+  "observed_at": null,
+  "provenance": "HUMAN",
+  "snapshot_id": null,
+  "source": "overlay:schemaguru.yaml",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "accounts"
+  },
+  "value": {
+   "text": "One row per business account."
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:c27b4b94513bdbe3aae758aefe8f2bdc45eee1f016b84bec7b266ff597107447",
+  "kind": "ROW_COUNT",
+  "method": null,
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "CATALOG",
+  "snapshot_id": null,
+  "source": "catalog_stats",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "big_t"
+  },
+  "value": {
+   "rows": 2000000
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:c49728bf6473660f91b2ec13443155a41dfece457f5276adfe05ebb343fb0977",
+  "kind": "JOIN",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "cast_to": null,
+   "left": [
+    {
+     "catalog": null,
+     "column": "customer_id",
+     "schema": "shop",
+     "table": "orders"
+    }
+   ],
+   "right": [
+    {
+     "catalog": null,
+     "column": "customer_id",
+     "schema": "shop",
+     "table": "customers"
+    }
+   ]
+  },
+  "value": {
+   "cardinality": "N:1",
+   "coverage": 1.0,
+   "distinct_left": 1020,
+   "distinct_right": 1000,
+   "fan_in": 9.803921568627452,
+   "left_non_null": 10000,
+   "match_rate": 0.9803921568627451,
+   "matched": 1000,
+   "max_left_per_key": 22,
+   "max_right_per_key": 1,
+   "row_match_rate": 0.998,
+   "verdict": "OK"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:d53113f765d3ccd1981aaab0db5849d34810e51b689174e54c6943ebf8f584fb",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "customers"
+  },
+  "value": {
+   "rows": 1000
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:d53b6433884734b624be4fe2d67fe6f451fbc90183f24f49b9fbb002fb6af333",
+  "kind": "DESCRIPTION",
+  "method": null,
+  "observed_at": "2026-11-19T08:00:00+00:00",
+  "provenance": "DRAFTED",
+  "snapshot_id": null,
+  "source": "llm:test-model",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": "status",
+   "schema": "shop",
+   "table": "orders"
+  },
+  "value": {
+   "text": "Order lifecycle state."
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:d95ca41c7b534c100ab03290cb5d02e8464231a5131403f4f11cddfd6fbcff64",
+  "kind": "JOIN",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "cast_to": null,
+   "left": [
+    {
+     "catalog": null,
+     "column": "account_id",
+     "schema": "shop",
+     "table": "orders"
+    }
+   ],
+   "right": [
+    {
+     "catalog": null,
+     "column": "account_id",
+     "schema": "shop",
+     "table": "accounts"
+    }
+   ]
+  },
+  "value": {
+   "cardinality": "N:1",
+   "coverage": 0.4,
+   "distinct_left": 40,
+   "distinct_right": 100,
+   "fan_in": 250.0,
+   "left_non_null": 10000,
+   "match_rate": 1.0,
+   "matched": 40,
+   "max_left_per_key": 250,
+   "max_right_per_key": 1,
+   "row_match_rate": 1.0,
+   "verdict": "OK"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:dee1cb4df275d2781af0a5216b327dff59d9adc6a6604e920c036d34701054f4",
+  "kind": "JOIN",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "cast_to": null,
+   "left": [
+    {
+     "catalog": null,
+     "column": "order_id",
+     "schema": "shop",
+     "table": "order_items"
+    }
+   ],
+   "right": [
+    {
+     "catalog": null,
+     "column": "order_id",
+     "schema": "shop",
+     "table": "orders"
+    }
+   ]
+  },
+  "value": {
+   "cardinality": "N:1",
+   "coverage": 1.0,
+   "distinct_left": 10000,
+   "distinct_right": 10000,
+   "fan_in": 2.0,
+   "left_non_null": 20000,
+   "match_rate": 1.0,
+   "matched": 10000,
+   "max_left_per_key": 2,
+   "max_right_per_key": 1,
+   "row_match_rate": 1.0,
+   "verdict": "OK"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:e2d850ae57a9ee54ca2170688e46557a2043974a27381df0f9d862892d933faa",
+  "kind": "DESCRIPTION",
+  "method": null,
+  "observed_at": "2026-11-19T08:00:00+00:00",
+  "provenance": "DRAFTED",
+  "snapshot_id": null,
+  "source": "llm:test-model",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "order_items"
+  },
+  "value": {
+   "text": "One row per order line."
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:e6356b83db6ec507285e694196bc3dceb87d9687ee6f7ba6cc0cf790ed4f863b",
+  "kind": "PRIMARY_KEY",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "customers"
+  },
+  "value": {
+   "columns": [
+    "customer_id"
+   ],
+   "complete": true,
+   "distinct_keys": 1000,
+   "duplicate_keys": 0,
+   "max_rows_per_key": 1,
+   "non_null": 1000,
+   "row_count": 1000,
+   "unique": true
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:eecbdf1a54b0c54ddef45635abe1d83f299c7a2275a0695e2c15f5cfe42a7259",
+  "kind": "NULL_RATE",
+  "method": "sampled:system:0.01:42",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "ESTIMATED",
+  "subject": {
+   "catalog": null,
+   "column": "account_id",
+   "schema": "shop",
+   "table": "events"
+  },
+  "value": {
+   "approximate": true,
+   "dead": false,
+   "estimate": {
+    "approximate": true,
+    "high": 0.03713,
+    "low": 0.0,
+    "lower_bound": false,
+    "method": "wilson95",
+    "value": 0.0
+   },
+   "fraction": "0.01",
+   "rate": 0.0,
+   "sampled_rows": 200
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:f1a19375475e8804aafd476ec55de27d800eb5772801470144048e25c9ff25d8",
+  "kind": "JOIN",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "cast_to": null,
+   "left": [
+    {
+     "catalog": null,
+     "column": "account_id",
+     "schema": "shop",
+     "table": "events"
+    }
+   ],
+   "right": [
+    {
+     "catalog": null,
+     "column": "account_id",
+     "schema": "shop",
+     "table": "accounts"
+    }
+   ]
+  },
+  "value": {
+   "cardinality": "N:1",
+   "coverage": 0.6,
+   "distinct_left": 60,
+   "distinct_right": 100,
+   "fan_in": 333.3333333333333,
+   "left_non_null": 20000,
+   "match_rate": 1.0,
+   "matched": 60,
+   "max_left_per_key": 334,
+   "max_right_per_key": 1,
+   "row_match_rate": 1.0,
+   "verdict": "OK"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:f2c120d98c4c7544a94c2386871280363b1fe1bb20623c33febb51f879128a0d",
+  "kind": "ENTITY_TYPE",
+  "method": null,
+  "observed_at": null,
+  "provenance": "HUMAN",
+  "snapshot_id": null,
+  "source": "overlay:schemaguru.yaml",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "accounts"
+  },
+  "value": {
+   "entity": "account"
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:f6bf24b077da41d4ceca9cad78cf9333eae485f2ea450409ab7d9eb3543afc85",
+  "kind": "DESCRIPTION",
+  "method": null,
+  "observed_at": null,
+  "provenance": "HUMAN",
+  "snapshot_id": null,
+  "source": "overlay:schemaguru.yaml",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "payments"
+  },
+  "value": {
+   "text": "One row per payment."
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:fa2170a449d16f83d2f3c6e5a0f8083cbff957ab1cbdcdc65002ce0320917ed6",
+  "kind": "ROW_COUNT",
+  "method": "exact",
+  "observed_at": "2026-11-20T09:30:00+00:00",
+  "provenance": "MEASURED",
+  "snapshot_id": null,
+  "source": "measure",
+  "status": "OBSERVED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "ref_parent"
+  },
+  "value": {
+   "rows": 1000
+  }
+ },
+ {
+  "evidence": null,
+  "id": "sha256:ff3a1dabe346d87b47a1d5f0b2fa0fb001016b0c4caced9a81908cd98a6cbb49",
+  "kind": "DESCRIPTION",
+  "method": null,
+  "observed_at": "2026-11-19T08:00:00+00:00",
+  "provenance": "DRAFTED",
+  "snapshot_id": null,
+  "source": "llm:test-model",
+  "status": "UNVERIFIED",
+  "subject": {
+   "catalog": null,
+   "column": null,
+   "schema": "shop",
+   "table": "products"
+  },
+  "value": {
+   "text": "Product catalogue."
+  }
+ }
+]

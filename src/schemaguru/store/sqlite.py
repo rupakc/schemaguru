@@ -20,18 +20,29 @@ from schemaguru._util.timeutil import to_iso, utcnow
 from schemaguru.diagnostics import CODES, Diagnostic, DiagnosticBag, Severity
 from schemaguru.errors import SchemaGuruError, StoreVersionError
 from schemaguru.model.facts import Fact
-from schemaguru.model.joins import JoinRef
+from schemaguru.model.joins import JoinRef, subject_key
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column, Constraint, Schema, Table
 from schemaguru.store import schema_sql
 from schemaguru.store.protocol import LedgerUnit
+from schemaguru.store.search_docs import (
+    GLOSSARY,
+    INDEXED_KINDS,
+    MEANING_KINDS,
+    doc_tables,
+    glossary_tables,
+    stored_doc_tables,
+    strings,
+)
 
 log = logging.getLogger("schemaguru.store")
 
 _PAGE = 1000
 _CHUNK = 500
-_MEANING_KINDS = ("DESCRIPTION", "USE_CASES", "ENTITY_TYPE", "PITFALL")
 _FTS_WEIGHTS = "0.0, 10.0, 3.0, 1.0"  # ref, name_tokens, columns, text
+# crawl_state key naming the search backend that last wrote the index ("fts5" or "like")
+SEARCH_BACKEND_KEY = "_search_backend"
+_EMPTY_INDEX = "the read-only store's search index is empty; open it read-write once to rebuild it"
 
 
 def _fts5_available(conn: sqlite3.Connection) -> bool:
@@ -44,25 +55,11 @@ def _fts5_available(conn: sqlite3.Connection) -> bool:
 
 
 _dumps = canonical_json
-
-
-def _subject_key(subject: ObjectRef | JoinRef) -> str:
-    return subject.identity_key() if isinstance(subject, JoinRef) else subject.canonical()
+_subject_key = subject_key
 
 
 def _table_from_key(key: str) -> ObjectRef:
     return ObjectRef.parse(key, has_column=False)
-
-
-def _strings(obj: Any) -> Iterator[str]:
-    if isinstance(obj, str):
-        yield obj
-    elif isinstance(obj, Mapping):
-        for v in obj.values():
-            yield from _strings(v)
-    elif isinstance(obj, (list, tuple)):
-        for v in obj:
-            yield from _strings(v)
 
 
 def _chunks(items: Sequence[str]) -> Iterator[Sequence[str]]:
@@ -172,7 +169,12 @@ class SQLiteStore:
             )
 
     def _setup_search(self) -> bool:
-        """Pick the search backend and make sure its index covers the stored tables."""
+        """Pick the search backend and make sure its index covers the stored tables.
+
+        The backend that last wrote the index is recorded (``SEARCH_BACKEND_KEY``): writes made
+        under the other backend never reached this one's index, so a switch rebuilds it. A
+        read-only store whose index is empty while it holds tables warns ``SG706``.
+        """
         if not _fts5_available(self._conn):
             self._warn_fallback()
             fts = False
@@ -188,19 +190,37 @@ class SQLiteStore:
                     self._conn.execute(schema_sql.FTS_DDL)
                     fts = True
         self._fts = fts
-        if not self.readonly:
-            self._rebuild_index_if_empty()
+        backend = "fts5" if fts else "like"
+        if self.readonly:
+            if self._index_empty():
+                self.diagnostics.add(
+                    Diagnostic("SG706", Severity.WARNING, _EMPTY_INDEX, location=self.path)
+                )
+                log.warning("SG706 %s", _EMPTY_INDEX)
+            return fts
+        recorded = (self.crawl_state_get(SEARCH_BACKEND_KEY) or {}).get("backend")
+        if recorded is not None and recorded != backend:
+            self._rebuild_index()  # written under the other backend since: stale
+        elif self._index_empty():
+            self._rebuild_index()  # e.g. a store built under the other backend before 0.2.0
+        if recorded != backend:
+            self.crawl_state_set(SEARCH_BACKEND_KEY, {"backend": backend})
         return fts
 
-    def _rebuild_index_if_empty(self) -> None:
-        """A store built under the other backend has tables but an empty index: reindex it."""
+    def _index_empty(self) -> bool:
+        """The store holds tables but the current backend's index holds no document."""
         index = "table_docs" if self._fts else "docs"
         with self._lock:
-            has_docs = self._conn.execute(f"SELECT 1 FROM {index} LIMIT 1").fetchone()
-            if has_docs or not self._conn.execute("SELECT 1 FROM tables LIMIT 1").fetchone():
-                return
+            if self._conn.execute(f"SELECT 1 FROM {index} LIMIT 1").fetchone():
+                return False
+            return bool(self._conn.execute("SELECT 1 FROM tables LIMIT 1").fetchone())
+
+    def _rebuild_index(self) -> None:
+        """Clear the current backend's index and reindex every table."""
+        index = "table_docs" if self._fts else "docs"
         with self.transaction():
-            for (key,) in self._conn.execute("SELECT ref FROM tables").fetchall():
+            self._conn.execute(f"DELETE FROM {index}")
+            for (key,) in self._conn.execute("SELECT ref FROM tables ORDER BY ref").fetchall():
                 self._reindex(key)
 
     def _warn_fallback(self, why: str = "") -> None:
@@ -211,13 +231,26 @@ class SQLiteStore:
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
+        """One write transaction. A nested call is a ``SAVEPOINT``: an exception that leaves the
+        nested block rolls back only that block's writes, and an outer block that catches it
+        can still commit its own. A failing ``COMMIT`` rolls the transaction back and re-raises,
+        so the next transaction starts clean."""
         if self.readonly:
             raise SchemaGuruError("the store was opened read-only")
         with self._lock:
             if self._depth:
+                name = f"sg_tx_{self._depth}"
+                self._conn.execute(f"SAVEPOINT {name}")
                 self._depth += 1
                 try:
                     yield
+                except BaseException:
+                    if self._conn.in_transaction:
+                        self._conn.execute(f"ROLLBACK TO {name}")
+                        self._conn.execute(f"RELEASE {name}")
+                    raise
+                else:
+                    self._conn.execute(f"RELEASE {name}")
                 finally:
                     self._depth -= 1
                 return
@@ -225,13 +258,21 @@ class SQLiteStore:
             self._depth = 1
             try:
                 yield
-            except BaseException:
-                self._conn.execute("ROLLBACK")
-                raise
-            else:
                 self._conn.execute("COMMIT")
+            except BaseException:
+                self._rollback()
+                raise
             finally:
                 self._depth = 0
+
+    def _rollback(self) -> None:
+        """Roll back whatever is open; a failing ROLLBACK never hides the original error."""
+        if not self._conn.in_transaction:
+            return
+        try:
+            self._conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            log.exception("ROLLBACK failed")
 
     def _q(self, sql: str, params: Sequence[Any] = ()) -> list[tuple[Any, ...]]:
         with self._lock:
@@ -248,8 +289,17 @@ class SQLiteStore:
             )
 
     def iter_schemas(self) -> Iterator[Schema]:
-        for (data,) in self._q("SELECT data FROM schemas ORDER BY key"):
-            yield Schema.from_dict(json.loads(data))
+        """Every schema in key order, read in pages of ``_PAGE`` (memory bounded by a page)."""
+        last = ""
+        while True:
+            rows = self._q(
+                "SELECT key, data FROM schemas WHERE key > ? ORDER BY key LIMIT ?", (last, _PAGE)
+            )
+            if not rows:
+                return
+            for _key, data in rows:
+                yield Schema.from_dict(json.loads(data))
+            last = rows[-1][0]
 
     def upsert_tables(self, items: Iterable[Table]) -> None:
         with self.transaction():
@@ -404,11 +454,20 @@ class SQLiteStore:
         with self.transaction():
             touched: set[str] = set()
             rows = []
+            indexed: list[str] = []
             for f in facts:
                 key = _subject_key(f.subject)
                 rows.append((f.id, f.kind.name, key, _dumps(f.to_dict())))
-                if f.kind.name in _MEANING_KINDS and isinstance(f.subject, ObjectRef):
-                    touched.add(f.subject.table_ref().canonical())
+                if f.kind.name in INDEXED_KINDS:
+                    touched |= doc_tables(f.kind.name, f.subject, f.value)
+                    indexed.append(f.id)
+            # a fact replaced under the same id may have fed other tables' docs (a subject that
+            # moved, a term that no longer maps there): those docs are rebuilt too
+            for chunk in _chunks(sorted(set(indexed))):
+                for (data,) in self._conn.execute(
+                    f"SELECT data FROM facts WHERE id IN ({_marks(len(chunk))})", list(chunk)
+                ):
+                    touched |= stored_doc_tables(data)
             self._conn.executemany(
                 "INSERT INTO facts(id, kind, subject_key, data) VALUES (?,?,?,?) "
                 "ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, "
@@ -428,10 +487,8 @@ class SQLiteStore:
             for chunk in _chunks(wanted):
                 marks = _marks(len(chunk))
                 for _, data in self._q(f"SELECT id, data FROM facts WHERE id IN ({marks})", chunk):
-                    f = Fact.from_dict(json.loads(data))
                     removed += 1
-                    if f.kind.name in _MEANING_KINDS and isinstance(f.subject, ObjectRef):
-                        touched.add(f.subject.table_ref().canonical())
+                    touched |= stored_doc_tables(data)
                 self._conn.execute(f"DELETE FROM facts WHERE id IN ({marks})", list(chunk))
             for key in sorted(touched):
                 self._reindex(key)
@@ -565,13 +622,22 @@ class SQLiteStore:
         # table-level and column-level meaning facts (column keys extend the table key by ".col")
         for (fdata,) in conn.execute(
             "SELECT data FROM facts WHERE subject_key >= ? AND subject_key < ? "
-            f"AND kind IN ({_marks(len(_MEANING_KINDS))})",
-            (key, key + "/", *_MEANING_KINDS),
+            f"AND kind IN ({_marks(len(MEANING_KINDS))})",
+            (key, key + "/", *MEANING_KINDS),
         ):
             fact = json.loads(fdata)
             subj = fact["subject"]
             if "table" in subj and ObjectRef.from_dict(subj).table_ref().canonical() == key:
-                text.extend(_strings(fact["value"]))
+                text.extend(strings(fact["value"]))
+        # glossary terms that map to this table (prefiltered on the table name's JSON text)
+        for (fdata,) in conn.execute(
+            "SELECT data FROM facts WHERE kind=? AND instr(data, ?) > 0 ORDER BY id",
+            (GLOSSARY, _dumps(ref.table)[1:-1]),
+        ):
+            fact = json.loads(fdata)
+            term = fact["value"].get("term")
+            if isinstance(term, str) and key in glossary_tables(fact["value"]):
+                text.append(term)
         name = " ".join(name_tokens(ref.table))
         cols = " ".join(col_tokens)
         body = " ".join(x for x in text if x)
@@ -632,10 +698,12 @@ class SQLiteStore:
             seq = cur.lastrowid
             sid = f"snap-{seq:06d}"
             self._conn.execute("UPDATE snapshots SET id=? WHERE seq=?", (sid, seq))
+            # the live rows' bytes, unchanged (the snapshot id is the row's own column), so a
+            # snapshot of the same facts is byte-identical whatever order they were written in
             self._conn.execute(
                 "INSERT INTO snapshot_facts(snapshot_id, fact_id, data) "
-                "SELECT ?, id, json_set(data, '$.snapshot_id', ?) FROM facts",
-                (sid, sid),
+                "SELECT ?, id, data FROM facts",
+                (sid,),
             )
             return sid
 
@@ -643,7 +711,7 @@ class SQLiteStore:
         rows = self._q(
             "SELECT data FROM snapshot_facts WHERE snapshot_id=? ORDER BY fact_id", (snapshot_id,)
         )
-        return [Fact.from_dict(json.loads(r[0])) for r in rows]
+        return [Fact.from_dict({**json.loads(r[0]), "snapshot_id": snapshot_id}) for r in rows]
 
     def snapshot_checks_run(self, snapshot_id: str) -> frozenset[str]:
         rows = self._q("SELECT checks_run FROM snapshots WHERE id=?", (snapshot_id,))

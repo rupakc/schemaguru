@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, get_args
 
-from schemaguru._util.timeutil import require_aware
+from schemaguru._util.timeutil import parse_iso, require_aware
 from schemaguru.model.refs import ObjectRef
 
 TableKind = Literal["table", "view", "materialized_view", "external", "other"]
@@ -19,7 +19,7 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 def _dt(text: str | None) -> datetime | None:
-    return None if text is None else datetime.fromisoformat(text)
+    return None if text is None else parse_iso(text)
 
 
 @dataclass(frozen=True)

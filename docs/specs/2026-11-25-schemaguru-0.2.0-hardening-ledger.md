@@ -74,33 +74,33 @@ Audited against `main` at `710e21f` (Task 1). Tasks 2–8 turn the `open` rows i
 | A4.16 | `bytes_billed_is_lower_bound` duck-typed | open | Task 6 |
 | A4.17 | fixture handlers match SQL by substring | open | Task 6 |
 | A4.18 | keyset paging vs collations | open | Task 6 |
-| A5.1 | `from_dict` trusts the stored id | open | Task 2 |
-| A5.2 | `stable_hash` Decimal / date / mixed-key normalisation | open | Task 2 |
-| A5.3 | py3.10 `'Z'` isoformat (`datetime.fromisoformat` in `Fact.from_dict`) | open | Task 2 |
+| A5.1 | `from_dict` trusts the stored id | fixed | test tests/unit/model/test_facts.py::test_from_dict_rejects_tampered_id |
+| A5.2 | `stable_hash` Decimal / date / mixed-key normalisation | fixed | test tests/property/test_model_props.py::test_stable_hash_normalises |
+| A5.3 | py3.10 `'Z'` isoformat (`datetime.fromisoformat` in `Fact.from_dict`) | fixed | test tests/unit/model/test_facts.py::test_from_dict_accepts_z_suffix |
 | A5.4 | Config env type coercion for tuple fields | already fixed | commit 0d87ec0 · test tests/unit/test_config.py::test_from_env_coerces_tuple_and_scalar_fields |
-| A5.5 | `per_glob` mutable in a frozen dataclass | open | Task 2 |
+| A5.5 | `per_glob` mutable in a frozen dataclass | fixed | test tests/unit/test_config.py::test_per_glob_immutable |
 | A5.6 | `_value_identity` must fail loudly on a missing identity field | already fixed | commit c1642f6 · test tests/unit/model/test_facts.py::test_missing_identity_field_raises |
 | A5.7 | `facts_for` kind filter in Python (push to SQL, index `(subject_key, kind)`) | already fixed | commit fb65b77 · test tests/unit/store/test_sqlite.py::test_facts_for_filters_kinds_in_sql |
-| A5.8 | nested transaction without SAVEPOINT | open | Task 2 |
-| A5.9 | stale search doc on subject change | open | Task 2 |
-| A5.10 | fixed `.tmp` export name | open | Task 2 |
-| A5.11 | `iter_schemas` fetchall | open | Task 2 |
-| A5.12 | a COMMIT failure resets the transaction depth | open | Task 2 |
-| A5.13 | glossary not in the store's search docs | open | Task 2 |
-| A5.14 | SG702 code only in the message text | open | Task 2 |
-| A5.15 | stale non-empty index after an A→B→A search-backend switch | open | Task 2 |
-| A5.16 | read-only store with empty `table_docs` gives no diagnostic | open | Task 2 |
-| A5.17 | no byte-equality test for `snapshot_facts` JSON | open | Task 2 |
-| A5.18 | two JSON encoders (`ensure_ascii` differs) | open | Task 2 |
-| A5.19 | MEASURED/CATALOG fact with `observed_at=None` treated as fresh | open | Task 2 |
-| A5.20 | ESTIMATED never STALE | open | Task 2 |
-| A5.21 | superseded ESTIMATED keeps ESTIMATED | open | Task 2 |
-| A5.22 | DRAFTED ERROR/UNMEASURABLE without the unverified marker | open | Task 2 |
-| A5.23 | `diff` vs `resolve` tie-break rules differ | open | Task 2 |
-| A5.24 | `diff` has no `checks_run` input | open | Task 2 |
-| A5.25 | `subject_key` helper belongs in `model/` | open | Task 2 |
-| A5.26 | `test_all_measured_retained_worst_warns` asserts nothing about warnings | open | Task 2 |
-| A5.27 | no test for a sampled extra also seen exactly | open | Task 2 |
+| A5.8 | nested transaction without SAVEPOINT | fixed | test tests/unit/store/contract.py::test_nested_transaction_savepoint |
+| A5.9 | stale search doc on subject change | fixed | test tests/unit/store/contract.py::test_reindex_on_subject_change |
+| A5.10 | fixed `.tmp` export name | fixed | test tests/unit/store/test_export.py::test_concurrent_exports_do_not_clash |
+| A5.11 | `iter_schemas` fetchall | fixed | test tests/unit/store/contract.py::test_iter_schemas_streams |
+| A5.12 | a COMMIT failure resets the transaction depth | fixed | test tests/unit/store/test_sqlite.py::test_commit_failure_recovers |
+| A5.13 | glossary not in the store's search docs | fixed | test tests/unit/store/contract.py::test_glossary_terms_searchable |
+| A5.14 | SG702 code only in the message text | fixed | test tests/unit/store/test_migrations.py::test_newer_store_refused_has_code |
+| A5.15 | stale non-empty index after an A→B→A search-backend switch | fixed | test tests/unit/store/test_sqlite.py::test_backend_switch_rebuilds_index |
+| A5.16 | read-only store with empty `table_docs` gives no diagnostic | fixed | test tests/unit/store/test_sqlite.py::test_readonly_empty_index_warns |
+| A5.17 | no byte-equality test for `snapshot_facts` JSON | fixed | test tests/unit/store/contract.py::test_snapshot_bytes_deterministic |
+| A5.18 | two JSON encoders (`ensure_ascii` differs) | fixed | test tests/unit/store/test_export.py::test_store_and_export_share_encoder |
+| A5.19 | MEASURED/CATALOG fact with `observed_at=None` treated as fresh | fixed | test tests/unit/render/test_table_block.py::test_unknown_age_marked |
+| A5.20 | ESTIMATED never STALE | fixed | test tests/unit/knowledge/test_resolve.py::test_estimated_goes_stale |
+| A5.21 | superseded ESTIMATED keeps ESTIMATED | fixed | test tests/unit/knowledge/test_resolve.py::test_superseded_estimate_stale |
+| A5.22 | DRAFTED ERROR/UNMEASURABLE without the unverified marker | fixed | test tests/unit/render/test_table_block.py::test_draft_error_marked_draft |
+| A5.23 | `diff` vs `resolve` tie-break rules differ | fixed | test tests/property/test_model_props.py::test_diff_resolve_same_tiebreak |
+| A5.24 | `diff` has no `checks_run` input | fixed | test tests/unit/knowledge/test_diff.py::test_unrun_checks_not_removed |
+| A5.25 | `subject_key` helper belongs in `model/` | fixed | test tests/unit/model/test_facts.py::test_subject_key_in_model |
+| A5.26 | `test_all_measured_retained_worst_warns` asserts nothing about warnings | fixed | test tests/unit/knowledge/test_resolve.py::test_all_measured_retained_worst_warns |
+| A5.27 | no test for a sampled extra also seen exactly | fixed | test tests/unit/knowledge/test_resolve.py::test_sampled_extra_seen_exactly |
 | A6.1 | waiver kind/subject not validated | open | Task 7 |
 | A6.2 | duplicate YAML keys not diagnosed (last one wins silently) | open | Task 7 |
 | A6.3 | glossary `maps_to` accepts column refs (now dropped as an unresolvable table, SG203 with a misleading message) | open | Task 7 |

@@ -13,7 +13,12 @@ class SchemaGuruError(Exception):
 
 
 class StoreVersionError(SchemaGuruError):
-    """A store was written by a newer (or unknown) schema version than this library supports."""
+    """A store was written by a newer (or unknown) schema version than this library supports.
+
+    ``code`` is the diagnostic code (``SG702``), so a caller need not parse the message.
+    """
+
+    code = "SG702"
 
 
 class AmbiguousNameError(SchemaGuruError):

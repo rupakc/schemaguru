@@ -6,7 +6,7 @@ Same model and contract as :class:`~schemaguru.store.sqlite.SQLiteStore`, so sev
 
 * **Connections**: a small bounded pool of psycopg 3 connections in autocommit mode. A
   :meth:`transaction` pins one connection to the calling thread; every write runs in one, and
-  nested transactions join the outer one (as in SQLite).
+  a nested transaction is a savepoint of the outer one (as in SQLite).
 * **Migrations**: their own numbered series (``store/migrations/pg/``), applied on open inside
   a transaction holding ``pg_advisory_xact_lock``, so replicas starting together migrate once.
   A newer schema version is refused (``SG702``).
@@ -17,7 +17,8 @@ Same model and contract as :class:`~schemaguru.store.sqlite.SQLiteStore`, so sev
   weights — plus ``ts_rank`` (< 1) as a tie-break. Name hits therefore always rank first, as in
   SQLite; *within* a field the order can differ from SQLite FTS5's bm25 (no document-length
   normalisation here), and ``english`` drops stop words from comment text.
-* **Snapshots** copy the facts table set-based (``INSERT … SELECT``).
+* **Snapshots** copy the facts table set-based (``INSERT … SELECT``), each row's bytes
+  unchanged (the snapshot id is the row's own column).
 * **Queue**: ``queue_pop`` claims rows with ``FOR UPDATE SKIP LOCKED``, so concurrent workers
   never pop the same entry.
 * **Embeddings** are stored as the same little-endian float32 bytes as SQLite (``BYTEA``);
@@ -48,16 +49,24 @@ from schemaguru.errors import (
     StoreVersionError,
 )
 from schemaguru.model.facts import Fact
-from schemaguru.model.joins import JoinRef
+from schemaguru.model.joins import JoinRef, subject_key
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column, Constraint, Schema, Table
 from schemaguru.store import schema_sql
 from schemaguru.store.protocol import LedgerUnit
+from schemaguru.store.search_docs import (
+    GLOSSARY,
+    INDEXED_KINDS,
+    MEANING_KINDS,
+    doc_tables,
+    glossary_tables,
+    stored_doc_tables,
+    strings,
+)
 
 log = logging.getLogger("schemaguru.store")
 
 _PAGE = 1000
-_MEANING_KINDS = ("DESCRIPTION", "USE_CASES", "ENTITY_TYPE", "PITFALL")
 _SCHEMA_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}\Z")
 _RANK_WEIGHTS = "{0.0, 0.1, 0.3, 1.0}"  # D, C (text), B (columns), A (name)
 
@@ -68,25 +77,11 @@ _DOC_SQL = (
 )
 
 _dumps = canonical_json
-
-
-def _subject_key(subject: ObjectRef | JoinRef) -> str:
-    return subject.identity_key() if isinstance(subject, JoinRef) else subject.canonical()
+_subject_key = subject_key
 
 
 def _table_from_key(key: str) -> ObjectRef:
     return ObjectRef.parse(key, has_column=False)
-
-
-def _strings(obj: Any) -> Iterator[str]:
-    if isinstance(obj, str):
-        yield obj
-    elif isinstance(obj, Mapping):
-        for v in obj.values():
-            yield from _strings(v)
-    elif isinstance(obj, (list, tuple)):
-        for v in obj:
-            yield from _strings(v)
 
 
 def _row_to_table(data: str, withdrawn_at: str | None) -> Table:
@@ -356,10 +351,11 @@ class PostgresStore:
     @contextmanager
     def transaction(self) -> Iterator[None]:
         depth = getattr(self._local, "depth", 0)
-        if depth:
+        if depth:  # a savepoint: an exception leaving it rolls back only its own writes
             self._local.depth = depth + 1
             try:
-                yield
+                with self._local.conn.transaction():
+                    yield
             finally:
                 self._local.depth -= 1
             return
@@ -421,8 +417,19 @@ class PostgresStore:
             )
 
     def iter_schemas(self) -> Iterator[Schema]:
-        for (data,) in self._q("SELECT data FROM schemas ORDER BY key"):
-            yield Schema.from_dict(json.loads(data))
+        """Every schema in key order, read in pages of ``_PAGE`` (memory bounded by a page)."""
+        last = ""
+        while True:
+            rows = self._q(
+                'SELECT key, data FROM schemas WHERE key > %s COLLATE "C" '
+                'ORDER BY key COLLATE "C" LIMIT %s',
+                (last, _PAGE),
+            )
+            if not rows:
+                return
+            for _key, data in rows:
+                yield Schema.from_dict(json.loads(data))
+            last = rows[-1][0]
 
     def upsert_tables(self, items: Iterable[Table]) -> None:
         """One ``executemany`` and one reindex pass per page of ``_PAGE`` tables."""
@@ -579,10 +586,17 @@ class PostgresStore:
         with self.transaction():
             touched: set[str] = set()
             rows: dict[str, tuple[str, str, str, str]] = {}
+            indexed: set[str] = set()
             for f in facts:
                 rows[f.id] = (f.id, f.kind.name, _subject_key(f.subject), _dumps(f.to_dict()))
-                if f.kind.name in _MEANING_KINDS and isinstance(f.subject, ObjectRef):
-                    touched.add(f.subject.table_ref().canonical())
+                if f.kind.name in INDEXED_KINDS:
+                    touched |= doc_tables(f.kind.name, f.subject, f.value)
+                    indexed.add(f.id)
+            if indexed:  # a replaced fact may have fed other tables' docs (subject moved)
+                for (data,) in self._q(
+                    "SELECT data FROM facts WHERE id = ANY(%s)", (sorted(indexed),)
+                ):
+                    touched |= stored_doc_tables(data)
             self._many(
                 "INSERT INTO facts(id, kind, subject_key, data) VALUES (%s,%s,%s,%s) "
                 "ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, "
@@ -599,9 +613,7 @@ class PostgresStore:
             touched: set[str] = set()
             rows = self._q("SELECT id, data FROM facts WHERE id = ANY(%s)", (wanted,))
             for _, data in rows:
-                f = Fact.from_dict(json.loads(data))
-                if f.kind.name in _MEANING_KINDS and isinstance(f.subject, ObjectRef):
-                    touched.add(f.subject.table_ref().canonical())
+                touched |= stored_doc_tables(data)
             self._x("DELETE FROM facts WHERE id = ANY(%s)", (wanted,))
             self._reindex_many(sorted(touched))
         return len(rows)
@@ -726,9 +738,17 @@ class PostgresStore:
             "SELECT k.key, f.data FROM unnest(%s::text[]) AS k(key) JOIN facts f "
             "ON f.subject_key >= k.key COLLATE \"C\" AND f.subject_key < (k.key || '/') "
             'COLLATE "C" WHERE f.kind = ANY(%s) ORDER BY k.key, f.id',
-            (list(tables), list(_MEANING_KINDS)),
+            (list(tables), list(MEANING_KINDS)),
         ):
             meaning.setdefault(key, []).append(fdata)
+        terms: dict[str, list[str]] = {}  # glossary terms by the tables they map to
+        for (fdata,) in self._q("SELECT data FROM facts WHERE kind = %s ORDER BY id", (GLOSSARY,)):
+            g = json.loads(fdata)
+            term = g["value"].get("term")
+            if not isinstance(term, str):
+                continue
+            for key in sorted(glossary_tables(g["value"]) & tables.keys()):
+                terms.setdefault(key, []).append(term)
         docs = []
         for key in sorted(tables):
             t = json.loads(tables[key])
@@ -744,7 +764,8 @@ class PostgresStore:
                 fact = json.loads(fdata)
                 subj = fact["subject"]
                 if "table" in subj and ObjectRef.from_dict(subj).table_ref().canonical() == key:
-                    text.extend(_strings(fact["value"]))
+                    text.extend(strings(fact["value"]))
+            text.extend(terms.get(key, []))
             docs.append(
                 {
                     "r": key,
@@ -803,9 +824,8 @@ class PostgresStore:
             )
             self._x(
                 "INSERT INTO snapshot_facts(snapshot_id, fact_id, data) "
-                "SELECT %s, id, jsonb_set(data::jsonb, '{snapshot_id}', to_jsonb(%s::text))::text "
-                "FROM facts",
-                (sid, sid),
+                "SELECT %s, id, data FROM facts",
+                (sid,),
             )
             return sid
 
@@ -814,7 +834,7 @@ class PostgresStore:
             "SELECT data FROM snapshot_facts WHERE snapshot_id=%s ORDER BY fact_id",
             (snapshot_id,),
         )
-        return [Fact.from_dict(json.loads(r[0])) for r in rows]
+        return [Fact.from_dict({**json.loads(r[0]), "snapshot_id": snapshot_id}) for r in rows]
 
     def snapshot_checks_run(self, snapshot_id: str) -> frozenset[str]:
         rows = self._q("SELECT checks_run FROM snapshots WHERE id=%s", (snapshot_id,))

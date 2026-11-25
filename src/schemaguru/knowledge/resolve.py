@@ -8,13 +8,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from schemaguru._util.hashing import canonical_json
 from schemaguru._util.timeutil import require_aware
-from schemaguru.knowledge.diff import subject_key
+from schemaguru.knowledge.diff import _by_id, _newest_first, _when
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
-from schemaguru.model.joins import JoinRef
+from schemaguru.model.joins import JoinRef, subject_key
 from schemaguru.model.kinds import KindSpec
 from schemaguru.model.refs import ObjectRef
 from schemaguru.pii import mask_value
@@ -25,7 +25,6 @@ STRUCTURAL_KINDS = frozenset({"TYPE_NOTE"})
 CATALOG_CHECKED_KINDS = frozenset({"TYPE_NOTE", "PRIMARY_KEY"})
 # Non-meaning kinds that still order like meaning kinds (a human classification wins).
 MEANING_ORDER_KINDS = frozenset({"PII"})
-_MIN = datetime.min.replace(tzinfo=timezone.utc)
 
 _P = Provenance
 _ORDER_MEANING = (_P.HUMAN, _P.DECLARED, _P.CATALOG, _P.MEASURED, _P.DRAFTED)
@@ -52,20 +51,10 @@ class Effective:
     all: tuple[Fact, ...]
 
 
-def _when(f: Fact) -> datetime:
-    return f.observed_at if f.observed_at is not None else _MIN
-
-
-def _newest_first(f: Fact) -> tuple[float, str]:
-    return (-_when(f).timestamp(), canonical_json(f.to_dict()))
-
-
 def _dedupe(facts: Sequence[Fact]) -> list[Fact]:
-    """One fact per id: the newest re-measure wins (ties by canonical content)."""
-    best: dict[str, Fact] = {}
-    for f in sorted(facts, key=_newest_first, reverse=True):
-        best[f.id] = f
-    return list(best.values())
+    """One fact per id: the newest re-measure wins (ties by canonical content; shared with
+    ``diff``)."""
+    return list(_by_id(facts).values())
 
 
 def _normalise(f: Fact, now: datetime, ttl: timedelta) -> Fact:
@@ -77,11 +66,13 @@ def _normalise(f: Fact, now: datetime, ttl: timedelta) -> Fact:
     ):
         status = Status.UNVERIFIED  # rule 5: a draft is unverified unless its claim VERIFIED
     if (
-        status in (Status.OBSERVED, Status.VERIFIED)
+        status in (Status.OBSERVED, Status.VERIFIED, Status.ESTIMATED)
         and f.observed_at is not None
         and now - f.observed_at > ttl
     ):
-        status = Status.STALE  # unknown age (observed_at None) is never judged stale
+        # an old estimate ages like any measurement; its sampled method still marks it as one.
+        # Unknown age (observed_at None) is never judged stale (base spec 4.4).
+        status = Status.STALE
     return f if status is f.status else replace(f, status=status)
 
 
@@ -272,7 +263,8 @@ def resolve(
             fs = [
                 replace(f, status=Status.STALE)
                 if f.id in older
-                and f.status in (Status.OBSERVED, Status.VERIFIED, Status.CONTRADICTED)
+                and f.status
+                in (Status.OBSERVED, Status.VERIFIED, Status.CONTRADICTED, Status.ESTIMATED)
                 else f
                 for f in fs
             ]

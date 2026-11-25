@@ -25,6 +25,7 @@ from enum import Enum
 from typing import Any, Protocol
 
 from schemaguru import plugins
+from schemaguru.knowledge.diff import CATALOG_CHECK as DIFF_CATALOG_CHECK
 from schemaguru.knowledge.diff import Change, subject_key
 from schemaguru.knowledge.resolve import Effective
 from schemaguru.model.facts import Fact, Provenance, Status
@@ -41,7 +42,7 @@ MEASURED_KINDS = frozenset(
         "FRESHNESS", "TYPE_NOTE", "PII", "ROW_COUNT",
     }
 )  # fmt: skip
-CATALOG_CHECK = "CATALOG"
+CATALOG_CHECK = DIFF_CATALOG_CHECK  # the checks_run entry of a crawl
 # structural change that has no fact behind it (a table the catalog no longer lists)
 TABLE_WITHDRAWN = KindSpec("TABLE_WITHDRAWN", "table", False, False)
 

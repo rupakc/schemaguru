@@ -111,6 +111,23 @@ def test_narrow_run_reports_not_measured(store: SQLiteStore, conn: Any) -> None:
     assert "missing checks" in r.to_markdown() and "Not measured" in r.to_markdown()
 
 
+def test_vanished_fact_of_unrun_check_not_removed(store: SQLiteStore, conn: Any) -> None:
+    """refresh diffs with the new snapshot's checks_run: a fact that vanished while its check
+    did not run is not a removal; one whose check ran is."""
+    go(store, conn)
+    facts = store.facts_for(None, ["JOIN", "NULL_RATE"])
+    join = next(f for f in facts if f.kind.name == "JOIN" and f.provenance.value == "MEASURED")
+    nulls = next(
+        f for f in facts if f.kind.name == "NULL_RATE" and "customers" in f.subject.canonical()
+    )
+    store.delete_facts([join.id, nulls.id])
+    reader = DuckDBReader(DBAPIExecutor(conn))
+    narrow = NarrowScheduler(ObjectRef(None, "shop", "customers"))
+    r = refresh(store, reader, narrow, config=Config(), now=later)  # type: ignore[arg-type]
+    removed = {c.before.id for c, _ in r.changes if c.change == "removed" and c.before}
+    assert nulls.id in removed and join.id not in removed
+
+
 def test_fresh_noop_is_not_a_narrow_run(store: SQLiteStore, conn: Any) -> None:
     first = go(store, conn)
     again = go(store, conn)

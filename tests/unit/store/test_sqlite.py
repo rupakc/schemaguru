@@ -123,3 +123,66 @@ def test_facts_for_filters_kinds_in_sql(store: SQLiteStore) -> None:
         ["k", "ROW_COUNT"],
     ).fetchall()
     assert any("facts_subject_kind" in str(row) for row in plan), plan
+
+
+def test_commit_failure_recovers(store: SQLiteStore) -> None:
+    conn = store._conn
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("CREATE TEMP TABLE parent(id INTEGER PRIMARY KEY)")
+    conn.execute(
+        "CREATE TEMP TABLE child(pid INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)"
+    )
+    import sqlite3
+
+    with pytest.raises(sqlite3.IntegrityError), store.transaction():
+        store.upsert_tables([tbl("lost")])
+        conn.execute("INSERT INTO child(pid) VALUES (1)")  # fails only at COMMIT
+    assert not conn.in_transaction and store._depth == 0
+    assert store.table(tref("lost")) is None  # rolled back, not left open
+    store.upsert_tables([tbl("next")])  # the next transaction works
+    with store.transaction():
+        store.upsert_tables([tbl("after")])
+    assert store.table(tref("next")) is not None and store.table(tref("after")) is not None
+
+
+def test_backend_switch_rebuilds_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    p = tmp_path / "switch.db"
+    with SQLiteStore(p) as s:  # FTS5
+        s.upsert_tables([tbl("orders", "customer purchases")])
+    with monkeypatch.context() as m:  # LIKE: writes go to the other index only
+        m.setattr(sqlite_mod, "_fts5_available", lambda conn: False)
+        with SQLiteStore(p) as s:
+            s.upsert_tables([tbl("orders", "parcel shipments"), tbl("refunds")])
+            assert [r.table for r, _ in s.search("parcel", 5)] == ["orders"]
+            assert s.crawl_state_get("_search_backend") == {"backend": "like"}
+    with SQLiteStore(p) as s:  # FTS5 again: the stale FTS index is rebuilt
+        assert s.crawl_state_get("_search_backend") == {"backend": "fts5"}
+        assert [r.table for r, _ in s.search("parcel", 5)] == ["orders"]
+        assert s.search("purchases", 5) == []
+        assert [r.table for r, _ in s.search("refunds", 5)] == ["refunds"]
+    with monkeypatch.context() as m:  # and back to LIKE: the LIKE index is rebuilt too
+        m.setattr(sqlite_mod, "_fts5_available", lambda conn: False)
+        with SQLiteStore(p) as s:
+            assert [r.table for r, _ in s.search("refunds", 5)] == ["refunds"]
+
+
+def test_readonly_empty_index_warns(tmp_path: Path) -> None:
+    p = tmp_path / "ro_empty.db"
+    with SQLiteStore(p) as s:
+        s.upsert_tables([tbl("orders")])
+        s._conn.execute("DELETE FROM table_docs")
+    with SQLiteStore(p, readonly=True) as r:
+        (d,) = [d for d in r.diagnostics if d.code == "SG706"]
+        assert d.severity.value == "WARNING"
+        assert d.message == (
+            "the read-only store's search index is empty; open it read-write once to rebuild it"
+        )
+    with SQLiteStore(p) as w:  # read-write rebuilds it
+        assert [x.table for x, _ in w.search("orders", 5)] == ["orders"]
+    with SQLiteStore(p, readonly=True) as r:
+        assert [d.code for d in r.diagnostics] == []
+    # negative control: an empty store (no tables) has nothing to index and does not warn
+    q = tmp_path / "empty.db"
+    SQLiteStore(q).close()
+    with SQLiteStore(q, readonly=True) as r:
+        assert [d.code for d in r.diagnostics] == []

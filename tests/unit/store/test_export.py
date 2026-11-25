@@ -66,3 +66,88 @@ def test_import_roundtrip(tmp_path: Path) -> None:
     assert next(r.table for r, _ in t.search("customers", 3)) == "customers"
     s.close()
     t.close()
+
+
+def test_concurrent_exports_do_not_clash(tmp_path: Path) -> None:
+    import threading
+
+    s = SQLiteStore(tmp_path / "c.db")
+    _fill(s, 4)
+    real = s.iter_facts
+    both_open = threading.Barrier(2, timeout=10)
+
+    def iter_facts():  # type: ignore[no-untyped-def]
+        both_open.wait()  # both exports have opened their temp file before either writes
+        return real()
+
+    s.iter_facts = iter_facts  # type: ignore[method-assign]
+    target = tmp_path / "out" / "e.json"
+    target.parent.mkdir()
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            export_json(s, target)
+        except BaseException as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    del s.iter_facts
+    assert errors == []
+    ref = tmp_path / "ref.json"
+    export_json(s, ref)
+    assert target.read_bytes() == ref.read_bytes()  # a whole export, not two interleaved
+    assert sorted(p.name for p in target.parent.iterdir()) == ["e.json"]  # no temp file left
+    s.close()
+
+
+def test_failed_export_leaves_no_temp_file(tmp_path: Path) -> None:
+    s = SQLiteStore(tmp_path / "f.db")
+    _fill(s, 5)
+
+    def boom():  # type: ignore[no-untyped-def]
+        raise RuntimeError("store went away")
+
+    s.iter_tables = lambda **kw: boom()  # type: ignore[method-assign,assignment]
+    target = tmp_path / "out" / "e.json"
+    target.parent.mkdir()
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        export_json(s, target)
+    assert list(target.parent.iterdir()) == []
+    s.close()
+
+
+def test_store_and_export_share_encoder(tmp_path: Path) -> None:
+    import json
+    from datetime import date
+    from decimal import Decimal
+
+    from schemaguru._util import hashing
+    from schemaguru.store import export, postgres, sqlite
+
+    assert sqlite._dumps is export._dumps is postgres._dumps is hashing.canonical_json
+    s = SQLiteStore(tmp_path / "enc.db")
+    f = Fact.make(
+        FactKind.DESCRIPTION, ObjectRef(None, "shop", "orders"),
+        {"text": "Bestellungen für Kunden ✓", "amount": Decimal("12.50"), "on": date(2026, 1, 2)},
+        Provenance.HUMAN, Status.UNVERIFIED,
+    )  # fmt: skip
+    s.put_facts([f])
+    (stored,) = s._q("SELECT data FROM facts")
+    p = tmp_path / "e.json"
+    export_json(s, p)
+    (exported,) = json.loads(p.read_text("utf-8"))["facts"]
+    # one encoder: the stored text is the exported text, byte for byte
+    assert stored[0] == hashing.canonical_json(exported) == hashing.canonical_json(f.to_dict())
+    assert (
+        '"amount":"12.5"' in stored[0] and "für" in stored[0] and '"on":"2026-01-02"' in stored[0]
+    )
+    # and what is stored hashes like what was written (so a re-read fact keeps its id)
+    assert Fact.from_dict(json.loads(stored[0])).id == f.id
+    s.close()

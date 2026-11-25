@@ -70,6 +70,12 @@ class JoinRef:
         )
 
 
+def subject_key(subject: ObjectRef | JoinRef) -> str:
+    """A fact subject's key: ``JoinRef.identity_key()`` for a join, ``ObjectRef.canonical()``
+    otherwise. Part of every fact id; the stores index facts by it."""
+    return subject.identity_key() if isinstance(subject, JoinRef) else subject.canonical()
+
+
 def support(value: Mapping[str, Any], *, reverse: bool) -> float | None:
     """``match_rate`` child -> parent, ``coverage`` parent -> child; unknown is ``None``."""
     v = value.get("coverage" if reverse else "match_rate")

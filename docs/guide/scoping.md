@@ -8,9 +8,9 @@ slice a question needs and fits it into the budget.
 
 1. **Seeds.** The retriever ranks tables for the question (`ScopeConfig.seed_k`, 8). The
    default `LexicalRetriever` is the store's full-text search (SQLite FTS5, BM25) over name
-   tokens (snake_case and camelCase split), column names, comments, descriptions, use cases
-   and pitfalls, plus a boost for a table named verbatim in the question (`shop.orders` or
-   `orders`).
+   tokens (snake_case and camelCase split), column names, comments, descriptions, use cases,
+   pitfalls and the glossary terms mapped to the table, plus a boost for a table named
+   verbatim in the question (`shop.orders` or `orders`).
 2. **Glossary.** A glossary term or metric whose words all occur in the question pulls in its
    mapped tables.
 3. **Bridges.** The best measured join path between each pair of seeds is added, at most

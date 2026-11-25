@@ -5,7 +5,8 @@ in one of four states, with evidence a reader can check:
 * ``already fixed`` names the fixing commit and a test that pins it
   (``commit <sha> · test <path>::<name>``), one such pair per half of an item that has several;
 * ``fixed`` names the red-first test (``test <path>::<name>``);
-* ``ruled out`` gives a one-line reason (and ``· docs: <page>`` when the item is user-visible).
+* ``ruled out`` gives a one-line reason (and ``· docs: <page>`` when the item is user-visible;
+  the page must exist under ``docs/`` and carry a ``## Known limits`` heading).
 
 A named test must exist (file present, ``def <name>`` in it) and a named commit must exist in the
 repository (skipped without ``.git``, e.g. in an sdist).
@@ -51,6 +52,23 @@ def _commit_exists(sha: str, root: Path) -> bool:
     return done.returncode == 0
 
 
+_KNOWN_LIMITS = re.compile(r"^## Known limits\s*$", re.M)
+
+
+def _docs_page_problems(item_id: str, page: str, root: Path) -> list[str]:
+    """A ruled-out row's docs page: a file under ``docs/`` (named from the repository root or
+    from ``docs/``) with a ``## Known limits`` heading."""
+    docs = (root / "docs").resolve()
+    path = (root / page if page.startswith("docs/") else docs / page).resolve()
+    if not path.is_relative_to(docs):
+        return [f"{item_id}: docs page {page} is not under docs/"]
+    if not path.is_file():
+        return [f"{item_id}: docs page {page} does not exist"]
+    if _KNOWN_LIMITS.search(path.read_text("utf-8")) is None:
+        return [f"{item_id}: docs page {page} has no '## Known limits' heading"]
+    return []
+
+
 def evidence_problems(item_id: str, state: str, evidence: str, root: Path = ROOT) -> list[str]:
     """What is wrong with one row's state and evidence (empty when the row is valid)."""
     if state not in ALLOWED_STATES:
@@ -61,6 +79,8 @@ def evidence_problems(item_id: str, state: str, evidence: str, root: Path = ROOT
     problems: list[str] = []
     if state == "ruled out" and len(m.group("reason").strip()) < 10:
         problems.append(f"{item_id}: a ruled-out reason needs at least 10 characters")
+    if state == "ruled out" and m.group("docs") is not None:
+        problems += _docs_page_problems(item_id, m.group("docs"), root)
     pattern = _PAIR if state == "already fixed" else _TEST
     for ref in re.finditer(pattern, evidence) if state in ("fixed", "already fixed") else ():
         path, name = ref.group("path"), ref.group("name")
@@ -162,3 +182,28 @@ def test_parse_ledger_rejects_bad_rows() -> None:
     for reason, text in bad_rows.items():
         with pytest.raises(ValueError, match=reason):
             parse_ledger(text)
+
+
+def test_ruled_out_docs_page_needs_known_limits(tmp_path: Path) -> None:
+    """A user-visible ``ruled out`` row names its docs page, and the page carries the limit
+    under a ``## Known limits`` heading (the Tasks 2-8 rule)."""
+    docs = tmp_path / "docs" / "guide"
+    docs.mkdir(parents=True)
+    (docs / "store.md").write_text("# Store\n\n## Known limits\n\n- a limit\n", "utf-8")
+    (docs / "plain.md").write_text("# Plain\n\nNo limits section.\n", "utf-8")
+    (tmp_path / "README.md").write_text("## Known limits\n", "utf-8")
+    reason = "fixing it would change a 0.1.0 fact id"
+    row = "| A5.2 | hash | ruled out | {} |"
+    for page in ("docs/guide/store.md", "guide/store.md"):
+        assert parse_ledger(row.format(f"{reason} · docs: {page}"), tmp_path)["A5.2"][1] == (
+            "ruled out"
+        )
+    assert parse_ledger(row.format(reason), tmp_path)  # no docs part: not user-visible
+    bad = {
+        "docs/guide/nope.md does not exist": "docs/guide/nope.md",
+        "has no '## Known limits' heading": "docs/guide/plain.md",
+        "is not under docs/": "../README.md",
+    }
+    for problem, page in bad.items():
+        with pytest.raises(ValueError, match=re.escape(problem)):
+            parse_ledger(row.format(f"{reason} · docs: {page}"), tmp_path)

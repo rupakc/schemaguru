@@ -225,7 +225,8 @@ def refresh(
     snap = take(store, run_checks | {CARRIED_PREFIX + k for k in carried_checks}, label)
     new_facts = store.snapshot_facts(snap)
 
-    changes: list[Change] = diff(prev_facts, new_facts)
+    # a fact whose check did not run this time vanished unlooked-at: never "removed"
+    changes: list[Change] = diff(prev_facts, new_facts, checks_run=store.snapshot_checks_run(snap))
     changes += [Change(TABLE_WITHDRAWN, r, None, None, "removed") for r in withdrawn]
     carried = _carried_unmeasured(
         prev_facts,

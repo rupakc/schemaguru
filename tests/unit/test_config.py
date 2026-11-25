@@ -104,3 +104,21 @@ def test_from_env_bad_value_is_config_error(key: str) -> None:
 def test_from_mapping_tuple_rejects_a_scalar_number() -> None:
     with pytest.raises(ConfigError):
         Config.from_mapping({"crawl": {"include": 5}})
+
+
+def test_per_glob_immutable() -> None:
+    cfg = SamplingConfig(per_glob={"shop.*": "raw"})
+    with pytest.raises(TypeError):
+        cfg.per_glob["shop.*"] = "none"  # type: ignore[index]
+    assert dict(cfg.per_glob) == {"shop.*": "raw"}
+    src = {"a.*": "none"}
+    cfg2 = SamplingConfig(per_glob=src)
+    src["b.*"] = "raw"  # the caller's dict is copied, not shared
+    assert dict(cfg2.per_glob) == {"a.*": "none"}
+    import copy
+    import pickle
+
+    assert copy.deepcopy(cfg2) == cfg2 and pickle.loads(pickle.dumps(cfg2)) == cfg2
+    assert Config.from_mapping({"sampling": {"per_glob": {"x.*": "raw"}}}).sampling.per_glob == {
+        "x.*": "raw"
+    }

@@ -249,3 +249,79 @@ def test_metadata_guard_dollar_and_triple_quotes_cannot_hide_a_statement() -> No
     for bad in ("SELECT $$'$$; DROP TABLE x; -- '", "SELECT '''it's'''; DROP TABLE t; -- '"):
         with pytest.raises(CatalogError):
             check_metadata_sql(bad)
+
+
+def test_backtick_identifiers_accepted_hostile_refused() -> None:
+    """A backtick-quoted identifier is accepted; a quote inside one cannot open a literal
+    that hides a second statement or a comment from the guard (MySQL, BigQuery, Spark read
+    backticks as identifiers, so the ``;`` after them is code)."""
+    check_metadata_sql("SELECT `table_name` FROM information_schema.tables")
+    check_metadata_sql("SELECT `it's`, `a\"b` FROM `p.d.INFORMATION_SCHEMA.COLUMNS`")
+    for bad in (
+        "SELECT `a`; DROP TABLE x",
+        "SELECT `x` -- `y`",
+        "SELECT `it's`; DROP TABLE x",
+        'SELECT `a"`; DROP TABLE x -- "',
+        "SELECT `'` -- '",
+        "SELECT `a;b` FROM t",  # ';' is a separator where backticks are not identifiers
+    ):
+        with pytest.raises(CatalogError, match="SG104"):
+            check_metadata_sql(bad)
+
+
+def _inline_probe(value: object, family: str) -> Any:
+    from factlang.ir import Arity
+    from factlang.sql import Param, RenderedProbe
+
+    return RenderedProbe(
+        "SELECT 1 AS x WHERE a = {{v}}", (Param("v", value, family),), Arity.ROW_SET, None,
+        "duckdb", "best_effort",
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "ch", ["\u2018", "\u2019", "\u201a", "\u201b", "\u2032", "\u02bc", "\uff07", "`"]
+)
+def test_inline_refuses_quote_lookalikes(ch: str) -> None:
+    """A non-Unicode code page (Windows ODBC "best fit") may map a look-alike to ``'``, which
+    would end the literal on the server: SG109, and the host never sees the SQL."""
+    from factlang.connectors import ExecutionError
+
+    from schemaguru.catalog.executor import InlineConnector, inline_problem
+
+    assert inline_problem(f"O{ch}Brien") is not None
+    got: list[str] = []
+    conn = InlineConnector(lambda sql: got.append(sql) or [], "duckdb")
+    with pytest.raises(ExecutionError, match=r"^FL700 SG109: .*look-alike"):
+        conn.execute(_inline_probe(f"x{ch} OR 1=1", "string"), timeout_s=None)
+    assert got == []
+    assert inline_problem("O'Brien") is None  # the real quote is doubled, not refused
+
+
+def test_inline_raising_tzinfo_is_sg109() -> None:
+    import datetime
+
+    from factlang.connectors import ExecutionError
+
+    from schemaguru.catalog.executor import InlineConnector
+
+    class Raising(datetime.tzinfo):
+        def utcoffset(self, dt: datetime.datetime | None) -> datetime.timedelta:
+            raise RuntimeError("no offset")
+
+        def dst(self, dt: datetime.datetime | None) -> datetime.timedelta | None:
+            return None
+
+        def tzname(self, dt: datetime.datetime | None) -> str:
+            return "raising"
+
+    value = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=Raising())
+    got: list[str] = []
+    conn = InlineConnector(lambda sql: got.append(sql) or [], "duckdb")
+    with pytest.raises(ExecutionError, match=r"^FL700 SG109: .*time zone") as info:
+        conn.execute(_inline_probe(value, "timestamp"), timeout_s=None)
+    assert info.value.__cause__ is None and got == []
+    # an ordinary aware timestamp is still inlined (negative control)
+    utc = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)
+    conn.execute(_inline_probe(utc, "timestamp"), timeout_s=None)
+    assert len(got) == 1

@@ -34,15 +34,15 @@ Audited against `main` at `710e21f` (Task 1). Tasks 2–8 turn the `open` rows i
 | A1.15 | `_contains` misses class-range interior chars (`?` vs `[a-f]`) | fixed | test tests/unit/pii/test_policy.py::test_contains_class_range_interior |
 | A1.16 | `detectors.py` detector fn typed `object` + `type: ignore` | fixed | test tests/unit/pii/test_hardening.py::test_detectors_have_no_type_ignore |
 | A1.17 | docs: hex needs a letter; the `<secret>` / `<address>` tokens | fixed | test tests/conformance/test_docs_examples.py::test_pii_tokens_documented |
-| A2.1 | path check only on a FROM item's first token (`FROM s."x.csv"` passes) | open | Task 4 |
-| A2.2 | `.avro` / `.orc` / `.bz2` / `.gzip` not in the path-suffix list | open | Task 4 |
-| A2.3 | metadata guard: backtick-quoted identifiers falsely rejected (`` `a;b` ``) | open | Task 4 |
+| A2.1 | path check only on a FROM item's first token (`FROM s."x.csv"` passes) | fixed | test tests/unit/test_guard.py::test_file_in_any_from_item_refused |
+| A2.2 | `.avro` / `.orc` / `.bz2` / `.gzip` not in the path-suffix list | fixed | test tests/unit/test_guard.py::test_more_file_extensions_refused |
+| A2.3 | metadata guard: backtick-quoted identifiers falsely rejected (`` `a;b` ``) | ruled out | accepting `;` inside backticks would loosen the metadata guard beyond FactLang's FL703 guard (`;` refused anywhere) and on non-backtick dialects `;` separates statements; plain backtick identifiers pass, and a backtick quoting variant now stops a quote inside one hiding a statement (test tests/unit/catalog/test_executor.py::test_backtick_identifiers_accepted_hostile_refused) · docs: docs/guide/security.md |
 | A2.4 | metadata guard: `SHOW CREATE` falsely rejected | ruled out | accepting `SHOW CREATE` would loosen the metadata guard beyond FactLang's FL703 guard, and no shipped reader sends it |
 | A2.5 | metadata guard's quote scanner ignores backslash escapes | already fixed | commit 7fc2423 · test tests/unit/catalog/test_executor.py::test_metadata_guard_backslash_escape_cannot_hide_a_statement |
 | A2.6 | `FactLangExecutor` skips the local guard | already fixed | commit efd00fb · test tests/unit/catalog/test_executor.py::test_factlang_executor_adapts_result |
-| A2.7 | fullwidth `；` / `－－` pass `check_predicate` | open | Task 4 |
-| A2.8 | look-alike quotes via non-Unicode Windows ODBC (InlineConnector) | open | Task 4 |
-| A2.9 | a raising `tzinfo` surfaces as `RuntimeError`, not SG109 | open | Task 4 |
+| A2.7 | fullwidth `；` / `－－` pass `check_predicate` | fixed | test tests/unit/draft/test_verify.py::test_fullwidth_separators_refused |
+| A2.8 | look-alike quotes via non-Unicode Windows ODBC (InlineConnector) | fixed | test tests/unit/catalog/test_executor.py::test_inline_refuses_quote_lookalikes |
+| A2.9 | a raising `tzinfo` surfaces as `RuntimeError`, not SG109 | fixed | test tests/unit/catalog/test_executor.py::test_inline_raising_tzinfo_is_sg109 |
 | A3.1 | resume does not re-check the scope hash | open | Task 5 |
 | A3.2 | schemas created before the cursor are skipped on resume | open | Task 5 |
 | A3.3 | no temp-dir cleanup test | open | Task 5 |
@@ -131,7 +131,7 @@ Audited against `main` at `710e21f` (Task 1). Tasks 2–8 turn the `open` rows i
 | A8.10 | `tests/test_version.py` `__all__` assertion (check still valid) | already fixed | commit c603a11 · test tests/test_version.py::test_version |
 | A8.11 | the denylist CI job passes silently when the secret is empty | open | Task 8 |
 | A9.1 | `InlineConnector` docstring omits the trino `… UTC` form and the databricks zone-less refusal | fixed | test tests/unit/test_connectors.py::test_inline_connector_docstring_names_the_zone_explicit_forms |
-| A9.2 | FL507 tests assert only `SG109` (pin `precision 39` / `64-bit`) | open | Task 4 |
-| A9.3 | `test_trino_rejects_the_old_timestamp_form` also asserts the zone-less form | open | Task 4 |
-| A9.4 | `literal_refusal` became a public name in 0.1.1 | open | Task 4 |
+| A9.2 | FL507 tests assert only `SG109` (pin `precision 39` / `64-bit`) | fixed | test tests/unit/test_connectors.py::test_fl507_refusals_pin_reason |
+| A9.3 | `test_trino_rejects_the_old_timestamp_form` also asserts the zone-less form | fixed | test tests/unit/test_connectors.py::test_trino_rejects_zone_less_timestamp |
+| A9.4 | `literal_refusal` became a public name in 0.1.1 | ruled out | renaming would remove a name released in 0.1.1 (public API additive only); kept as is and documented · docs: docs/guide/security.md |
 | A9.5 | `check_fact` has no claim cap (SchemaGuru calls `Checker.check` directly, bypassing `max_claims`) | open | Task 8 |

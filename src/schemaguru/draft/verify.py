@@ -28,6 +28,7 @@ are not part of a draft's identity.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
@@ -73,7 +74,8 @@ def check_predicate(
     """Why a drafted soft-delete predicate may not be put into a claim, or ``None`` if it may.
 
     A strict local check (the FactLang-seam ``validate_filter`` does not exist yet): the text
-    must be one filter expression. Comment and statement markers (``--``, ``;``, ``#``, ``/*``)
+    must be one filter expression. Comment and statement markers (``--``, ``;``, ``#``, ``/*``,
+    and their fullwidth or small forms such as U+FF1B and U+FF0D twice, judged after NFKC folding)
     count only outside string literals; quoted identifiers (``"deleted_at"``, ```deleted_at```)
     are accepted. ``columns`` (the table's stored column names), when given, must contain every
     marker column, and a marker must be referenced outside string literals.
@@ -87,8 +89,9 @@ def check_predicate(
     if syntax is not None:
         return syntax
     code = _STRING.sub("''", predicate)  # string literals emptied; identifiers kept
+    folded = unicodedata.normalize("NFKC", code)  # fullwidth/small forms (U+FF1B) fold to ASCII
     for bad in _FORBIDDEN:
-        if bad in code:
+        if bad in folded:
             return f"the predicate contains {bad!r} outside a string literal"
     word = _CLAIM_WORDS.search(_QUOTED.sub("''", code))
     if word is not None:

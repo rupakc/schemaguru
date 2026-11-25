@@ -40,9 +40,10 @@ ClickHouse/DuckDB table function (``file``, ``url``, ``s3``, ``remote``, ``postg
 ``json_query``, ``json_value`` and ``json_exists`` are carved out. A user UDF whose name matches
 a family is refused by design; the same names used as columns or aliases (not called), or
 declared (``WITH file(a) AS``, ``t AS input(a, b)``), are fine. A string literal directly after
-``FROM`` or ``JOIN`` (DuckDB's file/URL-as-table, ``FROM '/etc/passwd'``) is refused. The
-A path-like quoted identifier as a FROM/JOIN item (contains ``/`` or
-ends ``.csv``/``.parquet``/``.json``/``.gz``/...; DuckDB replacement scan) is refused, as is a
+``FROM`` or ``JOIN`` (DuckDB's file/URL-as-table, ``FROM '/etc/passwd'``) is refused. A
+path-like quoted identifier as a FROM/JOIN item, or as any part of its qualified name
+(contains ``/`` or ends ``.csv``/``.parquet``/``.json``/``.avro``/``.orc``/``.gz``/``.bz2``/...;
+DuckDB replacement scan) is refused, as is a
 parenthesised or ``E''``/``N''``-prefixed literal there. Accepted limits: ``substring(x FROM
 'regex')`` is refused (fail-safe), and ``ARRAY['a','b']`` is refused as ambiguous because T-SQL
 reads ``[..]`` as an identifier (use ``ARRAY('a','b')`` where supported, or a parameter). The
@@ -178,7 +179,10 @@ def _joined_literals(sql: str, kinds: str) -> list[str]:
     return out
 
 
-_PATH_SUFFIXES = (".csv", ".tsv", ".parquet", ".json", ".ndjson", ".jsonl", ".xlsx", ".gz", ".zst")
+_PATH_SUFFIXES = (
+    *(".csv", ".tsv", ".parquet", ".json", ".ndjson", ".jsonl", ".xlsx", ".avro", ".orc"),
+    *(".gz", ".gzip", ".bz2", ".zst"),
+)
 _LITERAL_PREFIXES = frozenset({"E", "N", "B", "X", "U"})
 
 
@@ -199,10 +203,14 @@ def _item_is_file(toks: list[Tok], j: int) -> str | None:
             return literal
     if toks[j].kind == "str":
         return literal
-    if toks[j].kind == "qident":
-        name = toks[j].text[1:-1].casefold()
-        if "/" in name or "\\" in name or name.endswith(_PATH_SUFFIXES):
-            return "SG801: a path-like quoted identifier as a table (file) is not allowed"
+    while j < n:  # every part of a qualified name: ``s."x.csv"``, ``c.s."x.csv"``
+        if toks[j].kind == "qident":
+            name = toks[j].text[1:-1].casefold()
+            if "/" in name or "\\" in name or name.endswith(_PATH_SUFFIXES):
+                return "SG801: a path-like quoted identifier as a table (file) is not allowed"
+        if toks[j].kind not in ("ident", "qident") or j + 1 >= n or toks[j + 1].text != ".":
+            break
+        j += 2
     return None
 
 

@@ -687,3 +687,32 @@ def test_guard_r6c_path_like_quoted_identifier_refused(sql: str) -> None:
 def test_guard_r6c_ordinary_from_items_pass(sql: str) -> None:
     v = check_sql(sql)
     assert v.ok, v.reasons
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM t, 'x.parquet'",
+        'SELECT * FROM s."x.csv"',
+        'SELECT * FROM t JOIN s."x.csv" ON true',
+        'SELECT * FROM t, LATERAL s."data/x"',
+        'SELECT * FROM (t JOIN c.s."x.parquet" ON true)',
+        "SELECT * FROM `s`.`x.csv`",
+        'SELECT * FROM t AS a, (s."x.json")',
+    ],
+)
+def test_file_in_any_from_item_refused(sql: str) -> None:
+    """Every table position (after FROM, a comma, JOIN, LATERAL, inside parentheses) is
+    path-checked on every part of a qualified name, not only on the item's first token."""
+    v = check_sql(sql)
+    assert not v.ok, v.reasons
+    assert any(r.startswith("SG801") for r in v.reasons), v.reasons
+    # the same positions with an ordinary qualified name pass (negative control)
+    assert check_sql('SELECT * FROM t, s."my.table" JOIN c.s."Order Items" ON true').ok
+
+
+@pytest.mark.parametrize("suffix", [".avro", ".orc", ".bz2", ".gzip"])
+def test_more_file_extensions_refused(suffix: str) -> None:
+    v = check_sql(f'SELECT * FROM "data{suffix}"')
+    assert not v.ok and any("path-like" in r for r in v.reasons), v.reasons
+    assert check_sql(f'SELECT "data{suffix}" FROM t').ok  # a column, not a FROM item

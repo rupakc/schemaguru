@@ -65,7 +65,9 @@ caps the length, and refuses never-query tables. It also refuses, fail-safe:
 * SQL whose string or comment structure differs between dialects — so `#` comments, `$$`
   strings, bracketed identifiers containing quotes, and triple quotes may be refused;
 * functions that run SQL from text or read files, file-as-table string literals and
-  path-like quoted identifiers;
+  path-like quoted identifiers (`/`, or a file suffix such as `.csv`, `.parquet`, `.avro`,
+  `.orc`, `.gz`, `.bz2`) in any FROM/JOIN position, on any part of a qualified name
+  (`s."x.csv"`);
 * a few legitimate forms it cannot tell apart from the above: `substring(x FROM 'regex')`,
   `ARRAY['a', 'b']`, `x['key']`.
 
@@ -78,6 +80,15 @@ stop adversaries.
 the guard refuses SQL reading them when you pass it. This works against a *cooperative*
 agent. Isolation from an adversarial one is the warehouse's job: do not grant the role access
 to those tables.
+
+## Known limits
+
+- The metadata guard refuses a `;` inside a backtick identifier (`` `a;b` ``), as FactLang's
+  own metadata guard does: where backticks are not identifier quotes (Postgres, the ANSI
+  default) that `;` separates statements. Plain backtick identifiers (`` `table_name` ``) pass.
+- `literal_refusal` in `schemaguru.catalog.executor` is a public name since 0.1.1 and stays
+  under that name: renaming it would remove a released name. It returns a specific reason a
+  rendered literal is refused (today the zone-less Databricks timestamp), or `None`.
 
 ## Server mode
 

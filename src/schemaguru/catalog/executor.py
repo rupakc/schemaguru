@@ -32,11 +32,15 @@ _FORBIDDEN = re.compile(
     re.IGNORECASE,
 )
 _Q = "'\""
+_QB = _Q + "`"  # MySQL, BigQuery, Spark, ClickHouse read backticks as identifier quotes
 _METADATA_VARIANTS = (
     Opts(quotes=_Q, comments=False),
     Opts(quotes=_Q, comments=False, backslash=True),
     Opts(quotes=_Q, comments=False, dollar=True),
     Opts(quotes=_Q, comments=False, triple=True),
+    Opts(quotes=_QB, comments=False),
+    Opts(quotes=_QB, comments=False, backslash=True),
+    Opts(quotes=_QB, comments=False, backslash=True, triple=True),
 )
 _PARAMSTYLES = ("qmark", "format", "pyformat", "numeric", "named")
 
@@ -50,8 +54,11 @@ class MetadataExecutor(Protocol):
 def check_metadata_sql(sql: str) -> None:
     """Refuse anything but one read-only metadata statement (SG104); mirrors FactLang's guard.
 
-    Judged under several quote conventions (backslash, $tag$, triple quotes): a violation under
-    any one is a refusal. The shared scanner is conservative; shipped readers' SQL must pass.
+    Judged under several quote conventions (backslash, $tag$, triple quotes, backtick
+    identifiers): a violation under any one is a refusal, so a quote inside a backtick
+    identifier (```it's```) cannot hide a ``;`` or a comment, and a ``;`` inside one (```a;b```)
+    is refused like FactLang's guard refuses it. The shared scanner is conservative; shipped
+    readers' SQL must pass.
     """
     for o in _METADATA_VARIANTS:
         _check_metadata(sql, o)
@@ -350,6 +357,9 @@ ACCEPTED_CONNECTORS = (
 _INLINE_TYPES = (str, int, float, Decimal, datetime.date, type(None))
 # CR, LF, NEL, LINE SEPARATOR, PARAGRAPH SEPARATOR: never inside an inlined literal
 LINE_TERMINATORS = ("\r", "\n", "\x85", "\u2028", "\u2029")
+# characters a non-Unicode client code page (Windows ODBC "best fit") may map to ``'``: curly
+# and low-9 quotes, prime, modifier apostrophe, fullwidth apostrophe, grave accent
+QUOTE_LOOKALIKES = ("\u2018", "\u2019", "\u201a", "\u201b", "\u2032", "\u02bc", "\uff07", "`")
 
 
 def inline_problem(value: object) -> str | None:
@@ -361,8 +371,11 @@ def inline_problem(value: object) -> str | None:
     unambiguous on every engine that has the doubled form. Nor may they hold a line terminator
     (CR, LF, U+0085, U+2028, U+2029): console tools may end a statement at a line break
     (SQL*Plus at a blank line). FactLang 0.1.4 refuses the same set; SchemaGuru refuses it on
-    its own so the behaviour does not depend on the FactLang version. Only plain scalars are
-    allowed, and floats must be finite.
+    its own so the behaviour does not depend on the FactLang version. Nor may they hold a quote
+    look-alike (``QUOTE_LOOKALIKES``: U+2018, U+2019, U+201A, U+201B, U+2032, U+02BC, U+FF07,
+    U+0060): a driver that converts the text to a non-Unicode code page may map one to ``'``,
+    which would end the literal on the server. Only plain scalars are allowed, and floats must
+    be finite.
     """
     if not isinstance(value, _INLINE_TYPES):  # bool is an int; datetime is a date
         return f"a {type(value).__name__} value cannot be inlined (scalars only)"
@@ -376,6 +389,12 @@ def inline_problem(value: object) -> str | None:
         return (
             "a text value holding a line terminator (CR, LF, U+0085, U+2028 or U+2029) cannot "
             "be inlined safely"
+        )
+    if isinstance(value, str) and any(ch in value for ch in QUOTE_LOOKALIKES):
+        return (
+            "a text value holding a quote look-alike (U+2018, U+2019, U+201A, U+201B, U+2032, "
+            "U+02BC, U+FF07 or U+0060) cannot be inlined safely: a non-Unicode code page may "
+            "read it as '"
         )
     return None
 
@@ -397,7 +416,14 @@ def plain_scalar(value: object) -> object:
     if isinstance(value, Decimal):
         return Decimal(Decimal.__str__(value))
     if isinstance(value, datetime.datetime):
-        return datetime.datetime.fromisoformat(datetime.datetime.isoformat(value))
+        try:  # isoformat asks the tzinfo for its offset, which host code may make raise
+            text = datetime.datetime.isoformat(value)
+        except Exception as e:
+            raise TypeError(
+                f"a datetime whose time zone cannot give its offset cannot be inlined "
+                f"({type(e).__name__})"
+            ) from None
+        return datetime.datetime.fromisoformat(text)
     if isinstance(value, datetime.date):
         return datetime.date.fromisoformat(datetime.date.isoformat(value))
     raise TypeError(f"a {type(value).__name__} value cannot be inlined (scalars only)")
@@ -542,10 +568,12 @@ class InlineConnector:
     * only plain scalars (text, integers, booleans, finite numbers, decimals, dates,
       timestamps, NULL), normalised to their exact base type first (a ``numpy.float64`` is
       inlined as a ``float``); a list, NaN or infinity is refused;
-    * text holding a backslash, NUL or line terminator (CR, LF, U+0085, U+2028, U+2029) is
-      refused; all other text is quoted with ``'`` doubled, which no server mode can read
-      differently -- on ``DOUBLED_QUOTE_DIALECTS`` only: elsewhere (BigQuery, Databricks,
-      Spark, Hive, ...) text holding ``'`` is refused;
+    * text holding a backslash, NUL, line terminator (CR, LF, U+0085, U+2028, U+2029) or a
+      quote look-alike (``QUOTE_LOOKALIKES``, which a non-Unicode code page may read as ``'``)
+      is refused, as is a timestamp whose time zone cannot give its offset; all other text is
+      quoted with ``'`` doubled, which no server mode can read differently -- on
+      ``DOUBLED_QUOTE_DIALECTS`` only: elsewhere (BigQuery, Databricks, Spark, Hive, ...) text
+      holding ``'`` is refused;
     * anything FactLang itself refuses to inline (``FL507``; ``FL500``) is reported as
       ``SG109`` too;
     * every literal must be exactly the form FactLang 0.1.4 spells for the value's type on

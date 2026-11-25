@@ -792,8 +792,17 @@ def test_trino_rejects_the_old_timestamp_form() -> None:
 
     v = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=_UTC)
     assert not literal_matches("TIMESTAMP '2026-01-02T03:04:05+00:00'", v, "trino")
-    assert not literal_matches("TIMESTAMP '2026-01-02 03:04:05'", v, "trino")
     assert literal_matches("TIMESTAMP '2026-01-02 03:04:05 UTC'", v, "trino")
+
+
+def test_trino_rejects_zone_less_timestamp() -> None:
+    """Trino reads a zone-less TIMESTAMP in the session time zone: never the UTC instant."""
+    from schemaguru.catalog.executor import literal_matches
+
+    v = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=_UTC)
+    assert not literal_matches("TIMESTAMP '2026-01-02 03:04:05'", v, "trino")
+    assert not literal_matches("TIMESTAMP '2026-01-02 03:04:05.123456'", v, "trino")
+    assert literal_matches("TIMESTAMP '2026-01-02 03:04:05.123456 UTC'", v, "trino")
 
 
 @pytest.mark.parametrize(
@@ -861,3 +870,28 @@ def test_inline_refuses_values_factlang_0_1_4_will_not_spell(value: object) -> N
     )
     with pytest.raises(ExecutionError, match="SG109"):
         InlineConnector(lambda sql: [], "duckdb").execute(probe, timeout_s=None)
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        (Decimal("1" + "0" * 38), "precision 39"),
+        (2**63, "64-bit"),
+        (-(2**63) - 1, "64-bit"),
+    ],
+)
+def test_fl507_refusals_pin_reason(value: object, reason: str) -> None:
+    """FactLang's FL507 reason reaches the caller under SG109, not only the code."""
+    from factlang.connectors import ExecutionError
+    from factlang.ir import Arity
+    from factlang.sql import Param, RenderedProbe
+
+    family = "integer" if isinstance(value, int) else "decimal"
+    probe = RenderedProbe(
+        "SELECT 1 AS x WHERE c = {{v}}", (Param("v", value, family),), Arity.ROW_SET, None,
+        "duckdb", "x",
+    )  # fmt: skip
+    with pytest.raises(ExecutionError, match=r"^FL700 SG109: a value cannot be inlined") as info:
+        InlineConnector(lambda sql: [], "duckdb").execute(probe, timeout_s=None)
+    assert reason in str(info.value)
+    assert "FL507" not in str(info.value)

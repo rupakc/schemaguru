@@ -218,3 +218,19 @@ def test_predicate_rejects_comments_outside_literals(predicate: str, markers: li
     from schemaguru.draft.verify import check_predicate
 
     assert check_predicate(predicate, markers) is not None
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "deleted IS NULL\uff1b DROP TABLE t",  # FULLWIDTH SEMICOLON
+        "deleted IS NULL \uff0d\uff0d x",  # FULLWIDTH HYPHEN-MINUS twice
+        "deleted IS NULL \ufe54 DROP TABLE t",  # SMALL SEMICOLON
+    ],
+)
+def test_fullwidth_separators_refused(predicate: str) -> None:
+    from schemaguru.draft.verify import check_predicate
+
+    assert check_predicate(predicate, ["deleted"]) is not None
+    # inside a string literal they are text, as their ASCII forms are (negative control)
+    assert check_predicate("deleted IS NULL OR note <> 'a\uff1b\uff0d\uff0db'", ["deleted"]) is None

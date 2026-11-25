@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import TextIO
@@ -44,10 +45,29 @@ def export_json(store: Store, path: str | os.PathLike[str]) -> None:
     try:
         with out:
             _write(store, out)
-        os.replace(tmp, target)
+        _replace(tmp, target)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+_REPLACE_ATTEMPTS = 10
+
+
+def _replace(src: Path, dst: Path) -> None:
+    """``os.replace``, retried on ``PermissionError``: on Windows a rename onto a file that
+    another export is replacing or a reader has open fails transiently. Bounded (10 attempts,
+    5 ms doubling to 100 ms), then the error propagates."""
+    delay = 0.005
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.1)
 
 
 def _write(store: Store, out: TextIO) -> None:

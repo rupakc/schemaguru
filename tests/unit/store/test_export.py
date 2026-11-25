@@ -4,6 +4,8 @@ import random
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from schemaguru.model.facts import Fact, Provenance, Status
 from schemaguru.model.kinds import FactKind
 from schemaguru.model.refs import ObjectRef
@@ -150,4 +152,58 @@ def test_store_and_export_share_encoder(tmp_path: Path) -> None:
     )
     # and what is stored hashes like what was written (so a re-read fact keeps its id)
     assert Fact.from_dict(json.loads(stored[0])).id == f.id
+    s.close()
+
+
+def _leftovers(directory: Path) -> list[str]:
+    return sorted(p.name for p in directory.iterdir() if p.name.endswith(".tmp"))
+
+
+def test_export_retries_a_transient_permission_error_on_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    s = SQLiteStore(tmp_path / "r.db")
+    _fill(s, 2)
+    real = os.replace
+    calls: list[int] = []
+
+    def flaky(src, dst):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        if len(calls) <= 2:
+            raise PermissionError(13, "Access is denied")
+        return real(src, dst)
+
+    monkeypatch.setattr("schemaguru.store.export.os.replace", flaky)
+    monkeypatch.setattr("schemaguru.store.export.time.sleep", lambda _s: None)
+    out = tmp_path / "out"
+    out.mkdir()
+    export_json(s, out / "e.json")
+    assert len(calls) == 3
+    assert (out / "e.json").is_file()
+    assert _leftovers(out) == []
+    s.close()
+
+
+def test_export_gives_up_on_a_permanent_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = SQLiteStore(tmp_path / "p.db")
+    _fill(s, 2)
+    calls: list[int] = []
+
+    def denied(src, dst):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr("schemaguru.store.export.os.replace", denied)
+    monkeypatch.setattr("schemaguru.store.export.time.sleep", lambda _s: None)
+    out = tmp_path / "out"
+    out.mkdir()
+    with pytest.raises(PermissionError):
+        export_json(s, out / "e.json")
+    assert len(calls) == 10
+    assert not (out / "e.json").exists()
+    assert _leftovers(out) == []
     s.close()

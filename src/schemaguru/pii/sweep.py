@@ -1,9 +1,11 @@
 """Outbound shape sweep (spec 11): mask any detector hit inside a free string.
 
 Unlike whole-value detection this *searches*, so it only uses detectors whose shape is
-unambiguous inside prose: JWT, email, UUID, IBAN (checksum), card (Luhn), IPv4/IPv6, long
-hex, E.164 / formatted national phone numbers. Names, addresses, free text and entropy
-secrets are whole-value heuristics and are not applied here.
+unambiguous inside prose: JWT, credentials (``key=value`` and published token shapes), email,
+UUID, IBAN (checksum), card (Luhn), IPv4/IPv6, long hex, postal addresses in their in-sentence
+forms (:data:`~schemaguru.pii.detectors.ADDRESS_IN_TEXT_RES`), E.164 / formatted national phone
+numbers. Names, free text and entropy secrets are whole-value heuristics and are not applied
+here.
 """
 
 from __future__ import annotations
@@ -20,27 +22,45 @@ def _b(pattern: str) -> re.Pattern[str]:
     return re.compile(rf"(?<![\w.+@\-]){pattern}(?![\w@\-])")
 
 
+def _glued(pattern: str) -> re.Pattern[str]:
+    """Like :func:`_b`, but the shape may be glued to a word by ``_`` or ``-``
+    (``token_ghp_...``, ``x_sk_live_...``): a published prefix is distinctive enough."""
+    return re.compile(rf"(?<![A-Za-z0-9.+@]){pattern}(?![\w@\-])")
+
+
 def _tok(token: str) -> Callable[[str], str]:
     return lambda _m: token
 
 
 # ``key=value`` credentials. The key may be glued to a word (``db_password``, ``x_api_key``):
 # the prefix stays in the text, only the value is masked. Values need a token-like shape
-# (``_kv_ok``); ``password=`` is :data:`_KV_PASSWORD`.
+# (``_kv_ok``); ``password=`` / ``password:`` is :data:`_KV_PASSWORD`.
 _KV = re.compile(
     r"(?:(?<=[_-])|(?<![\w-]))"  # a key glued by '_'/'-' to a word, or a whole word (linear)
     r"(?P<key>api[_-]?key|access[_-]?key|key|token|secret|password|passwd|bearer|authorization)"
     r"(?P<sep>[ \t]{0,3}[:=][ \t]{0,3}|[ \t]{1,3})(?P<val>\S{8,})",
     re.I,
 )
-# ``password=<value>`` (``=`` only): masked whatever the value's length (``password=a``)
+# ``password=<value>`` / ``pwd: <value>`` / ``"password": "<value>"``: masked whatever the
+# value's length (``password=a``, ``pwd: abc``), except a SQL type after a colon or a space
+# (``password: varchar(255)`` is a schema; ``=`` assigns, so it is always masked). A quoted value
+# keeps its quotes.
 _KV_PASSWORD = re.compile(
-    r"(?:(?<=[_-])|(?<![\w-]))(?P<key>password|passwd)(?P<sep>[ \t]{0,3}=[ \t]{0,3})"
-    r"(?P<val>[^\s<][^\s]*)",
+    r"(?:(?<=[_-])|(?<![\w-]))(?P<key>password|passwd|pwd)"
+    r"(?P<sep>[\"']?[ \t]{0,3}[:=][ \t]{0,3}(?P<q>[\"'])?)"
+    r"(?P<val>(?(q)(?!(?P=q))[^\s<](?:(?!(?P=q))[^\n]){0,255}|[^\s<\"']\S*))",
     re.I,
 )
 _PASSWORD_KEYS = ("password", "passwd")
-_PROVIDER_KEY = re.compile(r"\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}")
+_PROVIDER_KEY = re.compile(r"(?<![A-Za-z0-9])(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}")
+# A column type, as a schema states it after a key (``password: varchar(255)``, ``token text``).
+_SQL_TYPE = re.compile(
+    r"(?:(?:n?var)?char(?:acter)?|varchar2|nvarchar2|text|string|clob|blob|bytea|binary|varbinary"
+    r"|(?:tiny|small|medium|big)?int(?:eger)?|int[248]|(?:big)?serial|numeric|decimal|number"
+    r"|float[48]?|real|double|bool(?:ean)?|uuid|jsonb?|date|time|timestamp(?:tz)?|datetime|bytes)"
+    r"(?:\(\s{0,2}\d{1,5}\s{0,2}(?:,\s{0,2}\d{1,5}\s{0,2})?\))?[,;)]*",
+    re.I,
+)
 
 
 _KNOWN_PREFIX = re.compile(
@@ -78,10 +98,18 @@ def _kv_ok(text: str) -> bool:
     m = _KV.fullmatch(text)
     if m is None or m["val"].startswith("<"):
         return False
+    if "=" not in m["sep"] and _SQL_TYPE.fullmatch(m["val"]):
+        return False  # "password VARCHAR(255)": a column type after a key is a schema
     v = m["val"].strip("\"'`.,;)]}")
     if m["key"].lower() in _PASSWORD_KEYS and any(c.isdigit() for c in v):
         return any(c.isalpha() for c in v)  # a password with digits and letters, any length
     return _token_like(m["val"])
+
+
+def _password_ok(text: str) -> bool:
+    m = _KV_PASSWORD.fullmatch(text)
+    assert m is not None
+    return "=" in m["sep"] or _SQL_TYPE.fullmatch(m["val"]) is None
 
 
 def _kv_sub(text: str) -> str:
@@ -113,10 +141,10 @@ def _iban_sub(text: str) -> str:
 
 _RULES: tuple[_Rule, ...] = (
     ("secret", _b(d.JWT_RE.pattern), d.jwt_ok, _tok("<secret>")),
-    ("secret", _KV_PASSWORD, lambda _m: True, _kv_sub),
+    ("secret", _KV_PASSWORD, _password_ok, _kv_sub),
     ("secret", _KV, _kv_ok, _kv_sub),
     ("secret", _PROVIDER_KEY, lambda _m: True, _tok("<secret>")),
-    *[("secret", _b(pat), lambda _m: True, _tok("<secret>")) for pat in _CREDENTIAL_SHAPES],
+    *[("secret", _glued(pat), lambda _m: True, _tok("<secret>")) for pat in _CREDENTIAL_SHAPES],
     ("email", re.compile(d.EMAIL_RE.pattern), lambda _m: True, _tok("<email>")),
     ("uuid", _b(d.UUID_RE.pattern), lambda _m: True, _tok("<uuid>")),
     ("iban", _b(d.IBAN_RE.pattern), _iban_ok, _iban_sub),
@@ -124,6 +152,7 @@ _RULES: tuple[_Rule, ...] = (
     ("ip", re.compile(rf"(?<![\w.]){d.IPV4_RE.pattern}(?![\w]|\.\d)"), d.ipv4_ok, _tok("<ip>")),
     ("ip", re.compile(rf"(?<![\w:]){d.IPV6_RE.pattern}(?![\w:])"), d.ipv6_ok, _tok("<ip>")),
     ("hex", _b(d.HEX_RE.pattern), d.hex_ok, lambda m: f"<hex{len(m)}>"),
+    *[("address", rx, lambda _m: True, _tok("<address>")) for rx in d.ADDRESS_IN_TEXT_RES],
     ("phone", re.compile(rf"(?<![\w+]){d.E164_RE.pattern}(?!\d)"), d.phone_ok, _tok("<phone>")),
     (
         "phone",

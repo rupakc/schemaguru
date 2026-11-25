@@ -17,23 +17,23 @@ Audited against `main` at `710e21f` (Task 1). Tasks 2–8 turn the `open` rows i
 
 | ID | Item | State | Evidence |
 |---|---|---|---|
-| A1.1 | `Garcia,Maria` (comma-joined name) not masked | open | Task 3 |
-| A1.2 | `M. Garcia` (initial + surname) not masked | open | Task 3 |
-| A1.3 | lowercase names (`maria garcia`) not masked | open | Task 3 |
-| A1.4 | names not in the name list not masked | open | Task 3 |
-| A1.5 | lone-surname possessives (`Garcia's order`) not masked | open | Task 3 |
-| A1.6 | addresses inside sentences not swept | open | Task 3 |
+| A1.1 | `Garcia,Maria` (comma-joined name) not masked | fixed | test tests/unit/pii/test_hardening.py::test_comma_joined_name_masked |
+| A1.2 | `M. Garcia` (initial + surname) not masked | fixed | test tests/unit/pii/test_hardening.py::test_initial_surname_masked |
+| A1.3 | lowercase names (`maria garcia`) not masked | fixed | test tests/unit/pii/test_hardening.py::test_lowercase_name_masked |
+| A1.4 | names not in the name list not masked | fixed | test tests/unit/pii/test_hardening.py::test_cued_unlisted_name_masked |
+| A1.5 | lone-surname possessives (`Garcia's order`) not masked | fixed | test tests/unit/pii/test_hardening.py::test_surname_possessive_masked |
+| A1.6 | addresses inside sentences not swept | fixed | test tests/unit/pii/test_hardening.py::test_address_in_sentence_masked |
 | A1.7 | `password=hunter2` (< 8 chars) not masked | already fixed | commit c918616 · test tests/unit/pii/test_hardening.py::test_short_and_glued_credentials_are_masked |
-| A1.8 | credential glued to word chars (`x_<key>`); only keyword-adjacent and `x_api_key=` forms are masked, a bare `x_sk_live_…` or `token_ghp_…` in prose still leaks | open | Task 3 |
+| A1.8 | credential glued to word chars (`x_<key>`); only keyword-adjacent and `x_api_key=` forms are masked, a bare `x_sk_live_…` or `token_ghp_…` in prose still leaks | fixed | test tests/unit/pii/test_hardening.py::test_glued_credential_masked |
 | A1.9 | `github_pat_` / `xapp-` prefixes not covered | already fixed | commit 60b51f9 · test tests/unit/pii/test_hardening.py::test_bare_credentials_masked_in_prose |
-| A1.10 | zero-padded ids masked as phone (`0012345678901` → `<phone>`) | open | Task 3 |
-| A1.11 | path-like values masked as secret (a hex segment in a path → `<secret>`) | open | Task 3 |
-| A1.12 | version strings masked as `<ip>` (`release 2.10.3.1`) | open | Task 3 |
-| A1.13 | place/brand names masked as names (`Austin Store`) | open | Task 3 |
-| A1.14 | `password: varchar(255)` masked as a secret | open | Task 3 |
-| A1.15 | `_contains` misses class-range interior chars (`?` vs `[a-f]`) | open | Task 3 |
-| A1.16 | `detectors.py` detector fn typed `object` + `type: ignore` | open | Task 3 |
-| A1.17 | docs: hex needs a letter; the `<secret>` / `<address>` tokens | open | Task 3 |
+| A1.10 | zero-padded ids masked as phone (`0012345678901` → `<phone>`) | ruled out | `0012345678901` is the 00 international dialling form, which no rule can tell from a zero-padded id, so recall keeps it `<phone>`; ids with 3+ leading zeros were already kept (pinned by test_zero_padded_id_not_phone) · docs: docs/guide/pii.md |
+| A1.11 | path-like values masked as secret (a hex segment in a path → `<secret>`) | fixed | test tests/unit/pii/test_hardening.py::test_path_not_secret |
+| A1.12 | version strings masked as `<ip>` (`release 2.10.3.1`) | ruled out | a four-part version is a valid dotted quad, which no rule can tell from an IPv4 address, so recall keeps it `<ip>`; `1.2.3` and `v10.0.1` were already kept (pinned by test_version_not_ip) · docs: docs/guide/pii.md |
+| A1.13 | place/brand names masked as names (`Austin Store`) | ruled out | a name list cannot tell a place or brand from a person (`Austin Store`); unmasking them would leak real names, and recall wins · docs: docs/guide/pii.md |
+| A1.14 | `password: varchar(255)` masked as a secret | fixed | test tests/unit/pii/test_hardening.py::test_credential_key_with_sql_type_kept |
+| A1.15 | `_contains` misses class-range interior chars (`?` vs `[a-f]`) | fixed | test tests/unit/pii/test_policy.py::test_contains_class_range_interior |
+| A1.16 | `detectors.py` detector fn typed `object` + `type: ignore` | fixed | test tests/unit/pii/test_hardening.py::test_detectors_have_no_type_ignore |
+| A1.17 | docs: hex needs a letter; the `<secret>` / `<address>` tokens | fixed | test tests/conformance/test_docs_examples.py::test_pii_tokens_documented |
 | A2.1 | path check only on a FROM item's first token (`FROM s."x.csv"` passes) | open | Task 4 |
 | A2.2 | `.avro` / `.orc` / `.bz2` / `.gzip` not in the path-suffix list | open | Task 4 |
 | A2.3 | metadata guard: backtick-quoted identifiers falsely rejected (`` `a;b` ``) | open | Task 4 |

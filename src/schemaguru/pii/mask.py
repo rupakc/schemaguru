@@ -103,7 +103,7 @@ def _shape_hit(text: str) -> bool:
     v = text.strip()
     if v and any(d.category in _SHAPES and d.matches(v) for d in all_detectors()):
         return True
-    return bool(sweep_detail(text)[1])
+    return any(hit in _SHAPES for hit in sweep_detail(text)[1])
 
 
 def sql_template(sql: str) -> str | None:

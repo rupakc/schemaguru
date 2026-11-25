@@ -109,6 +109,7 @@ TRUTH: dict[str, tuple[list[str], list[str]]] = {
             "x9Qz7LmT2vKb8WnR4pYc1HdJ6sGa",
             "Qm4Tz8Lk2Vb7Wn1Rp9Yc3HdJ5sGa6",
             "pT3/Zk8Lm2Vb7Wn1Rq9Yc4HdJ5sGa6x",
+            "https://example.com/a1b2c3d4e5f6g7h8i9j0k1l2",  # a token inside a URL (0.2.0)
         ],
         [
             "internationalization",
@@ -117,7 +118,7 @@ TRUTH: dict[str, tuple[list[str], list[str]]] = {
             "SomeVeryLongCamelCaseIdentifierName",
             "123e4567-e89b-12d3-a456-426614174000",
             "d41d8cd98f00b204e9800998ecf8427e",
-            "https://example.com/a1b2c3d4e5f6g7h8i9j0k1l2",
+            "https://example.com/orders/2026/11/report-final.pdf",
             "a.b.c",
             "short1x",
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
@@ -163,11 +164,12 @@ TRUTH: dict[str, tuple[list[str], list[str]]] = {
             "John Smith-Jones",
             "Ronald McDonald",
             "O'Brien Patrick",
+            "john smith",  # listed names in lower case (0.2.0)
         ],
         [
             "Order Shipped",
             "Pending Review",
-            "john smith",
+            "order shipped",
             "Maria",
             "Total Amount Due Now Please",
         ],

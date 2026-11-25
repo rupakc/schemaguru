@@ -72,7 +72,7 @@ re-measures exactly within budget. See [[Sampling]].
 
 Not in the default `masked` mode: they become `<email>`. `raw` needs an explicit per-table opt-in;
 `none` sends no values. Masking also applies to views and tool results. Its heuristics have
-limits (lower-case names, for example), listed on [[PII-and-Sampling-Policy]].
+limits (a first name alone, for example), listed on [[PII-and-Sampling-Policy]].
 
 ### Can people correct what SchemaGuru says?
 

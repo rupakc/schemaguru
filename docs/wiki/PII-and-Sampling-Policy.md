@@ -39,7 +39,7 @@ would fail open. A glob that matches no stored table is a warning, `SG507`, from
 
 ## What gets masked, with examples
 
-Real output of `schemaguru.pii.mask_value` and `sweep` (SchemaGuru 0.1.0, 2026-11-24):
+Real output of `schemaguru.pii.mask_value` and `sweep` (SchemaGuru 0.2.0 development, 2026-11-25):
 
 ```text
 mask_value('user1@example.com') -> ('<email>', 'email')
@@ -51,7 +51,10 @@ mask_value('10.0.0.12') -> ('<ip>', 'ip')
 mask_value('550e8400-e29b-41d4-a716-446655440000') -> ('<uuid>', 'uuid')
 mask_value('9f86d081884c7d659a2feaa0c55ad015') -> ('<hex32>', 'hex')
 mask_value('Maria Garcia') -> ('<name>', 'name')
-mask_value('maria garcia') -> ('maria garcia', None)
+mask_value('maria garcia') -> ('<name>', 'name')
+mask_value('M. Garcia') -> ('<name>', 'name')
+mask_value("Garcia's order") -> ("<name>'s order", 'name')
+mask_value('customer Zorblat Quenvik') -> ('customer <name>', 'name')
 mask_value('Jean-Luc') -> ('Jean-Luc', None)
 mask_value('White Paper') -> ('<name>', 'name')
 mask_value('Price List') -> ('<name>', 'name')
@@ -59,18 +62,29 @@ mask_value('paid') -> ('paid', None)
 mask_value('Ordered twice, the second parcel was returned to the depot unopened by the courier.') -> ('<free_text len=83>', 'free_text')
 mask_value('Call me at user1@example.com') -> ('Call me at <email>', 'email')
 sweep('contact user1@example.com or +49 30 1234567, ip 10.0.0.12') -> ('contact <email> or <phone>, ip <ip>', 3)
+mask_value('ship to 42 Elm Street, Springfield today') -> ('ship to <address> today', 'address')
+mask_value('password: hunter2') -> ('password: <secret>', 'secret')
+mask_value('password: varchar(255)') -> ('password: varchar(255)', None)
+mask_value('/var/data/x.csv') -> ('/var/data/x.csv', None)
+mask_value('/var/data/9f86d081884c7d659a2feaa0c55ad015/x.csv') -> ('/var/data/<hex32>/x.csv', 'hex')
+mask_value('000123456') -> ('000123456', None)
 ```
 
 The detectors, in priority order: UUID, email (including lists), IPv4/IPv6, IBAN (checksum),
-card (Luhn), long hex (20+ hex characters; 16 would corrupt JSON numbers), phone (E.164 and
-national forms), JWT/secret-like strings, postal address heuristic, person-name heuristic, free
-text (over 60 characters with spaces). The first match decides. Blank values (`''`, whitespace)
-count as NULL.
+card (Luhn), long hex (20+ hex characters with at least one letter; 16 would corrupt JSON
+numbers), phone (E.164 and national forms), JWT/secret-like strings, postal address heuristic,
+person-name heuristic, free text (over 60 characters with spaces). The first match decides. Blank
+values (`''`, whitespace) count as NULL. A path or URL is a secret only when a piece of it looks
+like a token; after `password`, `passwd` or `pwd` with `=` or `:` any value except a column type
+is masked; addresses are masked inside sentences too.
 
 ### The person-name heuristic and its limits
 
 A value is masked as `<name>` when it is two to four capitalised tokens and at least one token is
-in a bundled list of names. This is deliberately **fail-safe**: product or document titles that
+in a bundled list of names (joined by spaces, a comma, or an initial's period: `Garcia,Maria`,
+`M. Garcia`), two or more listed names in lower case (`maria garcia`), a listed surname with a
+possessive (`Garcia's`), or capitalised tokens after a person cue (`customer`, `contact`, `by`,
+`from`, `Mr`, `Ms`, `Dr`, ...) whether listed or not. This is deliberately **fail-safe**: product or document titles that
 look like names are masked too ("White Paper", "Brown Sugar", "Price List" above), because
 showing a real name is worse than hiding a product title. If that hurts a table, opt it into
 `raw`, or disable the heuristic:
@@ -81,9 +95,11 @@ from schemaguru.pii.detectors import PersonNameDetector
 register_detector(PersonNameDetector(enabled=False), replace=True)
 ```
 
-Known limits: lower-case names (`maria garcia`), single tokens (`Jean-Luc`, a first name alone)
-and hyphenated-only forms are **not** masked by this heuristic. Treat `masked` as a strong
-default, not a guarantee; use `none` for tables that must never leak a value.
+Known limits: single tokens without a cue (`Jean-Luc`, a first name alone) and lower-case names
+that are not in the list are **not** masked by this heuristic; place and brand names that share a
+word with the list are (`Austin Store`). The PII guide's "Known limits" lists every precision
+trade. Treat `masked` as a strong default, not a guarantee; use `none` for tables that must never
+leak a value.
 
 ### Never by name alone
 

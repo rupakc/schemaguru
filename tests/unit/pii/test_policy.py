@@ -131,3 +131,18 @@ def test_lint_per_glob_flags_globs_matching_no_table() -> None:
     assert [d.code for d in diags] == ["SG507"]
     assert diags[0].severity is Severity.WARNING and "hrr.*" in diags[0].message
     assert lint_per_glob(SamplingConfig(), tables) == []
+
+
+def test_contains_class_range_interior() -> None:  # A1.15
+    from schemaguru.pii.policy import _contains
+
+    # 'c' is inside [a-f] but written in neither glob: it must still be considered
+    assert not _contains("[a-f]", "[abdef]")
+    assert not _contains("shop.[a-f]*", "shop.[abdef]*")
+    assert _contains("[b-d]", "[a-f]")
+    assert _contains("c", "[a-f]")
+    assert not _contains("?", "[a-f]")
+    assert _contains("[!a-c]", "[!b]")
+    assert not _contains("[!b]", "[!a-c]")
+    assert _contains("[!a-f]", "[!b-d]")
+    assert not _contains("[a-z]", "[a-mo-z]")  # 'n' is only an interior character

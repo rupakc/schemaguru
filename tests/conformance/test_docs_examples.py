@@ -261,3 +261,13 @@ def test_examples_shop_builds_from_the_examples_dir_alone(tmp_path: Path) -> Non
         check=False,
     )
     assert out.returncode == 0 and out.stdout.strip() == "True", out.stderr
+
+
+def test_pii_tokens_documented() -> None:  # ledger A1.17
+    """The PII guide names every token masking can emit and says a hex token needs a letter."""
+    from schemaguru.pii.mask import _TOKENS
+
+    text = (DOCS / "guide" / "pii.md").read_text("utf-8")
+    missing = [t for t in _TOKENS.values() if f"`{t}`" not in text]
+    assert not missing, missing
+    assert re.search(r"hex[^\n]*at least one letter", text), "hex-needs-a-letter rule"

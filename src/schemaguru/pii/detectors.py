@@ -13,7 +13,7 @@ import ipaddress
 import math
 import re
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
@@ -72,6 +72,38 @@ ADDRESS_RES = (
     re.compile(r"[^\W\d_]{4,}str\.\s{0,3}\d{1,4}[a-z]?(?:,.{0,60})?", re.I),
     # "Main Road 5, 12345 Town"
     re.compile(rf"(?:{_WORD}\s{{1,3}}){{1,4}}\d{{1,4}}[a-z]?,\s{{0,2}}\d{{4,5}}\s{{1,3}}{_WORD}"),
+)
+
+# Addresses *inside* prose (the outbound sweep searches with these). Whole-value detection above
+# can afford any-case words; in a sentence the name words must be capitalised ("42 Elm Street"),
+# except before an unambiguous street word ("12 baker street"), so prose such as "updated
+# 2 times via the API" or "rank 1 takes first place" stays. Every repetition is bounded and each
+# pattern starts only at a word start: linear time.
+_CAP = "[A-Z\u00c0-\u00d6\u00d8-\u00de][\\w'\\-]{0,30}"
+_TEXT_WORD = r"[^\W\d_][\w'\-]{0,30}"
+_STRONG_STREET = r"street|road|avenue|boulevard|blvd|lane|stra(?:\u00df|ss)e"
+_CITY = rf"(?:,[ \t]{{0,2}}(?:\d{{4,5}}[ \t]{{1,3}})?{_CAP})?"
+ADDRESS_IN_TEXT_RES = (
+    # "42 Elm Street, Springfield": house number, 1-4 capitalised words, a street word, a city
+    re.compile(
+        rf"(?<![\w.,])\d{{1,4}}[A-Za-z]?[ \t]{{1,3}}(?:{_CAP}[ \t]{{1,3}}){{1,4}}"
+        rf"(?i:{_STREET})\b\.?{_CITY}"
+    ),
+    # "12 baker street": any-case words before an unambiguous street word
+    re.compile(
+        rf"(?<![\w.,])\d{{1,4}}[A-Za-z]?[ \t]{{1,3}}(?:{_TEXT_WORD}[ \t]{{1,3}}){{1,3}}"
+        rf"(?i:{_STRONG_STREET})\b{_CITY}"
+    ),
+    # "Baker Street 12"
+    re.compile(
+        rf"(?<![\w])(?:{_CAP}[ \t]{{1,3}}){{1,4}}(?i:{_STREET})\b\.?[ \t]{{0,3}}"
+        rf"\d{{1,4}}[A-Za-z]?(?!\w){_CITY}"
+    ),
+    # glued German forms: "Hauptstra\u00dfe 12", "Musterstr. 5a"
+    re.compile(
+        r"(?<![\w])(?i:[^\W\d_]{3,40}(?:stra(?:\u00df|ss)e|weg|platz|allee|gasse)"
+        r"|[^\W\d_]{4,40}str\.)[ \t]{0,3}\d{1,4}[A-Za-z]?(?!\w)" + _CITY
+    ),
 )
 
 FREE_TEXT_MIN = 61
@@ -176,13 +208,13 @@ class Detector(Protocol):
 class _Fn:
     """A detector backed by a predicate over the stripped value."""
 
-    def __init__(self, name: str, category: str, fn: object) -> None:
+    def __init__(self, name: str, category: str, fn: Callable[[str], bool]) -> None:
         self.name = name
         self.category = category
         self._fn = fn
 
     def matches(self, value: str) -> bool:
-        return bool(self._fn(value.strip()))  # type: ignore[operator]
+        return bool(self._fn(value.strip()))
 
 
 def _email(v: str) -> bool:
@@ -206,9 +238,49 @@ def _card(v: str) -> bool:
     return CARD_RE.fullmatch(v) is not None and card_ok(v)
 
 
-def _secret(v: str) -> bool:
-    if jwt_ok(v) and JWT_RE.fullmatch(v):
+# A path or URL ("/var/data/x.csv", "./out/v3.csv", "s3://bucket/key"; no whitespace, so prose
+# that starts with '/' is still free text): its own shape is not a secret, so it is one only when
+# a piece of it looks random. A '/'-segment that is wholly hex or
+# a UUID is left to the outbound sweep, which masks it in place ("/var/data/<hex32>/x.csv").
+_PATH_START = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://|\.{1,2}/|~/|/")
+_PIECE = re.compile(r"[A-Za-z0-9]+")
+_SWEPT_SEGMENT = re.compile(rf"(?:{UUID_RE.pattern}|[0-9a-fA-F]{{20,}})(?:\.[A-Za-z0-9]{{1,8}})?")
+
+
+_CAMEL = re.compile(r"(?:[A-Z]?[a-z]+)+|[A-Z]+[a-z]*")
+
+
+def _random_piece(p: str) -> bool:
+    """An alphanumeric run that could be (part of) a token: 8+ characters mixing letters and
+    digits or mixing case; 5-7 characters mixing case with a digit (``3OYmpN``) or in no
+    camel-case pattern (``PoiCtT``); or 16+ letters of high entropy. Words, numbers, dates and
+    ``iPhone`` / ``MyApp`` are not."""
+    if len(p) < 5:
+        return False
+    if len(p) < 8:
+        mixed = any(c.isupper() for c in p) and any(c.islower() for c in p) and not p.istitle()
+        return mixed and (not p.isalpha() or _CAMEL.fullmatch(p) is None)
+    letters = any(c.isalpha() for c in p)
+    if letters and any(c.isdigit() for c in p):
         return True
+    if not letters:
+        return False
+    if not (p.islower() or p.isupper() or p.istitle()):
+        return True
+    return len(p) >= 16 and shannon(p) >= 3.5
+
+
+def _path_secret(v: str) -> bool:
+    for segment in v.split("/"):
+        head = segment.split(".")[0]
+        if _SWEPT_SEGMENT.fullmatch(segment) and (UUID_RE.fullmatch(head) or hex_ok(head)):
+            continue  # the sweep masks it in place
+        if any(_random_piece(p) for p in _PIECE.findall(segment)):
+            return True
+    return False
+
+
+def _entropy_secret(v: str) -> bool:
     if len(v) < 24 or not _SECRET_CHARS.fullmatch(v) or _SCHEME_RE.match(v):
         return False
     if UUID_RE.fullmatch(v) or hex_ok(v):
@@ -216,6 +288,15 @@ def _secret(v: str) -> bool:
     if not (any(c.isdigit() for c in v) and any(c.isalpha() for c in v)):
         return False
     return shannon(v) >= 4.0
+
+
+def _secret(v: str) -> bool:
+    if jwt_ok(v) and JWT_RE.fullmatch(v):
+        return True
+    if _PATH_START.match(v) and not any(c.isspace() for c in v):
+        # '+' is base64, almost never a path: such a value keeps the entropy rule too
+        return _path_secret(v) or ("+" in v and _entropy_secret(v))
+    return _entropy_secret(v)
 
 
 def secret_like(value: str) -> bool:
@@ -266,62 +347,153 @@ def _is_name_hit(tok: str) -> bool:
     return any(k in names for k in keys)
 
 
+_HONORIFICS = frozenset(
+    {"mr", "mrs", "ms", "miss", "dr", "prof", "herr", "frau", "mme", "mlle", "sir"}
+)
+_CUE_WORDS = frozenset({"customer", "contact", "by", "from"})
+_CUE_TAIL = re.compile(r"([^\W\d_]{2,8})\.?\s{1,3}\Z")
+
+
+@dataclass(frozen=True)
+class _Tok:
+    start: int
+    end: int
+    word: str
+    hit: bool  # in the name list
+    cap: bool  # a capitalised name token (False: a lower-case token that is in the list)
+    possessive: bool
+
+
+def _cue_before(text: str, start: int) -> str | None:
+    """``"honorific"`` / ``"cue"`` when the word just before ``start`` announces a person."""
+    m = _CUE_TAIL.search(text, max(0, start - 13), start)
+    if m is None:
+        return None
+    a = m.start(1)
+    if a > 0 and (text[a - 1].isalnum() or text[a - 1] == "_"):
+        return None  # the tail of a longer word ("supercustomer")
+    word = m.group(1).lower()
+    if word in _HONORIFICS:
+        return "honorific"
+    return "cue" if word in _CUE_WORDS else None
+
+
+def _capitalised_ranges(text: str, run: list[_Tok], i: int, j: int) -> list[tuple[int, int]]:
+    """Token ranges to mask in the capitalised sub-run ``run[i..j]``."""
+    hits = [k for k in range(i, j + 1) if run[k].hit]
+    n = j - i + 1
+    if hits and n >= 2:
+        if n <= 4:
+            return [(i, j)]
+        keep = {m for k in hits for m in (k - 1, k, k + 1) if i <= m <= j}
+        out: list[tuple[int, int]] = []
+        k = i
+        while k <= j:
+            if k in keep:
+                e = k
+                while e + 1 <= j and e + 1 in keep:
+                    e += 1
+                if e > k:
+                    out.append((k, e))
+                k = e + 1
+            else:
+                k += 1
+        return out
+    if hits and run[i].possessive:
+        return [(i, i)]  # a lone listed surname with a possessive: "Garcia's order"
+    cue = _cue_before(text, run[i].start)
+    if cue == "honorific" or (cue == "cue" and n >= 2):
+        return [(i, min(j, i + 3))]
+    for k in range(i, j):
+        word = run[k].word.lower()
+        if word in _HONORIFICS or (word in _CUE_WORDS and j - k >= 2):
+            return [(k + 1, min(j, k + 4))]
+    return []
+
+
+def _run_spans(text: str, run: list[_Tok]) -> list[tuple[int, int]]:
+    picked: list[tuple[int, int]] = []
+    for want_cap in (True, False):
+        i = 0
+        while i < len(run):
+            ok = run[i].cap if want_cap else run[i].hit
+            if not ok:
+                i += 1
+                continue
+            j = i
+            while j + 1 < len(run) and (run[j + 1].cap if want_cap else run[j + 1].hit):
+                j += 1
+            if want_cap:
+                picked += _capitalised_ranges(text, run, i, j)
+            elif j > i and not all(run[k].cap for k in range(i, j + 1)):
+                picked.append((i, j))  # listed names in lower case: "maria garcia"
+            i = j + 1
+    merged: list[tuple[int, int]] = []
+    for a, b in sorted(picked):
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+        else:
+            merged.append((a, b))
+    return [(run[a].start, run[b].end) for a, b in merged]
+
+
+def _joins(sep: str, after_initial: bool) -> bool:
+    """Whether the text between two tokens keeps them in one name."""
+    if len(sep) > 3:
+        return False
+    if sep.isspace():
+        return True
+    if sep[:1] == "," or (sep[:1] == "." and after_initial):
+        return sep[1:] == "" or sep[1:].isspace()
+    return False
+
+
 def name_spans(text: str) -> list[tuple[int, int]]:
     """Spans of person names inside ``text``.
 
-    A name is a run of 2-4 capitalised tokens with at least one hit in the name list.
+    Tokens are Title-case, ALL-CAPS, ``McX``/``MacX``, ``O'X`` or hyphenated (capitalised), or
+    a lower-case word that is in the bundled name list. They are joined by whitespace, by a
+    comma with or without a space (``"Garcia, Maria"``, ``"Garcia,Maria"``) or by an initial's
+    period (``"M. Garcia"``). A name is:
 
-    Tokens may be Title-case, ALL-CAPS, ``McX``/``MacX``, ``O'X`` or hyphenated; they are
-    joined by whitespace or by ``", "`` (``"Garcia, Maria"``). A trailing possessive ``'s`` /
-    ``U+2019 s`` ends the name and is kept outside the span (``"Alice Johnson's"`` ->
-    ``"<name>'s"``). A run longer than four tokens
-    is masked in windows of one token either side of each name-list hit. Linear in len(text).
+    * a run of 2-4 capitalised tokens with at least one hit in the name list (a longer run is
+      masked in windows of one token either side of each hit);
+    * 2+ consecutive listed tokens in any case (``"maria garcia"``);
+    * a lone listed token with a possessive (``"Garcia's"``); a trailing ``'s`` / ``U+2019 s``
+      ends the name and is kept outside the span (``"<name>'s"``);
+    * 1-4 capitalised tokens after an honorific (``Mr``, ``Ms``, ``Dr``, ...), or 2-4 after a
+      person cue (``customer``, ``contact``, ``by``, ``from``), listed or not.
+
+    Linear in len(text).
     """
     spans: list[tuple[int, int]] = []
-    run: list[tuple[int, int, bool]] = []
+    run: list[_Tok] = []
 
     def flush() -> None:
-        if len(run) >= 2 and any(h for _, _, h in run):
-            if len(run) <= 4:
-                spans.append((run[0][0], run[-1][1]))
-            else:
-                keep = [False] * len(run)
-                for i, (_, _, h) in enumerate(run):
-                    if h:
-                        for j in (i - 1, i, i + 1):
-                            if 0 <= j < len(run):
-                                keep[j] = True
-                i = 0
-                while i < len(run):
-                    if keep[i]:
-                        j = i
-                        while j + 1 < len(run) and keep[j + 1]:
-                            j += 1
-                        if j > i:
-                            spans.append((run[i][0], run[j][1]))
-                        i = j + 1
-                    else:
-                        i += 1
+        if run:
+            spans.extend(_run_spans(text, run))
         run.clear()
 
     prev_end = -1
+    after_initial = False
     for m in _NAME_TOKEN.finditer(text):
         tok = m.group()
-        if run:
-            sep = text[prev_end : m.start()]
-            if len(sep) > 3 or not (sep.isspace() or (sep[:1] == "," and sep[1:].isspace())):
-                flush()
+        if run and not _joins(text[prev_end : m.start()], after_initial):
+            flush()
         end, possessive = m.end(), False
         if len(tok) > 2 and tok[-2] in "'\u2019" and tok[-1] in "sS":
             base = tok[:-2]  # "Johnson's": mask the name, keep the possessive suffix
             if _is_name_token(base):
                 tok, end, possessive = base, m.start() + len(base), True
         if _is_name_token(tok):
-            run.append((m.start(), end, _is_name_hit(tok)))
+            run.append(_Tok(m.start(), end, tok, _is_name_hit(tok), True, possessive))
             if possessive:
                 flush()  # a possessive ends the name
+        elif tok.islower() and _is_name_hit(tok):
+            run.append(_Tok(m.start(), end, tok, True, False, False))
         else:
             flush()
+        after_initial = len(tok) == 1 and tok.isupper()
         prev_end = m.end()
     flush()
     return spans

@@ -29,7 +29,7 @@ are not stored. See [[Store]].
 
 At storage, in evidence, in error messages, in rendered views (a final sweep in every profile),
 in drafting payloads and in every agent tool result. The details and the known limits of the
-detectors (for example, lower-case names are not caught) are on [[PII-and-Sampling-Policy]].
+detectors (for example, a first name alone is not caught) are on [[PII-and-Sampling-Policy]].
 
 ## The guard helper is not a sandbox
 

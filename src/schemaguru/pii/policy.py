@@ -18,8 +18,8 @@ _MODES = ("masked", "raw", "none")
 
 # ---- glob containment (real, not textual) -------------------------------------------------
 # A glob is compiled to a small NFA over tokens; ``_contains(a, b)`` decides language(a) <=
-# language(b) by exploring pairs of NFA state sets over the alphabet of both globs' characters
-# plus one fresh character standing for "any other".
+# language(b) by exploring pairs of NFA state sets over one representative character of every
+# class of characters the two globs cannot tell apart (see ``_alphabet``).
 
 _Tok = tuple[str, object]  # ("lit", c) | ("any", None) | ("star", None) | ("cls", (neg, items))
 
@@ -53,18 +53,42 @@ def _parse(glob: str) -> tuple[_Tok, ...]:
     return tuple(toks)
 
 
-def _cls_has(spec: tuple[bool, str], ch: str) -> bool:
-    neg, body = spec
-    hit = False
+def _cls_ranges(body: str) -> list[tuple[str, str]]:
+    """A class body (``a-fx``) as inclusive ranges (``[("a", "f"), ("x", "x")]``)."""
+    out: list[tuple[str, str]] = []
     i = 0
     while i < len(body):
         if i + 2 < len(body) and body[i + 1] == "-":
-            hit = hit or body[i] <= ch <= body[i + 2]
+            out.append((body[i], body[i + 2]))
             i += 3
         else:
-            hit = hit or body[i] == ch
+            out.append((body[i], body[i]))
             i += 1
-    return hit != neg
+    return out
+
+
+def _cls_has(spec: tuple[bool, str], ch: str) -> bool:
+    neg, body = spec
+    return any(lo <= ch <= hi for lo, hi in _cls_ranges(body)) != neg
+
+
+def _alphabet(*globs: tuple[_Tok, ...]) -> list[str]:
+    """One character per interval of code points on which every token of ``globs`` agrees.
+
+    Each literal ``c`` and each class range ``lo-hi`` only changes its answer at ``c`` / ``c+1``
+    and ``lo`` / ``hi+1``; between two such break points every character behaves alike, so the
+    break points (and ``\\x00`` for everything below them) are a complete alphabet. Listing only
+    the characters written in the globs would miss a range's interior (``c`` in ``[a-f]``).
+    """
+    points = {0}
+    for toks in globs:
+        for kind, arg in toks:
+            if kind == "lit":
+                points |= {ord(cast(str, arg)), ord(cast(str, arg)) + 1}
+            elif kind == "cls":
+                for lo, hi in _cls_ranges(cast(tuple[bool, str], arg)[1]):
+                    points |= {ord(lo), ord(hi) + 1}
+    return [chr(p) for p in sorted(points) if p <= 0x10FFFF]
 
 
 def _closure(toks: tuple[_Tok, ...], states: frozenset[int]) -> frozenset[int]:
@@ -86,7 +110,9 @@ def _step(toks: tuple[_Tok, ...], states: frozenset[int], ch: str) -> frozenset[
         if kind == "star":
             nxt.add(s)
         elif (
-            kind == "any" or (kind == "lit" and arg == ch) or (kind == "cls" and _cls_has(arg, ch))  # type: ignore[arg-type]
+            kind == "any"
+            or (kind == "lit" and arg == ch)
+            or (kind == "cls" and _cls_has(cast(tuple[bool, str], arg), ch))
         ):
             nxt.add(s + 1)
     return _closure(toks, frozenset(nxt))
@@ -96,7 +122,7 @@ def _step(toks: tuple[_Tok, ...], states: frozenset[int], ch: str) -> frozenset[
 def _contains(a: str, b: str) -> bool:
     """True when every string matched by glob ``a`` is also matched by glob ``b``."""
     ta, tb = _parse(a), _parse(b)
-    alphabet = [*sorted({*a, *b}), "\x00"]
+    alphabet = _alphabet(ta, tb)
     start = (_closure(ta, frozenset({0})), _closure(tb, frozenset({0})))
     seen = {start}
     todo = [start]

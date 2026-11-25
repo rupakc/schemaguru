@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 import pytest
 
-from schemaguru.pii import all_detectors, mask_value, sweep
+from schemaguru.pii import all_detectors, mask_free_text, mask_value, sweep
 from schemaguru.pii.sweep import _RULES
 
 N = 50_000
@@ -43,6 +43,18 @@ ADVERSARIAL = {
     "sk_": "sk_test_" * (N // 8),
     "github_pat_long": "git" + "hub_pat_" + "a" * N,
     "xapp-long": "xa" + "pp-" + "a" * N + "!",
+    # 0.2.0 rules: colon passwords, in-text addresses, cues, lower-case names, paths, glue
+    "pwd:": "pwd:" * (N // 4),
+    'pwd="': 'pwd="' + "a" * N,
+    "1 Elm ": "1 Elm " * (N // 6),
+    "Elm St ": "Elm St " * (N // 7),
+    "strasse": "a" * N + "strasse 1",
+    "Mr ": "Mr " * (N // 3),
+    "by A ": "by A " * (N // 5),
+    "maria ": "maria " * (N // 6),
+    "M. ": "M. " * (N // 3),
+    "path": "/" + "a1b2c3d4/" * (N // 9),
+    "_ghp_": "_" + "ghp_" * (N // 4),
 }
 
 
@@ -265,7 +277,7 @@ def test_previous_behaviours_survive() -> None:
         "secret: required",
         "authorization: required_header",
         "Lookup key: SKU-1234",
-        "password: required_field_here",
+        "api_key: required_field_here",
         "uses bearer authentication",
         "token=refresh_required",
     ],
@@ -384,5 +396,192 @@ def test_short_and_glued_credentials_are_masked(text: str) -> None:
 def test_glued_key_keeps_its_prefix_and_prose_stays() -> None:
     assert sweep("db_password=abc")[0] == "db_password=<secret>"
     # negative controls: schema prose and empty values are untouched
-    for prose in ("customer_key = 12345678", "password: required_field_here", "password="):
+    for prose in ("customer_key = 12345678", "token: required_field_here", "password="):
         assert sweep(prose) == (prose, 0), prose
+
+
+# --- 0.2.0 hardening (ledger A1): red-first tests, one per item --------------------------------
+
+
+def _no_leak(out: str, *words: str) -> None:
+    for w in words:
+        assert w not in out, (w, out)
+
+
+def test_comma_joined_name_masked() -> None:  # A1.1
+    out, n = mask_free_text("call Garcia,Maria today")
+    assert "<name>" in out and n >= 1, out
+    _no_leak(out, "Garcia", "Maria")
+    assert out == "call <name> today"
+    assert mask_value("Garcia,Maria") == ("<name>", "name")
+
+
+def test_initial_surname_masked() -> None:  # A1.2
+    assert mask_value("M. Garcia") == ("<name>", "name")
+    assert mask_free_text("refund for M. Garcia today") == ("refund for <name> today", 1)
+    assert mask_free_text("Maria J. Garcia called")[0] == "<name> called"
+
+
+def test_lowercase_name_masked() -> None:  # A1.3
+    assert mask_value("maria garcia") == ("<name>", "name")
+    assert mask_free_text("refund for maria garcia today") == ("refund for <name> today", 1)
+    out = mask_free_text("Contact Maria garcia now")[0]
+    _no_leak(out, "Maria", "garcia")
+    # a lowercase word that is not in the list ends the run: ordinary prose stays
+    for prose in ("the order was paid", "status is pending review", "maria"):
+        assert mask_free_text(prose) == (prose, 0), prose
+
+
+@pytest.mark.parametrize(
+    ("text", "masked"),
+    [
+        ("customer Zorblat Quenvik called", "customer <name> called"),
+        ("contact Zorblat Quenvik", "contact <name>"),
+        ("Contact Zorblat Quenvik", "Contact <name>"),
+        ("approved by Zorblat Quenvik", "approved by <name>"),
+        ("a note from Zorblat Quenvik", "a note from <name>"),
+        ("Mr Zorblat Quenvik", "Mr <name>"),
+        ("Ms. Zorblat Quenvik", "Ms. <name>"),
+        ("Dr Zorblat Quenvik", "Dr <name>"),
+        ("Dr. Zorblat Quenvik", "Dr. <name>"),
+    ],
+)
+def test_cued_unlisted_name_masked(text: str, masked: str) -> None:  # A1.4
+    assert mask_free_text(text)[0] == masked
+    assert mask_value(text)[0] == masked
+
+
+def test_uncued_unlisted_pair_is_kept() -> None:  # A1.4 negative control
+    for prose in ("Zorblat Quenvik", "Spring Sale", "Order Shipped", "sort by date"):
+        assert mask_free_text(prose) == (prose, 0), prose
+
+
+def test_surname_possessive_masked() -> None:  # A1.5
+    assert mask_value("Garcia's order") == ("<name>'s order", "name")
+    assert mask_free_text("see Garcia\u2019s order") == ("see <name>\u2019s order", 1)
+    # a possessive of an unlisted word stays
+    assert mask_free_text("the Widget's colour") == ("the Widget's colour", 0)
+
+
+def test_address_in_sentence_masked() -> None:  # A1.6
+    text = "ship to 42 Elm Street, Springfield today"
+    want = "ship to <address> today"
+    assert mask_free_text(text) == (want, 1)
+    assert sweep(text) == (want, 1)
+    assert mask_value(text) == (want, "address")
+    for t, w in [
+        ("left at Baker Street 12 yesterday", "left at <address> yesterday"),
+        ("send to 12 baker street today", "send to <address> today"),
+        ("moved to Hauptstraße 12 in May", "moved to <address> in May"),
+    ]:
+        assert sweep(t) == (w, 1), t
+    for prose in ("updated 2 times via the API", "Rank 1 takes first place", "10 Place"):
+        assert sweep(prose) == (prose, 0), prose
+
+
+@pytest.mark.parametrize(
+    ("text", "masked"),
+    [
+        ("password: hunter2", "password: <secret>"),
+        ("pwd: abc", "pwd: <secret>"),
+        ("pwd=abc", "pwd=<secret>"),
+        ("login failed, password: a1", "login failed, password: <secret>"),
+        ("db_pwd: x9 retry", "db_pwd: <secret> retry"),
+        ('{"password": "hunter2"}', '{"password": "<secret>"}'),
+        ("pwd='abc'", "pwd='<secret>'"),
+        # recall over precision: any value after "password:" is masked, words included
+        ("password: required_field_here", "password: <secret>"),
+    ],
+)
+def test_short_colon_credential_masked(text: str, masked: str) -> None:  # A1.7 colon forms
+    assert sweep(text) == (masked, 1)
+    assert sweep(masked) == (masked, 0)
+
+
+_GLUED_SK = "x_" + "sk_" + "live_" + "Zx9Qm2Lp8Rt4Vb7Nc1Kd6"
+_GLUED_GH = "token_" + _GH
+
+
+@pytest.mark.parametrize("glued", [_GLUED_SK, _GLUED_GH, "my_" + _AWS, "cfg_" + _SLACK])
+def test_glued_credential_masked(glued: str) -> None:  # A1.8
+    out, n = sweep(f"leaked {glued} in the log")
+    assert n == 1 and "<secret>" in out, out
+    _no_leak(out, "Zx9", "ZX9")
+    assert sweep(out) == (out, 0)
+
+
+def test_glued_credential_lookalikes_pass() -> None:  # A1.8 negative control
+    for prose in ("disk_test_results2026", "task_live_counter", "x_ghp_short"):
+        assert sweep(prose) == (prose, 0), prose
+
+
+def test_zero_padded_id_not_phone() -> None:  # A1.10
+    for v in ("000123456", "0001234567", "000012345678", "00000001234567"):
+        assert mask_value(v) == (v, None), v
+        assert sweep(f"id {v} ok") == (f"id {v} ok", 0), v
+    # recall: '+', separators and the 00 international prefix stay phones
+    for v in ("+44 20 7946 0958", "000-123-4567", "0001 234 5678", "00491701234567"):
+        assert mask_value(v)[1] == "phone", v
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/var/data/x.csv",
+        "s3://bucket/key",
+        "/data/warehouse/2026/11/25/part-00017-snappy.parquet",
+        "/var/lib/postgresql/16/main/base/16384",
+        "./exports/customers_2026-11-25_v3.csv",
+        "~/Downloads/report-2026-11-25-final.xlsx",
+        "/Users/x/iPhone/MyApp/a.csv",
+        "s3://bucket/dt=2026-11-25/hour=13/part-0001.json",
+    ],
+)
+def test_path_not_secret(path: str) -> None:  # A1.11
+    assert mask_value(path) == (path, None)
+
+
+def test_path_with_token_inside_is_masked() -> None:  # A1.11 recall
+    hexed = "/var/data/9f86d081884c7d659a2feaa0c55ad015/x.csv"
+    assert mask_value(hexed) == ("/var/data/<hex32>/x.csv", "hex")
+    for v in (
+        "/srv/keys/Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5/id",
+        "s3://bucket/Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5aa",
+        "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        "/" + _GH,
+    ):
+        out, cat = mask_value(v)
+        assert cat == "secret" and "Zx9" not in out and "bPxR" not in out, (v, out)
+
+
+def test_version_not_ip() -> None:  # A1.12
+    for v in ("1.2.3", "v10.0.1", "release 1.2.3 out", "v1.2.3.4", "1.2.3.4.5"):
+        assert mask_value(v) == (v, None), v
+        assert sweep(v) == (v, 0), v
+    # recall: a valid dotted quad is an address whatever word precedes it
+    assert mask_value("10.0.0.12") == ("<ip>", "ip")
+    assert sweep("release 2.10.3.1") == ("release <ip>", 1)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "password: varchar(255)",
+        "password VARCHAR(255) NOT NULL",
+        "pwd: text",
+        "password: character varying(64)",
+        "secret: numeric(10,2)",
+    ],
+)
+def test_credential_key_with_sql_type_kept(text: str) -> None:  # A1.14
+    assert sweep(text) == (text, 0)
+
+
+def test_detectors_have_no_type_ignore() -> None:  # A1.16
+    from pathlib import Path
+
+    import schemaguru.pii.detectors as det
+
+    source = Path(det.__file__).read_text("utf-8")
+    assert "type: ignore" not in source
+    assert "fn: Callable[[str], bool]" in source

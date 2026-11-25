@@ -76,7 +76,7 @@ system lineage), which could only ship validated by replayed fixtures.
 - Python ≥ 3.10; `mypy --strict`; ruff; the gate
   `ruff check && ruff format --check && mypy --strict src && pytest -m "not integration and not live and not benchmark"`
   must pass before every push (the pre-push hook enforces it; never `--no-verify`).
-- Core dependencies stay `factlang>=0.1.3,<0.2` (raised in 0.1.1) and `PyYAML>=6`; everything else is an
+- Core dependencies stay `factlang>=0.1.4,<0.2` (raised in 0.1.1; 0.2.0 requires 0.1.4 for zone-explicit databricks timestamps) and `PyYAML>=6`; everything else is an
   extra and imported lazily (the lazy-deps architecture test enforces this).
 - The layer rules of base §5.1 hold; new modules are placed in a layer and the layer
   test learns them.

@@ -6,7 +6,7 @@
 
 **Architecture:** Lineage is two new fact kinds whose precedence lives in one pure module (`model/lineage.py`). The store keeps an *effective-only* `lineage_edges` index, rewritten for a subject in the same transaction as its facts. SQL is parsed by `sqlglot` (extra `lineage`) in one reused, killable worker subprocess. The parent process holds raw SQL in memory only, and only long enough to parse it. Readers gain an optional `view_definitions`; crawl, dbt import and overlays emit the facts; rendering, a traversal (`knowledge/lineage.py`) and a `lineage` tool across Python, CLI, HTTP and MCP read them. Lineage never enters the join graph.
 
-**Tech Stack:** Python 3.10–3.13, factlang 0.1.3, PyYAML, sqlite3/FTS5, psycopg (Postgres store), sqlglot 30.x (optional extra), pytest + hypothesis, ruff, mypy --strict, GitHub Actions, mkdocs-material.
+**Tech Stack:** Python 3.10–3.13, factlang 0.1.4, PyYAML, sqlite3/FTS5, psycopg (Postgres store), sqlglot 30.x (optional extra), pytest + hypothesis, ruff, mypy --strict, GitHub Actions, mkdocs-material.
 
 **Spec:** `docs/specs/2026-11-25-schemaguru-0.2.0-design.md` ("§n"). It extends `docs/specs/2026-11-24-schemaguru-design.md` ("base §n"). Every implementer reads the § sections named in its task. The 0.1.0 build ledger (`.superpowers/sdd/2026-11-24-schemaguru-plan/progress.md`, `task-24-deferred.md`, `task-*-report.md`; git-ignored, on the maintainer's machine) explains each Appendix A item.
 
@@ -17,7 +17,7 @@
 - Stage explicit paths only; never `git add -A` or `git add .`; never `--no-verify`.
 - Agents never dispatch subagents and never use `gh`.
 - No mention of any proprietary predecessor or organisation anywhere: code, docs, fixtures, commit messages (the denylist CI job). Use only generic shop-domain names (`customers, orders, order_items, products, payments, events, accounts, users, sessions`, plus `refunds`, `analytics.*` models).
-- Core dependencies unchanged: exactly `factlang>=0.1.3,<0.2` and `PyYAML>=6`. New extra `lineage = ["sqlglot>=30,<31"]`, also added to `all` and to `dev`. Every third-party import other than `factlang`/`yaml` is lazy (inside a function), as enforced by `tests/architecture/test_layers.py::test_optional_deps_lazy`.
+- Core dependencies unchanged: exactly `factlang>=0.1.4,<0.2` and `PyYAML>=6`. New extra `lineage = ["sqlglot>=30,<31"]`, also added to `all` and to `dev`. Every third-party import other than `factlang`/`yaml` is lazy (inside a function), as enforced by `tests/architecture/test_layers.py::test_optional_deps_lazy`.
 - Public API additive only (§3, base §19): new names and optional parameters only; no 0.1.0 name is removed or changes meaning. New names are added to `tests/unit/test_guru.py::EXPORTS` (inserted before `"__version__"`), never removed or renamed.
 - Red-first: every behaviour change lands with a test that failed before the change. Paste the red run's one-line failure into the commit body (`red: <test id>: <error>`).
 - Guards only tighten (§2 anti-goals, §5): the read-only guard (`src/schemaguru/guard.py`), the metadata guard (`catalog/executor.py::check_metadata_sql`), masking (`src/schemaguru/pii/`) and the `InlineConnector` refusals. A false-rejection fix ships with a test proving the hostile form is still refused. Masking trades keep recall (over-masking acceptable, a leak is not), and each trade is documented.
@@ -929,7 +929,7 @@ T18 → T19 → T20 → T21 → T22
   - `test_l1_sources`: a DuckDB shop with a view, `manifest_lineage.json` and `tests/fixtures/overlays/lineage.yaml` → LINEAGE facts with provenance DECLARED, CATALOG and HUMAN, sources `dbt:manifest:*`, `view_definition` and `overlay:*:*`.
   - `test_l2_truthful`: every lineage fact is `UNVERIFIED`; a rendered agent view and the tool text contain `unverified` and never `measured`/`VERIFIED` on lineage lines.
   - `test_l3_agent_surfaces`: `guru.lineage`, `handle_tool_call("lineage")`, `cli.main(["lineage", …])`, HTTP `/lineage` via Starlette `TestClient`, and `"lineage"` in the MCP tool list (`importorskip("mcp")`) and in every adapter's tool names.
-  - `test_l4_optional_parser`: monkeypatch `lineage_available` → False and `sys.modules["sqlglot"] = None` → dbt table-level lineage, no COLUMN_LINEAGE, exactly one SG212. Also `pyproject.toml` `dependencies == ["factlang>=0.1.3,<0.2", "PyYAML>=6"]` and `optional-dependencies["lineage"] == ["sqlglot>=30,<31"]`.
+  - `test_l4_optional_parser`: monkeypatch `lineage_available` → False and `sys.modules["sqlglot"] = None` → dbt table-level lineage, no COLUMN_LINEAGE, exactly one SG212. Also `pyproject.toml` `dependencies == ["factlang>=0.1.4,<0.2", "PyYAML>=6"]` and `optional-dependencies["lineage"] == ["sqlglot>=30,<31"]`.
   - `test_h1_ledger_closed`: every `ITEM_IDS` row's state is `fixed`, `already fixed` or `ruled out` (reuse `tests/conformance/test_hardening_ledger.py::parse_ledger`).
   - `test_s1_results_published`: `benchmarks/results/0.2.0.json` has `size.tables == 500_000` and `size.columns == 25_000_000`. Each `HARD_TARGETS` metric meets its bound or is named in `known_limits`, and that name appears in CHANGELOG `0.2.0`. `.github/workflows/bench.yml` exists.
   - `test_antigoal_no_verified_lineage` (the `Fact.make` VERIFIED lineage raises)

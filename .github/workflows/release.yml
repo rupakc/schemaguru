@@ -27,7 +27,7 @@ jobs:
           python-version: "3.12"
       - name: Tag matches schemaguru.__about__.__version__
         run: |
-          version=$(PYTHONPATH=src python -c "from schemaguru.__about__ import __version__; print(__version__)")
+          version=$(python -c "import runpy; print(runpy.run_path('src/schemaguru/__about__.py')['__version__'])")
           echo "tag=${GITHUB_REF_NAME} version=${version}"
           test "${GITHUB_REF_NAME}" = "v${version}"
       - run: pip install build twine

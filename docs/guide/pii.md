@@ -81,8 +81,8 @@ spaces). Blank values count as NULL. Detectors are plug-ins:
   (`password: hunter2` → `password: <secret>`, `{"password": " x"}` →
   `{"password": "<secret>"}`), unless it is a column type (`password: varchar(255)`
   describes a schema). A path or URL keeps the high-entropy rule on its own text (after the
-  scheme), and is also a secret when a piece of it looks like a token; a hex or UUID segment
-  is masked in place instead (`/var/data/<hex32>/x.csv`).
+  scheme), and is also a secret when a piece of it looks like a token; such a path is masked
+  whole (`/var/data/9f86…015/x.csv` → `<secret>`).
 * **Addresses** (`<address>`) are masked as whole values and inside sentences:
   `ship to 42 Elm Street, Springfield today` → `ship to <address> today`.
 
@@ -129,9 +129,8 @@ one, it masks. What that means in practice:
 - A path or URL of 24+ varied characters is high-entropy like a token and is masked whole
   (`/data/warehouse/2026/11/25/part-00017-snappy.parquet` → `<secret>`, and so is a long
   `https://…` link): a key written in groups (`/licenses/AB3X-QZ9K-…`) has the same shape.
-  Only a hex or UUID segment is masked in place rather than hiding the path; when the rest of
-  such a path is made of numbers and lower-case or Title-case words it is shown, so a short
-  lower-case token beside a hex segment would show.
+- A path or URL holding a random-looking segment is masked whole: a hex or UUID key in a path
+  hides the whole path, not only the key (`/var/data/9f86…015/x.csv` → `<secret>`).
 - A quoted credential value runs to its closing quote or the end of the line; an unclosed quote
   masks the rest of the line.
 - Addresses inside sentences need capitalised street names (`42 Elm Street`), except before an

@@ -66,7 +66,7 @@ mask_value('ship to 42 Elm Street, Springfield today') -> ('ship to <address> to
 mask_value('password: hunter2') -> ('password: <secret>', 'secret')
 mask_value('password: varchar(255)') -> ('password: varchar(255)', None)
 mask_value('/var/data/x.csv') -> ('/var/data/x.csv', None)
-mask_value('/var/data/9f86d081884c7d659a2feaa0c55ad015/x.csv') -> ('/var/data/<hex32>/x.csv', 'hex')
+mask_value('/var/data/9f86d081884c7d659a2feaa0c55ad015/x.csv') -> ('<secret>', 'secret')
 mask_value('000123456') -> ('000123456', None)
 ```
 
@@ -75,8 +75,8 @@ card (Luhn), long hex (20+ hex characters with at least one letter; 16 would cor
 numbers), phone (E.164 and national forms), JWT/secret-like strings, postal address heuristic,
 person-name heuristic, free text (over 60 characters with spaces). The first match decides. Blank
 values (`''`, whitespace) count as NULL. A path or URL keeps the high-entropy rule and is also a
-secret when a piece of it looks like a token, but a hex or UUID segment is masked in place
-(`/var/data/<hex32>/x.csv`); after `password`, `passwd` or `pwd` with `=` or `:` any value except a
+secret when a piece of it looks like a token, and is then masked whole (a hex-keyed path
+included); after `password`, `passwd` or `pwd` with `=` or `:` any value except a
 column type is masked, quoted JSON credential values included; addresses are masked inside
 sentences too.
 

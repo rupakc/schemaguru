@@ -114,6 +114,26 @@ PATH_TOKENS = st.builds(
     PATH_PREFIXES,
     st.one_of(B64_TOKENS, URLSAFE_TOKENS, SEGMENTED_KEYS),
 )
+# hex/UUID-keyed paths: a key segment beside ordinary-looking segments (fix round 2)
+_KEY_SEGMENTS = st.one_of(
+    st.from_regex(r"[0-9a-f]{20,40}", fullmatch=True),
+    st.uuids().map(str),
+)
+_OTHER_SEGMENTS = st.one_of(
+    st.from_regex(r"[a-z]{3,12}", fullmatch=True),
+    st.from_regex(r"[A-Z][a-z]{2,10}", fullmatch=True),
+    st.from_regex(r"[a-z]{4,6}(?:-[a-z]{4,6}){1,4}", fullmatch=True),
+    st.from_regex(r"[a-z]{3,10}\.[a-z]{2,4}", fullmatch=True),
+)
+HEX_KEYED_PATHS = st.builds(
+    lambda prefix, segments: prefix + "/".join(segments),
+    st.sampled_from(["/", "~/", "./"]),
+    st.lists(st.one_of(_KEY_SEGMENTS, _OTHER_SEGMENTS), min_size=2, max_size=5).filter(
+        lambda segs: any(
+            len(x) >= 20 and x.replace("-", "").isalnum() and not x.isalpha() for x in segs
+        )
+    ),
+).filter(lambda s: _v010_secret(s))
 PASSWORDS = st.from_regex(r"[A-Za-z]{2,10}[0-9]{1,4}[A-Za-z0-9!#%]{0,8}", fullmatch=True)
 
 
@@ -137,6 +157,7 @@ def _v010_secret(v: str) -> bool:
     st.one_of(
         st.sampled_from(RECALL_CORPUS),
         PATH_TOKENS.map(lambda s: (s, "secret")),
+        HEX_KEYED_PATHS.map(lambda s: (s, "secret")),
         URLSAFE_TOKENS.map(lambda s: (s, "secret")),
         SEGMENTED_KEYS.map(lambda s: (s, "secret")),
         B64_TOKENS.map(lambda s: (s, "secret")),

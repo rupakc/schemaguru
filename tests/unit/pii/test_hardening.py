@@ -533,15 +533,12 @@ def test_zero_padded_id_not_phone() -> None:  # A1.10
 @pytest.mark.parametrize(
     ("path", "masked"),
     [
-        # the A1.11 finding: a hex or UUID segment is masked in place, not the whole path
-        ("/var/data/9f86d081884c7d659a2feaa0c55ad015/x.csv", "/var/data/<hex32>/x.csv"),
-        ("/store/123e4567-e89b-12d3-a456-426614174000/report.csv", "/store/<uuid>/report.csv"),
         ("/var/data/x.csv", "/var/data/x.csv"),
         ("s3://bucket/key", "s3://bucket/key"),
         ("/Users/x/iPhone/MyApp/a.csv", "/Users/x/iPhone/MyApp/a.csv"),
     ],
 )
-def test_path_not_secret(path: str, masked: str) -> None:  # A1.11
+def test_path_not_secret(path: str, masked: str) -> None:  # A1.11: short paths stay
     out, cat = mask_value(path)
     assert out == masked and cat != "secret", out
 
@@ -552,8 +549,12 @@ def test_path_not_secret(path: str, masked: str) -> None:  # A1.11
         "/data/warehouse/2026/11/25/part-00017-snappy.parquet",
         "./exports/customers_2026-11-25_v3.csv",
         "s3://bucket/dt=2026-11-25/hour=13/part-0001.json",
-        # the rest of a hex-keyed path that still looks like a token keeps the whole mask
+        # A1.11 ruled out: a hex/UUID-keyed path is masked whole, never shown around the key
         "/9f86d081884c7d659a2feaa0c55ad015/k2m8z-p4w7r",
+        "/var/data/9f86d081884c7d659a2feaa0c55ad015/x.csv",
+        "/store/123e4567-e89b-12d3-a456-426614174000/report.csv",
+        "/9f86d081884c7d659a2feaa0c55ad015/hoagn-ddmjx-kcycs-tnydu",
+        "./cb3697231602ede56794929893c/wjgkqofvuitr",
     ],
 )
 def test_long_varied_path_stays_masked(path: str) -> None:  # A1.11 recall over precision
@@ -561,8 +562,6 @@ def test_long_varied_path_stays_masked(path: str) -> None:  # A1.11 recall over 
 
 
 def test_path_with_token_inside_is_masked() -> None:  # A1.11 recall
-    hexed = "/var/data/9f86d081884c7d659a2feaa0c55ad015/x.csv"
-    assert mask_value(hexed) == ("/var/data/<hex32>/x.csv", "hex")
     for v in (
         "/srv/keys/Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5/id",
         "s3://bucket/Zx9Qm2Lp8Rt4Vb7Nc1Kd6Hs3Jf5aa",

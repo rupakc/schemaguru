@@ -438,7 +438,7 @@ _DIALECT_FORMS = {
 def literal_matches(lit: str, value: object, dialect: str) -> bool:
     """Is ``lit`` exactly the literal FactLang 0.1.2 spells for ``value``'s type on
     ``dialect``? Fail closed: an unknown type, or any other spelling, is ``False``."""
-    forms = _DIALECT_FORMS.get(dialect.lower(), _ANSI_FORMS)
+    forms = _DIALECT_FORMS.get(canonical_dialect(dialect), _ANSI_FORMS)
     if value is None:
         pattern = "NULL"
     elif isinstance(value, bool):
@@ -481,6 +481,22 @@ def _as_rows(result: Any) -> list[dict[str, Any]]:
 # every other dialect text holding ``'`` is refused: BigQuery rejects ``''`` (syntax error),
 # Databricks/Spark/Hive read adjacent literals as one (``'O''Brien'`` is ``OBrien``, a silently
 # wrong value), and a dialect SchemaGuru does not know gets no benefit of the doubt.
+# labels hosts use for a dialect -> its canonical (FactLang profile) name. The SQL Server set is
+# FactLang's ``TSQL_ALIASES``; ``postgresql``/``mariadb`` are SQLAlchemy's names.
+DIALECT_ALIASES = {
+    **dict.fromkeys(("mssql", "sqlserver", "sql_server", "synapse", "fabric", "azuresql"), "tsql"),
+    "postgresql": "postgres",
+    "mariadb": "mysql",
+}
+
+
+def canonical_dialect(dialect: str) -> str:
+    """The canonical dialect name for a host's label (case- and whitespace-insensitive): an
+    alias becomes its dialect (``mssql`` -> ``tsql``), any other label is lower-cased."""
+    name = dialect.strip().lower()
+    return DIALECT_ALIASES.get(name, name)
+
+
 DOUBLED_QUOTE_DIALECTS = frozenset(
     {"clickhouse", "duckdb", "mysql", "oracle", "postgres", "redshift", "snowflake", "trino",
      "tsql"}
@@ -516,7 +532,9 @@ class InlineConnector:
 
     def __init__(self, fn: Any, dialect: str) -> None:
         self.fn = fn
-        self.dialect = dialect
+        # canonical before any inlining or re-check: FactLang spells an alias it does not know
+        # (``mssql``) in ANSI forms, not T-SQL's
+        self.dialect = canonical_dialect(dialect)
 
     def execute(self, probe: Any, *, timeout_s: float | None) -> Any:
         conns = importlib.import_module("factlang.connectors")
@@ -529,7 +547,7 @@ class InlineConnector:
                 code="FL700",
             )
 
-        dialect = self.dialect.lower()
+        dialect = self.dialect
         no_doubling = dialect not in DOUBLED_QUOTE_DIALECTS
         params = []
         for p in probe.params:

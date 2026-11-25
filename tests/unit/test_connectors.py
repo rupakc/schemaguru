@@ -681,3 +681,67 @@ def test_schemaguru_refuses_a_quote_where_it_cannot_rely_on_doubling(dialect: st
         InlineConnector(lambda sql: [], dialect).execute(
             _probe("SELECT 1 AS x WHERE name = {{v}}", dialect, v="O'Brien"), timeout_s=None
         )
+
+
+_ALIAS_VALUES = [
+    ("O'Brien", "string"),
+    (True, "boolean"),
+    (False, "boolean"),
+    (_D, "date"),
+    (_TS, "timestamp"),
+]
+
+
+@pytest.mark.parametrize(
+    ("alias", "canonical"),
+    [
+        ("mssql", "tsql"),
+        ("sqlserver", "tsql"),
+        ("sql_server", "tsql"),
+        ("synapse", "tsql"),
+        ("fabric", "tsql"),
+        ("azuresql", "tsql"),
+        ("TSQL", "tsql"),
+        (" MSSQL ", "tsql"),
+        ("postgresql", "postgres"),
+        ("mariadb", "mysql"),
+        ("Oracle", "oracle"),
+    ],
+)
+def test_inline_dialect_aliases_spell_exactly_as_the_canonical_dialect(
+    alias: str, canonical: str
+) -> None:
+    """An alias is normalised before inlining and before the re-check lookup: FactLang alone
+    would spell ``mssql`` in ANSI forms (TRUE, DATE '..', no N prefix)."""
+    from schemaguru.catalog.executor import canonical_dialect
+
+    assert canonical_dialect(alias) == canonical
+    conn = InlineConnector(lambda sql: [], alias)
+    assert conn.dialect == canonical
+    for value, family in _ALIAS_VALUES:
+        got: list[str] = []
+        want: list[str] = []
+        InlineConnector(lambda sql, g=got: g.append(sql) or [], alias).execute(
+            _typed_probe(value, family, alias), timeout_s=None
+        )
+        InlineConnector(lambda sql, w=want: w.append(sql) or [], canonical).execute(
+            _typed_probe(value, family, canonical), timeout_s=None
+        )
+        assert got == want, (alias, value)
+
+
+def test_inline_mssql_gives_the_tsql_forms() -> None:
+    from factlang.sql import probe as fl_probe
+
+    assert fl_probe.style_for("mssql").string_prefix == ""  # negative control: FactLang alone
+    got: list[str] = []
+    conn = InlineConnector(lambda sql: got.append(sql) or [], "mssql")
+    for value, family in _ALIAS_VALUES:
+        conn.execute(_typed_probe(value, family, "mssql"), timeout_s=None)
+    assert [g.removeprefix("SELECT 1 AS x WHERE a = ") for g in got] == [
+        "N'O''Brien'",
+        "1",
+        "0",
+        "CAST('2026-01-02' AS DATE)",
+        "CAST('2026-01-02 03:04:05.000600' AS DATETIME2)",
+    ]

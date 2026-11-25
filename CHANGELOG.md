@@ -6,15 +6,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Changed
-- Requires FactLang 0.1.2 (`factlang>=0.1.2,<0.2`). Hosts without bind parameters
-  (`execute(sql)`/`query(sql)`) now refuse, with `SG109`, a text value holding a line
-  terminator (CR, LF, U+0085, U+2028, U+2029), and a `'` on any dialect without a
-  doubled-quote form (BigQuery, Databricks, Spark, Hive, unknown dialects); FactLang's own
-  refusals (`FL507`, `FL500`) are reported as `SG109`. Literals follow FactLang 0.1.2's
-  dialect spellings (T-SQL `N'…'` text and ISO casts, `1`/`0` booleans on T-SQL and Oracle,
-  Oracle `TIMESTAMP 'YYYY-MM-DD HH:MM:SS'`), and each is re-checked against exactly that form.
-
 ## [0.1.0] - 2026-11-25
 
 First release.
@@ -37,6 +28,13 @@ First release.
   fan-out, freshness and pattern rates; per-probe, per-run and per-period byte budgets with a
   ledger; representative key-hash / block sampling of large tables, labelled `ESTIMATED`;
   first-touch queueing with queue, background or block modes.
+- Hosts without bind parameters (`execute(sql)`/`query(sql)`) get values inlined as literals
+  in FactLang 0.1.2's dialect spellings (T-SQL `N'…'` text, ISO casts and `1`/`0` booleans,
+  also for its aliases `mssql`, `sqlserver`, `synapse`, …; Oracle `1`/`0` and
+  `TIMESTAMP 'YYYY-MM-DD HH:MM:SS'`), each re-checked against exactly that form. `SG109`
+  refuses a backslash, NUL or line terminator (CR, LF, U+0085, U+2028, U+2029), a `'` on any
+  dialect without a doubled-quote form (BigQuery, Databricks, Spark, Hive, unknown dialects),
+  and anything FactLang declines to inline (`FL507`, `FL500`).
 - Join graph from measured and declared edges: additive cost per hop, k-shortest path search,
   thin joins labelled, broken joins refused, hub-pivot refusal, waypoint rules and identity
   chains, with dialect-correct join snippets.

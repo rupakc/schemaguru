@@ -76,7 +76,7 @@ system lineage), which could only ship validated by replayed fixtures.
 - Python ≥ 3.10; `mypy --strict`; ruff; the gate
   `ruff check && ruff format --check && mypy --strict src && pytest -m "not integration and not live and not benchmark"`
   must pass before every push (the pre-push hook enforces it; never `--no-verify`).
-- Core dependencies stay `factlang>=0.1.2,<0.2` and `PyYAML>=6`; everything else is an
+- Core dependencies stay `factlang>=0.1.3,<0.2` (raised in 0.1.1) and `PyYAML>=6`; everything else is an
   extra and imported lazily (the lazy-deps architecture test enforces this).
 - The layer rules of base §5.1 hold; new modules are placed in a layer and the layer
   test learns them.
@@ -437,6 +437,17 @@ Grouped by area; the `T<n>` tag is the 0.1.0 task that recorded it. Items marked
   at 2×hop_limit; via-success search near the 1 s benchmark bound.
 - Denylist misses ALLCAPS+CamelCase (`ZORBClient`); qualified `t.isDeleted` left bare;
   ambiguous case-insensitive match left bare.
+
+**A9 0.1.1 patch review and check_fact** (added 2026-11-25 after the 0.1.1 FactLang 0.1.3 patch)
+- `InlineConnector` class docstring omits the trino `… UTC` form and the databricks
+  zone-less refusal; FL507 tests assert only `SG109`; `test_trino_rejects_the_old_timestamp_form`
+  mixes two assertions; `literal_refusal` became a public name in 0.1.1 (keep — removing a
+  released name breaks §3).
+- `check_fact` has no claim cap: SchemaGuru calls FactLang's `Checker.check` directly (to keep
+  its own evidence scrubbing) and so bypasses FactLang 0.1.3's `max_claims` (default 200).
+  Add a SchemaGuru-side cap with the same default, refused before any warehouse spend, as a
+  tool error with code `too_many_claims` (FactLang's stable code), configurable, `None`
+  disables.
 
 **A8 CLI, docs, tests, CI** (T1, T19, T23)
 - `--format json` errors are plain text on stderr (no JSON error object).

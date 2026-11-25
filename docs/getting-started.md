@@ -167,8 +167,9 @@ BigQuery client, a FactLang connector, or a plain function `execute(sql)` /
 `execute(sql, params)` returning rows as dicts (pass `dialect=`). A function that takes no
 parameters gets every value inlined as an ANSI literal. Such an `execute(sql)` or `query(sql)`
 host has no driver binding, so a probe whose text value holds a backslash, a NUL, a line
-terminator (CR, LF, U+0085, U+2028, U+2029) or a quote look-alike a non-Unicode code page may
-read as `'` (U+2018, U+2019, U+201A, U+201B, U+2032, U+02BC, U+FF07, a backtick), or whose
+terminator (CR, LF, U+0085, U+2028, U+2029), a quote look-alike a non-Unicode code page may
+read as `'` (U+2018, U+2019, U+201A, U+201B, U+2032, U+02BC, U+FF07) or a backtick (some
+dialects read it as an identifier quote), or whose
 value is not a plain scalar, is refused (`SG109`), and its final SQL must pass the read-only guard. On BigQuery, Databricks, Spark,
 Hive and any dialect SchemaGuru does not know to double quotes, a text value holding `'` is
 refused too: their string literals have no doubled-quote form (BigQuery rejects

@@ -85,7 +85,11 @@ to those tables.
 
 - The metadata guard refuses a `;` inside a backtick identifier (`` `a;b` ``), as FactLang's
   own metadata guard does: where backticks are not identifier quotes (Postgres, the ANSI
-  default) that `;` separates statements. Plain backtick identifiers (`` `table_name` ``) pass.
+  default) that `;` separates statements. Plain backtick and bracket identifiers
+  (`` `table_name` ``, `[table_name]`) pass.
+- A text value holding a backtick cannot be inlined on hosts that take SQL text only
+  (`SG109`, refused fail-safe because some dialects read a backtick as an identifier quote);
+  pass a DB-API connection or an engine for bound parameters.
 - `literal_refusal` in `schemaguru.catalog.executor` is a public name since 0.1.1 and stays
   under that name: renaming it would remove a released name. It returns a specific reason a
   rendered literal is refused (today the zone-less Databricks timestamp), or `None`.

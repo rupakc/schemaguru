@@ -36,13 +36,13 @@ Audited against `main` at `710e21f` (Task 1). Tasks 2–8 turn the `open` rows i
 | A1.17 | docs: hex needs a letter; the `<secret>` / `<address>` tokens | fixed | test tests/conformance/test_docs_examples.py::test_pii_tokens_documented |
 | A2.1 | path check only on a FROM item's first token (`FROM s."x.csv"` passes) | fixed | test tests/unit/test_guard.py::test_file_in_any_from_item_refused |
 | A2.2 | `.avro` / `.orc` / `.bz2` / `.gzip` not in the path-suffix list | fixed | test tests/unit/test_guard.py::test_more_file_extensions_refused |
-| A2.3 | metadata guard: backtick-quoted identifiers falsely rejected (`` `a;b` ``) | ruled out | accepting `;` inside backticks would loosen the metadata guard beyond FactLang's FL703 guard (`;` refused anywhere) and on non-backtick dialects `;` separates statements; plain backtick identifiers pass, and a backtick quoting variant now stops a quote inside one hiding a statement (test tests/unit/catalog/test_executor.py::test_backtick_identifiers_accepted_hostile_refused) · docs: docs/guide/security.md |
+| A2.3 | metadata guard: backtick-quoted identifiers falsely rejected (`` `a;b` ``) | ruled out | accepting `;` inside backticks would loosen the metadata guard beyond FactLang's FL703 guard (`;` refused anywhere) and on non-backtick dialects `;` separates statements; plain backtick and bracket identifiers pass, and backtick, `[ident]` and `q'[...]'` quoting variants now stop a quote inside one hiding a statement (test tests/unit/catalog/test_executor.py::test_backtick_identifiers_accepted_hostile_refused) · docs: docs/guide/security.md |
 | A2.4 | metadata guard: `SHOW CREATE` falsely rejected | ruled out | accepting `SHOW CREATE` would loosen the metadata guard beyond FactLang's FL703 guard, and no shipped reader sends it |
 | A2.5 | metadata guard's quote scanner ignores backslash escapes | already fixed | commit 7fc2423 · test tests/unit/catalog/test_executor.py::test_metadata_guard_backslash_escape_cannot_hide_a_statement |
 | A2.6 | `FactLangExecutor` skips the local guard | already fixed | commit efd00fb · test tests/unit/catalog/test_executor.py::test_factlang_executor_adapts_result |
 | A2.7 | fullwidth `；` / `－－` pass `check_predicate` | fixed | test tests/unit/draft/test_verify.py::test_fullwidth_separators_refused |
 | A2.8 | look-alike quotes via non-Unicode Windows ODBC (InlineConnector) | fixed | test tests/unit/catalog/test_executor.py::test_inline_refuses_quote_lookalikes |
-| A2.9 | a raising `tzinfo` surfaces as `RuntimeError`, not SG109 | fixed | test tests/unit/catalog/test_executor.py::test_inline_raising_tzinfo_is_sg109 |
+| A2.9 | a raising `tzinfo` surfaces as `RuntimeError`, not SG109 (fixed: it surfaces as `ExecutionError` `FL700 SG109`, like every other inline refusal, not `CatalogError`) | fixed | test tests/unit/catalog/test_executor.py::test_inline_raising_tzinfo_is_sg109 |
 | A3.1 | resume does not re-check the scope hash | open | Task 5 |
 | A3.2 | schemas created before the cursor are skipped on resume | open | Task 5 |
 | A3.3 | no temp-dir cleanup test | open | Task 5 |

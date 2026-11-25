@@ -257,6 +257,7 @@ def test_backtick_identifiers_accepted_hostile_refused() -> None:
     backticks as identifiers, so the ``;`` after them is code)."""
     check_metadata_sql("SELECT `table_name` FROM information_schema.tables")
     check_metadata_sql("SELECT `it's`, `a\"b` FROM `p.d.INFORMATION_SCHEMA.COLUMNS`")
+    check_metadata_sql("SELECT [table_name] FROM sys.tables")
     for bad in (
         "SELECT `a`; DROP TABLE x",
         "SELECT `x` -- `y`",
@@ -264,6 +265,13 @@ def test_backtick_identifiers_accepted_hostile_refused() -> None:
         'SELECT `a"`; DROP TABLE x -- "',
         "SELECT `'` -- '",
         "SELECT `a;b` FROM t",  # ';' is a separator where backticks are not identifiers
+        "SELECT [it's]; DROP TABLE x",  # T-SQL [ident]
+        'SELECT [a"]; DROP TABLE x -- "',
+        "SELECT q'[x']'; DROP TABLE x",  # Oracle q'[...]'
+        "SELECT a'; DROP TABLE x",  # a quote no reading closes hides the rest
+        'SELECT a"; DROP TABLE x',
+        "SELECT 1 # '\n; DROP TABLE x -- '",  # MySQL '#' comment ends at the line break
+        "SELECT 1 // '\n; DROP TABLE x -- '",  # Snowflake '//' comment
     ):
         with pytest.raises(CatalogError, match="SG104"):
             check_metadata_sql(bad)
@@ -292,7 +300,8 @@ def test_inline_refuses_quote_lookalikes(ch: str) -> None:
     assert inline_problem(f"O{ch}Brien") is not None
     got: list[str] = []
     conn = InlineConnector(lambda sql: got.append(sql) or [], "duckdb")
-    with pytest.raises(ExecutionError, match=r"^FL700 SG109: .*look-alike"):
+    expected = r"backtick.*identifier quote" if ch == "`" else r"look-alike.*code page"
+    with pytest.raises(ExecutionError, match=rf"^FL700 SG109: .*{expected}"):
         conn.execute(_inline_probe(f"x{ch} OR 1=1", "string"), timeout_s=None)
     assert got == []
     assert inline_problem("O'Brien") is None  # the real quote is doubled, not refused

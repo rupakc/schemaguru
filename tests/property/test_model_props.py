@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from hypothesis import given
 from hypothesis import strategies as st
@@ -60,23 +61,37 @@ def test_stable_hash_normalises() -> None:
 
     from schemaguru._util.hashing import canonical_json, stable_hash
 
-    assert stable_hash(Decimal("1.0")) == stable_hash(Decimal("1.00")) == stable_hash(Decimal("1"))
-    assert stable_hash(Decimal("100")) == stable_hash(Decimal("1E+2"))
-    assert stable_hash(Decimal("-0.00")) == stable_hash(Decimal("0"))
-    assert stable_hash(Decimal("1.5")) != stable_hash(Decimal("1.50001"))
-    assert canonical_json(Decimal("12.50")) == '"12.5"'
+    # a Decimal hashes and stores by its exact text, as in 0.1.0 (ids never differ from 0.1.0)
+    assert stable_hash(Decimal("1.0")) != stable_hash(Decimal("1.00"))
+    assert canonical_json(Decimal("12.50")) == '"12.50"'
+    # dates (0.1.0 could not hash them) are ISO text
     assert canonical_json(date(2026, 1, 2)) == '"2026-01-02"'
     assert stable_hash(date(2026, 1, 2)) == stable_hash("2026-01-02")
-    # mixed-type keys sort as their JSON text instead of raising TypeError
+    # mixed-type keys (0.1.0 raised TypeError) sort as their JSON text
     assert stable_hash({1: "a", "b": 2}) == stable_hash({"b": 2, 1: "a"})
     assert canonical_json({None: 1, "a": 2, 3: 4}) == '{"3":4,"a":2,"null":1}'
-    # 0.1.0 ids are unchanged: plain JSON hashes exactly as before
-    assert stable_hash({"b": [1, 2.5, None], "a": "x"}) == (
-        "sha256:" + __import__("hashlib").sha256(b'{"a":"x","b":[1,2.5,null]}').hexdigest()
-    )
-    assert stable_hash({10: "x", 9: "y"}) == (  # all-int keys keep their numeric order
-        "sha256:" + __import__("hashlib").sha256(b'{"9":"y","10":"x"}').hexdigest()
-    )
+
+
+# stable_hash values computed at tag v0.1.0: every value 0.1.0 could hash hashes identically
+V010_HASHES = [
+    ({"a": Decimal("1.00")},
+     "sha256:55e0722e646406587001357788921cd39e621e5118d1affd7ac5aac476fc4645"),
+    (["x", Decimal("12.50"), Decimal("1E+2"), datetime(2026, 1, 2, 3, tzinfo=timezone.utc)],
+     "sha256:7c290fda616c8b8ec3262787af560132e7470760066b5c2559df9d5cb55739b6"),
+    ({10: "x", 9: "y"},
+     "sha256:288a78885b97d39639914e4d47454c1d42a08145bc2db5fd5ab2703dcf7b0554"),
+    ({"text": "café ✓", "n": [1, 2.5, None, True]},
+     "sha256:a546f5404f3b930f792dc5ab4532313251d09afb2d5073e0d8791e458c6b97fe"),
+    ([Provenance.HUMAN],
+     "sha256:653d83d496dc8970549cc6e0b135996fe5eb1b27a21c4bc334f15bd6afade931"),
+]  # fmt: skip
+
+
+def test_stable_hash_matches_v010() -> None:
+    from schemaguru._util.hashing import stable_hash
+
+    for value, expected in V010_HASHES:
+        assert stable_hash(value) == expected, value
 
 
 decimals = st.decimals(allow_nan=False, allow_infinity=False, places=None)

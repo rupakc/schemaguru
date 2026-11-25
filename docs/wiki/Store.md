@@ -119,6 +119,10 @@ one shared contract suite
   spend history). Commit the JSON export instead if you want a reviewable record.
 - Use one store file per warehouse: give each `Guru` its own `name` (or `store=` path).
 
+## Known limits
+
+- Decimal('1.0') and Decimal('1.00') are distinct fact values, so fact ids stay identical to 0.1.0.
+
 ## See also
 
 - [[Catalog-and-Crawl]] - what fills the structure tables

@@ -225,8 +225,15 @@ def refresh(
     snap = take(store, run_checks | {CARRIED_PREFIX + k for k in carried_checks}, label)
     new_facts = store.snapshot_facts(snap)
 
-    # a fact whose check did not run this time vanished unlooked-at: never "removed"
+    # a fact that vanished while its check did not run was not looked at: diff leaves it out of
+    # the removals, and it is reported NOT_MEASURED (never "fixed", base spec 15)
     changes: list[Change] = diff(prev_facts, new_facts, checks_run=store.snapshot_checks_run(snap))
+    kept = {c.before.id for c in changes if c.change == "removed" and c.before is not None}
+    unlooked = [
+        c
+        for c in diff(prev_facts, new_facts)
+        if c.change == "removed" and c.before is not None and c.before.id not in kept
+    ]
     changes += [Change(TABLE_WITHDRAWN, r, None, None, "removed") for r in withdrawn]
     carried = _carried_unmeasured(
         prev_facts,
@@ -246,7 +253,7 @@ def refresh(
     classified = classify_changes(
         changes, prev_eff, new_eff, checks_run=run_checks, measured_tables=measure.measured_tables
     )
-    classified += [(c, ChangeClass.NOT_MEASURED) for c in carried]
+    classified += [(c, ChangeClass.NOT_MEASURED) for c in [*unlooked, *carried]]
 
     nothing_seen = bool(crawl_report.errors) and crawl_report.tables_seen == 0
     if nothing_seen or measure.errors or (targets and not measure.measured_tables):

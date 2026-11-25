@@ -263,3 +263,20 @@ def test_subject_key_in_model() -> None:
     assert model.subject_key(JOIN) == JOIN.identity_key()
     assert diff_mod.subject_key is model.subject_key  # the old import path still works
     assert "subject_key" in model.__all__
+
+
+def test_from_dict_accepts_v010_int_key_order() -> None:
+    """0.1.0 hashed an int-keyed dict in numeric key order; stored, its keys come back as text
+    (string order). Such a fact still reads back, and a tampered id still raises."""
+    f = Fact.make(
+        FactKind.DESCRIPTION, ORD.table_ref(), {"text": "x", "by_day": {2: "a", 10: "b"}},
+        Provenance.HUMAN, Status.UNVERIFIED,
+    )  # fmt: skip
+    import json
+
+    from schemaguru._util.hashing import canonical_json
+
+    stored = json.loads(canonical_json(f.to_dict()))
+    assert Fact.from_dict(stored).id == f.id
+    with pytest.raises(ValueError, match="fact id mismatch"):
+        Fact.from_dict({**stored, "id": "sha256:" + "1" * 64})

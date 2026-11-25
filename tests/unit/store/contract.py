@@ -340,14 +340,14 @@ def test_decimal_and_datetime_values_roundtrip(store: Any, tmp_path: Path) -> No
     store.put_facts([f])
     (got,) = store.facts_for([tref("orders")], None)
     assert got.id == f.id
-    # canonical encoding: Decimal -> its normalised text, aware datetime -> UTC ISO text
-    assert got.value == {"rows": "12.5", "at": NOW.isoformat(), "n": 3}
+    # canonical encoding: Decimal -> its exact text, aware datetime -> UTC ISO text
+    assert got.value == {"rows": "12.50", "at": NOW.isoformat(), "n": 3}
     store.snapshot()
     from schemaguru.store.export import export_json
 
     out = tmp_path / "e.json"
     export_json(store, out)
-    assert b'"rows":"12.5"' in out.read_bytes()
+    assert b'"rows":"12.50"' in out.read_bytes()
 
 
 def _desc(ref: ObjectRef, text: str) -> Fact:

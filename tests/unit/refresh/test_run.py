@@ -124,8 +124,12 @@ def test_vanished_fact_of_unrun_check_not_removed(store: SQLiteStore, conn: Any)
     reader = DuckDBReader(DBAPIExecutor(conn))
     narrow = NarrowScheduler(ObjectRef(None, "shop", "customers"))
     r = refresh(store, reader, narrow, config=Config(), now=later)  # type: ignore[arg-type]
-    removed = {c.before.id for c, _ in r.changes if c.change == "removed" and c.before}
-    assert nulls.id in removed and join.id not in removed
+    removed = {
+        c.before.id: k for c, k in r.changes if c.change == "removed" and c.before is not None
+    }
+    assert nulls.id in removed
+    # the JOIN check did not run: its vanished fact is reported NOT_MEASURED, never "fixed"
+    assert removed.get(join.id) is ChangeClass.NOT_MEASURED
 
 
 def test_fresh_noop_is_not_a_narrow_run(store: SQLiteStore, conn: Any) -> None:

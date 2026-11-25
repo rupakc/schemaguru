@@ -146,7 +146,7 @@ def test_store_and_export_share_encoder(tmp_path: Path) -> None:
     # one encoder: the stored text is the exported text, byte for byte
     assert stored[0] == hashing.canonical_json(exported) == hashing.canonical_json(f.to_dict())
     assert (
-        '"amount":"12.5"' in stored[0] and "für" in stored[0] and '"on":"2026-01-02"' in stored[0]
+        '"amount":"12.50"' in stored[0] and "für" in stored[0] and '"on":"2026-01-02"' in stored[0]
     )
     # and what is stored hashes like what was written (so a re-read fact keeps its id)
     assert Fact.from_dict(json.loads(stored[0])).id == f.id

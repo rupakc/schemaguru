@@ -9,7 +9,7 @@ from enum import Enum
 from fnmatch import fnmatchcase
 from typing import Any
 
-from schemaguru._util.hashing import stable_hash
+from schemaguru._util.hashing import stable_hash, stable_hash_int_keys
 from schemaguru._util.timeutil import parse_iso, require_aware
 from schemaguru.model.evidence import Evidence
 from schemaguru.model.joins import JoinRef, subject_key
@@ -60,6 +60,23 @@ def method_class(method: str | None, status: Status | None = None) -> str:
     return "sampled" if (method or "").startswith("sampled:") else "exact"
 
 
+def _fact_ident(
+    kind: KindSpec,
+    subject: ObjectRef | JoinRef,
+    value: Mapping[str, Any],
+    provenance: Provenance,
+    status: Status,
+    method: str | None,
+) -> list[Any]:
+    ident: list[Any] = [kind.name, subject_key(subject), provenance.value]
+    ident.append(_value_identity(kind, value))
+    if provenance is Provenance.MEASURED:
+        # Exact and sampled measurements of one subject coexist: a newer sample must never
+        # overwrite an older exact number in the store (spec 8.5: never compare methods).
+        ident.append(method_class(method, status))
+    return ident
+
+
 def _fact_id(
     kind: KindSpec,
     subject: ObjectRef | JoinRef,
@@ -68,13 +85,7 @@ def _fact_id(
     status: Status,
     method: str | None,
 ) -> str:
-    ident: list[Any] = [kind.name, subject_key(subject), provenance.value]
-    ident.append(_value_identity(kind, value))
-    if provenance is Provenance.MEASURED:
-        # Exact and sampled measurements of one subject coexist: a newer sample must never
-        # overwrite an older exact number in the store (spec 8.5: never compare methods).
-        ident.append(method_class(method, status))
-    return stable_hash(ident)
+    return stable_hash(_fact_ident(kind, subject, value, provenance, status, method))
 
 
 @dataclass(frozen=True)
@@ -163,7 +174,9 @@ class Fact:
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> Fact:
         """The fact ``d`` describes. The id is recomputed, never trusted: a stored id that does
-        not match the fact's identity raises ``ValueError("fact id mismatch ...")``."""
+        not match the fact's identity raises ``ValueError("fact id mismatch ...")``. A dict
+        whose keys were integers when hashed (they come back from JSON as text) is also
+        checked in its original numeric key order."""
         subj = d["subject"]
         subject: ObjectRef | JoinRef = (
             JoinRef.from_dict(subj) if "left" in subj else ObjectRef.from_dict(subj)
@@ -174,7 +187,10 @@ class Fact:
         value = dict(d["value"])
         provenance, status = Provenance(d["provenance"]), Status(d["status"])
         method = d.get("method")
-        fid = _fact_id(kind, subject, value, provenance, status, method)
+        ident = _fact_ident(kind, subject, value, provenance, status, method)
+        fid = stable_hash(ident)
+        if d["id"] != fid and d["id"] == stable_hash_int_keys(ident):
+            fid = d["id"]  # written from int dict keys, which come back from JSON as text
         if d["id"] != fid:
             raise ValueError(
                 f"fact id mismatch: stored {d['id']!r}, but the {kind.name} fact on "

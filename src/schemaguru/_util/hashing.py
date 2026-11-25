@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import Enum
@@ -12,21 +13,13 @@ from typing import Any
 from schemaguru._util.timeutil import require_aware
 
 
-def _decimal_text(d: Decimal) -> str:
-    """One text per numeric value: ``1.0``, ``1.00`` and ``1`` all give ``"1"``; never an
-    exponent (``1E+2`` gives ``"100"``); ``-0`` gives ``"0"``. NaN/Infinity keep their name."""
-    if not d.is_finite():
-        return str(d)
-    if d.is_zero():
-        return "0"
-    return format(d.normalize(), "f")
-
-
 def _canon(obj: Any) -> Any:
     """The JSON value of a non-JSON value, shared by :func:`canonical_json` and
     :func:`stable_hash`, so a stored value hashes exactly as the value it was written from."""
     if isinstance(obj, Decimal):
-        return _decimal_text(obj)
+        # its exact text, as in 0.1.0: Decimal("1.0") and Decimal("1.00") stay distinct values,
+        # so no fact id differs from the one 0.1.0 computed
+        return str(obj)
     if isinstance(obj, datetime):
         return require_aware(obj).astimezone(timezone.utc).isoformat()
     if isinstance(obj, date):
@@ -73,10 +66,32 @@ def _dumps(obj: object, *, ensure_ascii: bool) -> str:
         return json.dumps(_text_keys(obj), ensure_ascii=ensure_ascii, **kw)
 
 
+_INT_TEXT = re.compile(r"-?(0|[1-9][0-9]*)\Z")
+
+
+def _int_keys(obj: Any) -> Any:
+    """``obj`` with every dict whose keys are all integer text keyed by ``int`` again."""
+    if isinstance(obj, dict):
+        items = {k: _int_keys(v) for k, v in obj.items()}
+        if items and all(isinstance(k, str) and _INT_TEXT.match(k) for k in items):
+            return {int(k): v for k, v in items.items()}
+        return items
+    if isinstance(obj, (list, tuple)):
+        return [_int_keys(v) for v in obj]
+    return obj
+
+
+def stable_hash_int_keys(obj: object) -> str:
+    """:func:`stable_hash` of ``obj`` read back from JSON with integer-text keys made ``int``:
+    the id 0.1.0 (and this release) gave a value whose dict had integer keys (``{2: .., 10:
+    ..}`` sorts numerically, its stored text ``{"10": .., "2": ..}`` does not)."""
+    return stable_hash(_int_keys(obj))
+
+
 def canonical_json(obj: object) -> str:
     """Compact, key-sorted JSON: the one encoder of every store and export.
 
-    ``Decimal`` -> its normalised text (``Decimal("12.50")`` -> ``"12.5"``), aware datetimes ->
+    ``Decimal`` -> its exact text (``Decimal("12.50")`` -> ``"12.50"``), aware datetimes ->
     UTC ISO, dates -> ISO, enums -> value; keys of mixed types sort as their JSON text. Those
     values come back as strings when decoded (no type tags) and hash as they were written:
     ``stable_hash(json.loads(canonical_json(x))) == stable_hash(x)`` for such values.

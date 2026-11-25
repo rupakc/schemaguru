@@ -14,7 +14,7 @@ pip install 'schemaguru[duckdb]'
 
 SchemaGuru needs Python 3.10+. Its only required dependencies are FactLang and PyYAML; every
 warehouse driver, LLM provider and agent framework is an optional extra (see the
-[install matrix](index.md#install)). FactLang (`factlang>=0.1.2,<0.2`) is installed from PyPI
+[install matrix](index.md#install)). FactLang (`factlang>=0.1.3,<0.2`) is installed from PyPI
 with it.
 
 `schemaguru doctor` checks the installation. When the installed FactLang lacks a capability
@@ -81,7 +81,7 @@ per run). Small tables are measured exactly; tables above 50 GiB (or 500M rows) 
 and their numbers are labelled as estimates ([Sampling](guide/sampling.md)).
 
 !!! note "Measurement needs FactLang's `Checker.measure`"
-    SchemaGuru requires FactLang 0.1.2 or later, which provides it. With a FactLang build that
+    SchemaGuru requires FactLang 0.1.3 or later, which provides it. With a FactLang build that
     lacks it, `measure()` writes nothing and returns `SG304` in `report.errors`; everything
     else keeps working on catalog knowledge.
 

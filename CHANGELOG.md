@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-25
+
+### Fixed
+- Inline-mode hosts (SQL text only) on Trino accept timestamp parameters again: FactLang 0.1.3
+  spells them `TIMESTAMP '<date> <time> UTC'`, and the literal re-check now expects that form
+  (the 0.1.2 spelling is no longer accepted).
+
+### Changed
+- Requires FactLang 0.1.3 (`factlang>=0.1.3,<0.2`).
+- Inline-mode hosts on Databricks refuse a timestamp parameter with an explicit `SG109` reason
+  (FactLang renders it without a time zone, which Databricks reads in the session time zone)
+  pending FactLang 0.1.4; a zone-explicit spelling is accepted.
+
 ## [0.1.0] - 2026-11-25
 
 First release.

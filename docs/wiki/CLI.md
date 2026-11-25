@@ -127,7 +127,7 @@ $ schemaguru doctor --url duckdb:///warehouse.duckdb
 PASS connectivity: connected to duckdb:// (duckdb); 2 schema(s) readable
 PASS fts5: SQLite FTS5 is available
 WARN factlang: no FactLang capability detected: measurement reports SG304
-     hint: pip install -U 'factlang>=0.1.2,<0.2'
+     hint: pip install -U 'factlang>=0.1.3,<0.2'
 PASS extras: installed: anthropic, clickhouse, duckdb, embeddings, mcp, mssql, mysql, openai, postgres, server, tiktoken, trino
 PASS budgets: per probe 1073741824 bytes, total 10737418240 bytes
 [exit 0]

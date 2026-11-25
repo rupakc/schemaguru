@@ -21,7 +21,7 @@ default). An agent asking questions spends nothing. The one agent tool that woul
 
 ### `measure` says SG304. What is wrong?
 
-The installed FactLang lacks `Checker.measure` (SchemaGuru needs FactLang 0.1.2 or later), or
+The installed FactLang lacks `Checker.measure` (SchemaGuru needs FactLang 0.1.3 or later), or
 the Guru has no connector. Run `schemaguru doctor` to see which capabilities are present.
 Meanwhile crawl, overlays, scoping, rendering and the agent tools work; join paths need
 measured joins, so `find_path` answers `NO_EVIDENCE` until then. See [[Measurement]].

@@ -360,7 +360,7 @@ def inline_problem(value: object) -> str | None:
     such a value has no spelling that is safe everywhere. Without them, doubling ``'`` is
     unambiguous on every engine that has the doubled form. Nor may they hold a line terminator
     (CR, LF, U+0085, U+2028, U+2029): console tools may end a statement at a line break
-    (SQL*Plus at a blank line). FactLang 0.1.2 refuses the same set; SchemaGuru refuses it on
+    (SQL*Plus at a blank line). FactLang 0.1.3 refuses the same set; SchemaGuru refuses it on
     its own so the behaviour does not depend on the FactLang version. Only plain scalars are
     allowed, and floats must be finite.
     """
@@ -403,7 +403,7 @@ def plain_scalar(value: object) -> object:
     raise TypeError(f"a {type(value).__name__} value cannot be inlined (scalars only)")
 
 
-# the inlined literal forms FactLang 0.1.2 emits, by value type, nothing else. Quoted text holds
+# the inlined literal forms FactLang 0.1.3 emits, by value type, nothing else. Quoted text holds
 # only doubled quotes, never a backslash, NUL or line terminator.
 _QUOTED = r"'(?:[^'\\\x00\r\n\x85\u2028\u2029]|'')*'"
 _NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
@@ -419,6 +419,10 @@ class _Forms:
     boolean: str = "TRUE|FALSE"
     date: str = f"DATE '{_DATE}'"
     timestamp: str = rf"TIMESTAMP '{_DATE}T{_TIME}\+00:00'"
+    # a form FactLang spells without a time zone: refused with ``zoneless_reason`` (the engine
+    # would read it in the session time zone, naming a different instant)
+    zoneless: str | None = None
+    zoneless_reason: str = ""
 
 
 _ANSI_FORMS = _Forms()
@@ -432,11 +436,36 @@ _DIALECT_FORMS = {
     ),
     # TRUE is an identifier before 23ai; an ANSI TIMESTAMP takes no 'T' and no offset
     "oracle": _Forms(boolean="1|0", timestamp=f"TIMESTAMP '{_DATE} {_TIME}'"),
+    # 0.1.3 spells a UTC instant with an explicit zone name
+    "trino": _Forms(timestamp=f"TIMESTAMP '{_DATE} {_TIME} UTC'"),
+    # 0.1.3 renders a zone-less literal, which Spark reads in spark.sql.session.timeZone: a
+    # defect (fix planned for FactLang 0.1.4), so only a zone-explicit form is accepted
+    "databricks": _Forms(
+        timestamp=rf"TIMESTAMP '{_DATE}(?: {_TIME} UTC|T{_TIME}\+00:00)'",
+        zoneless=f"TIMESTAMP '{_DATE} {_TIME}'",
+        zoneless_reason=(
+            "a timestamp cannot be inlined for databricks: FactLang renders it without a time "
+            "zone, which Databricks reads in the session time zone"
+        ),
+    ),
 }
 
 
+def literal_refusal(lit: str, value: object, dialect: str) -> str | None:
+    """A specific reason ``lit`` is refused for ``value`` on ``dialect``, or None when it has
+    no more specific reason than "not the exact form"."""
+    forms = _DIALECT_FORMS.get(canonical_dialect(dialect), _ANSI_FORMS)
+    if (
+        forms.zoneless is not None
+        and isinstance(value, datetime.datetime)
+        and re.fullmatch(forms.zoneless, lit)
+    ):
+        return forms.zoneless_reason
+    return None
+
+
 def literal_matches(lit: str, value: object, dialect: str) -> bool:
-    """Is ``lit`` exactly the literal FactLang 0.1.2 spells for ``value``'s type on
+    """Is ``lit`` exactly the literal FactLang 0.1.3 spells for ``value``'s type on
     ``dialect``? Fail closed: an unknown type, or any other spelling, is ``False``."""
     forms = _DIALECT_FORMS.get(canonical_dialect(dialect), _ANSI_FORMS)
     if value is None:
@@ -477,7 +506,7 @@ def _as_rows(result: Any) -> list[dict[str, Any]]:
 
 
 # dialects whose lexers read a doubled ``''`` as a quote inside a string literal (FactLang
-# 0.1.2's built-in profiles that set ``doubled_quote_escape``, conformance-checked there). On
+# 0.1.3's built-in profiles that set ``doubled_quote_escape``, conformance-checked there). On
 # every other dialect text holding ``'`` is refused: BigQuery rejects ``''`` (syntax error),
 # Databricks/Spark/Hive read adjacent literals as one (``'O''Brien'`` is ``OBrien``, a silently
 # wrong value), and a dialect SchemaGuru does not know gets no benefit of the doubt.
@@ -518,7 +547,7 @@ class InlineConnector:
       Spark, Hive, ...) text holding ``'`` is refused;
     * anything FactLang itself refuses to inline (``FL507``; ``FL500``) is reported as
       ``SG109`` too;
-    * every literal must be exactly the form FactLang 0.1.2 spells for the value's type on
+    * every literal must be exactly the form FactLang 0.1.3 spells for the value's type on
       this dialect (``N'…'`` text, ``1``/``0`` booleans and ISO casts on T-SQL; ``1``/``0``
       and ``TIMESTAMP 'YYYY-MM-DD HH:MM:SS'`` on Oracle; ANSI elsewhere), else ``SG109``;
     * the final SQL must pass the read-only guard (``SG104``) right before the host runs it.
@@ -577,6 +606,9 @@ class InlineConnector:
         for p in params:  # belt and braces: every rendered literal is exactly its type's form
             lit = inline("{{" + p.name + "}}", (p,))
             if not literal_matches(lit, p.value, dialect):
+                specific = literal_refusal(lit, p.value, dialect)
+                if specific is not None:
+                    raise refuse(specific)
                 raise refuse(f"parameter {p.name!r} did not render as a single safe literal")
         sql = inline(probe.sql_template, tuple(params))
         try:

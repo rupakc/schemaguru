@@ -546,7 +546,7 @@ _D = datetime.date(2026, 1, 2)
         ("mysql", None, "string", "NULL"),
     ],
 )  # fmt: skip
-def test_inline_dialect_spellings_of_factlang_0_1_2(
+def test_inline_dialect_spellings_of_factlang_0_1_3(
     dialect: str, value: object, family: str, literal: str
 ) -> None:
     got: list[str] = []
@@ -570,7 +570,8 @@ def test_literal_recheck_accepts_only_the_forms_of_the_dialect() -> None:
     assert not ok("CAST('2026-01-02' AS DATE)", _D, "postgres")
     assert ok("TIMESTAMP '2026-01-02 03:04:05'", _TS, "oracle")
     assert not ok("TIMESTAMP '2026-01-02T03:04:05+00:00'", _TS, "oracle")
-    assert ok("TIMESTAMP '2026-01-02T03:04:05+00:00'", _TS, "trino")
+    assert ok("TIMESTAMP '2026-01-02 03:04:05 UTC'", _TS, "trino")
+    assert not ok("TIMESTAMP '2026-01-02T03:04:05+00:00'", _TS, "trino")
     assert not ok("CAST('2026-01-02 03:04:05' AS DATETIME2)", _TS, "trino")
     assert not ok("'2026-01-02'", _D, "duckdb")  # a date must not be plain text
     assert not ok("'ok'", 3, "duckdb") and not ok("3", "3", "duckdb")  # type-keyed
@@ -745,3 +746,90 @@ def test_inline_mssql_gives_the_tsql_forms() -> None:
         "CAST('2026-01-02' AS DATE)",
         "CAST('2026-01-02 03:04:05.000600' AS DATETIME2)",
     ]
+
+
+# --- FactLang 0.1.3 literal spellings --------------------------------------------------------
+
+_UTC = datetime.timezone.utc
+
+
+def _ts_probe(dialect: str, value: datetime.datetime) -> Any:
+    from factlang.ir import Arity
+    from factlang.sql import Param, RenderedProbe
+
+    return RenderedProbe(
+        "SELECT 1 AS x WHERE t = {{v}}",
+        (Param("v", value, "timestamp"),),
+        Arity.ROW_SET,
+        None,
+        dialect,
+        "x",
+    )
+
+
+@pytest.mark.parametrize("dialect", ["trino", "Trino "])
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [
+        (datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=_UTC), "2026-01-02 03:04:05 UTC"),
+        (
+            datetime.datetime(2026, 1, 2, 3, 4, 5, 123456, tzinfo=_UTC),
+            "2026-01-02 03:04:05.123456 UTC",
+        ),
+    ],
+)
+def test_trino_timestamp_inlined_end_to_end(
+    dialect: str, value: datetime.datetime, text: str
+) -> None:
+    got: list[str] = []
+    conn = InlineConnector(lambda sql: got.append(sql) or [], dialect)
+    conn.execute(_ts_probe("trino", value), timeout_s=None)
+    assert got == [f"SELECT 1 AS x WHERE t = TIMESTAMP '{text}'"]
+
+
+def test_trino_rejects_the_old_timestamp_form() -> None:
+    from schemaguru.catalog.executor import literal_matches
+
+    v = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=_UTC)
+    assert not literal_matches("TIMESTAMP '2026-01-02T03:04:05+00:00'", v, "trino")
+    assert not literal_matches("TIMESTAMP '2026-01-02 03:04:05'", v, "trino")
+    assert literal_matches("TIMESTAMP '2026-01-02 03:04:05 UTC'", v, "trino")
+
+
+def test_databricks_zone_less_timestamp_refused_with_the_reason() -> None:
+    from factlang.connectors import ExecutionError
+
+    conn = InlineConnector(lambda sql: [], "databricks")
+    v = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=_UTC)
+    with pytest.raises(ExecutionError, match="SG109") as ei:
+        conn.execute(_ts_probe("databricks", v), timeout_s=None)
+    assert "timestamp cannot be inlined for databricks" in str(ei.value)
+    assert "session time zone" in str(ei.value)
+
+
+def test_databricks_zone_explicit_timestamp_forms_accepted() -> None:
+    from schemaguru.catalog.executor import literal_matches
+
+    v = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=_UTC)
+    assert literal_matches("TIMESTAMP '2026-01-02 03:04:05 UTC'", v, "databricks")
+    assert literal_matches("TIMESTAMP '2026-01-02T03:04:05.123456+00:00'", v, "databricks")
+    assert not literal_matches("TIMESTAMP '2026-01-02 03:04:05'", v, "databricks")
+
+
+@pytest.mark.parametrize("value", [Decimal("1" + "0" * 38), 2**63, -(2**63) - 1])
+def test_inline_refuses_values_factlang_0_1_3_will_not_spell(value: object) -> None:
+    from factlang.connectors import ExecutionError
+    from factlang.ir import Arity
+    from factlang.sql import Param, RenderedProbe
+
+    family = "integer" if isinstance(value, int) else "decimal"
+    probe = RenderedProbe(
+        "SELECT 1 AS x WHERE c = {{v}}",
+        (Param("v", value, family),),
+        Arity.ROW_SET,
+        None,
+        "duckdb",
+        "x",
+    )
+    with pytest.raises(ExecutionError, match="SG109"):
+        InlineConnector(lambda sql: [], "duckdb").execute(probe, timeout_s=None)

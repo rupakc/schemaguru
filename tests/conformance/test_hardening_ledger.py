@@ -52,6 +52,16 @@ def _commit_exists(sha: str, root: Path) -> bool:
     return done.returncode == 0
 
 
+def _is_shallow(root: Path) -> bool:
+    done = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--is-shallow-repository"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return done.stdout.strip() == "true"
+
+
 _KNOWN_LIMITS = re.compile(r"^## Known limits\s*$", re.M)
 
 
@@ -90,7 +100,8 @@ def evidence_problems(item_id: str, state: str, evidence: str, root: Path = ROOT
         elif not re.search(rf"^\s*def {re.escape(name)}\(", test_file.read_text("utf-8"), re.M):
             problems.append(f"{item_id}: {path} defines no test {name}")
         if state == "already fixed" and not _commit_exists(ref.group("sha"), root):
-            problems.append(f"{item_id}: commit {ref.group('sha')} is not in the repository")
+            hint = " (shallow clone? use fetch-depth: 0)" if _is_shallow(root) else ""
+            problems.append(f"{item_id}: commit {ref.group('sha')} is not in the repository{hint}")
     return problems
 
 

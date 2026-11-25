@@ -546,7 +546,7 @@ _D = datetime.date(2026, 1, 2)
         ("mysql", None, "string", "NULL"),
     ],
 )  # fmt: skip
-def test_inline_dialect_spellings_of_factlang_0_1_3(
+def test_inline_dialect_spellings_of_factlang_0_1_4(
     dialect: str, value: object, family: str, literal: str
 ) -> None:
     got: list[str] = []
@@ -748,7 +748,7 @@ def test_inline_mssql_gives_the_tsql_forms() -> None:
     ]
 
 
-# --- FactLang 0.1.3 literal spellings --------------------------------------------------------
+# --- FactLang 0.1.4 literal spellings --------------------------------------------------------
 
 _UTC = datetime.timezone.utc
 
@@ -796,15 +796,43 @@ def test_trino_rejects_the_old_timestamp_form() -> None:
     assert literal_matches("TIMESTAMP '2026-01-02 03:04:05 UTC'", v, "trino")
 
 
-def test_databricks_zone_less_timestamp_refused_with_the_reason() -> None:
-    from factlang.connectors import ExecutionError
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [
+        (datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=_UTC), "2026-01-02 03:04:05 UTC"),
+        (
+            datetime.datetime(2026, 1, 2, 3, 4, 5, 123456, tzinfo=_UTC),
+            "2026-01-02 03:04:05.123456 UTC",
+        ),
+    ],
+)
+def test_databricks_timestamp_inlined_end_to_end(value: datetime.datetime, text: str) -> None:
+    got: list[str] = []
+    conn = InlineConnector(lambda sql: got.append(sql) or [], "databricks")
+    conn.execute(_ts_probe("databricks", value), timeout_s=None)
+    assert got == [f"SELECT 1 AS x WHERE t = TIMESTAMP '{text}'"]
 
-    conn = InlineConnector(lambda sql: [], "databricks")
+
+def test_databricks_zone_less_timestamp_literal_still_refused_with_the_reason() -> None:
+    """A future FactLang that spells it zone-less again fails closed, with the honest reason."""
+    from schemaguru.catalog.executor import literal_matches, literal_refusal
+
     v = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=_UTC)
-    with pytest.raises(ExecutionError, match="SG109") as ei:
-        conn.execute(_ts_probe("databricks", v), timeout_s=None)
-    assert "timestamp cannot be inlined for databricks" in str(ei.value)
-    assert "session time zone" in str(ei.value)
+    lit = "TIMESTAMP '2026-01-02 03:04:05'"
+    assert not literal_matches(lit, v, "databricks")
+    reason = literal_refusal(lit, v, "databricks")
+    assert reason is not None
+    assert "timestamp cannot be inlined for databricks" in reason
+    assert "session time zone" in reason
+
+
+def test_inline_connector_docstring_names_the_zone_explicit_forms() -> None:
+    doc = InlineConnector.__doc__ or ""
+    assert "FactLang 0.1.4" in doc
+    assert "YYYY-MM-DD HH:MM:SS UTC" in doc
+    assert "Trino" in doc
+    assert "Databricks" in doc
+    assert "zone-less" in doc
 
 
 def test_databricks_zone_explicit_timestamp_forms_accepted() -> None:
@@ -817,7 +845,7 @@ def test_databricks_zone_explicit_timestamp_forms_accepted() -> None:
 
 
 @pytest.mark.parametrize("value", [Decimal("1" + "0" * 38), 2**63, -(2**63) - 1])
-def test_inline_refuses_values_factlang_0_1_3_will_not_spell(value: object) -> None:
+def test_inline_refuses_values_factlang_0_1_4_will_not_spell(value: object) -> None:
     from factlang.connectors import ExecutionError
     from factlang.ir import Arity
     from factlang.sql import Param, RenderedProbe

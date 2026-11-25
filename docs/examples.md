@@ -20,7 +20,7 @@ pip install -e '.[duckdb]'
 python examples/duckdb_quickstart.py
 ```
 
-The examples measure through FactLang (0.1.3 or later, installed with SchemaGuru). If the
+The examples measure through FactLang (0.1.4 or later, installed with SchemaGuru). If the
 installed FactLang cannot measure, they print a note and show catalog knowledge where they
 would show measured numbers. They need only the installed package and the `examples/`
 directory: `_shop_build.py` builds the shop warehouse next to them on first run.

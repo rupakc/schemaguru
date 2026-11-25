@@ -130,7 +130,7 @@ Audited against `main` at `710e21f` (Task 1). Tasks 2–8 turn the `open` rows i
 | A8.9 | nested `TYPE_CHECKING` handling and the I2 guard lack real-tree negative controls | open | Task 8 |
 | A8.10 | `tests/test_version.py` `__all__` assertion (check still valid) | already fixed | commit c603a11 · test tests/test_version.py::test_version |
 | A8.11 | the denylist CI job passes silently when the secret is empty | open | Task 8 |
-| A9.1 | `InlineConnector` docstring omits the trino `… UTC` form and the databricks zone-less refusal | open | Task 4 |
+| A9.1 | `InlineConnector` docstring omits the trino `… UTC` form and the databricks zone-less refusal | fixed | test tests/unit/test_connectors.py::test_inline_connector_docstring_names_the_zone_explicit_forms |
 | A9.2 | FL507 tests assert only `SG109` (pin `precision 39` / `64-bit`) | open | Task 4 |
 | A9.3 | `test_trino_rejects_the_old_timestamp_form` also asserts the zone-less form | open | Task 4 |
 | A9.4 | `literal_refusal` became a public name in 0.1.1 | open | Task 4 |

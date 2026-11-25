@@ -49,7 +49,7 @@ unless the page says otherwise. Two things matter for what you can do today:
 - **Measurement needs FactLang.** SchemaGuru never writes measurement SQL itself; every number
   comes from [FactLang](https://github.com/rupakc/factlang) claims and primitives. The measurement
   capabilities (`Checker.measure`, sampling, join snippets, filter parsing) come with
-  FactLang 0.1.3 or later, installed with SchemaGuru; with an older FactLang, `measure()`
+  FactLang 0.1.4 or later, installed with SchemaGuru; with an older FactLang, `measure()`
   reports diagnostic `SG304` instead of measuring. `schemaguru doctor` shows which FactLang
   capabilities are present. The worked examples in this wiki were generated with the test
   suite's stand-in backend (reproducible byte for byte), and each one says so.

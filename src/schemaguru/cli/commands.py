@@ -889,7 +889,7 @@ def _doctor_checks(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "factlang",
                 "WARN",
                 "no FactLang capability detected: measurement reports SG304",
-                "pip install -U 'factlang>=0.1.3,<0.2'",
+                "pip install -U 'factlang>=0.1.4,<0.2'",
             )
         )
     elif missing:

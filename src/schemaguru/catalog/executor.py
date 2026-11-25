@@ -360,7 +360,7 @@ def inline_problem(value: object) -> str | None:
     such a value has no spelling that is safe everywhere. Without them, doubling ``'`` is
     unambiguous on every engine that has the doubled form. Nor may they hold a line terminator
     (CR, LF, U+0085, U+2028, U+2029): console tools may end a statement at a line break
-    (SQL*Plus at a blank line). FactLang 0.1.3 refuses the same set; SchemaGuru refuses it on
+    (SQL*Plus at a blank line). FactLang 0.1.4 refuses the same set; SchemaGuru refuses it on
     its own so the behaviour does not depend on the FactLang version. Only plain scalars are
     allowed, and floats must be finite.
     """
@@ -403,7 +403,7 @@ def plain_scalar(value: object) -> object:
     raise TypeError(f"a {type(value).__name__} value cannot be inlined (scalars only)")
 
 
-# the inlined literal forms FactLang 0.1.3 emits, by value type, nothing else. Quoted text holds
+# the inlined literal forms FactLang 0.1.4 emits, by value type, nothing else. Quoted text holds
 # only doubled quotes, never a backslash, NUL or line terminator.
 _QUOTED = r"'(?:[^'\\\x00\r\n\x85\u2028\u2029]|'')*'"
 _NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
@@ -436,10 +436,11 @@ _DIALECT_FORMS = {
     ),
     # TRUE is an identifier before 23ai; an ANSI TIMESTAMP takes no 'T' and no offset
     "oracle": _Forms(boolean="1|0", timestamp=f"TIMESTAMP '{_DATE} {_TIME}'"),
-    # 0.1.3 spells a UTC instant with an explicit zone name
+    # 0.1.4 spells a UTC instant with an explicit zone name
     "trino": _Forms(timestamp=f"TIMESTAMP '{_DATE} {_TIME} UTC'"),
-    # 0.1.3 renders a zone-less literal, which Spark reads in spark.sql.session.timeZone: a
-    # defect (fix planned for FactLang 0.1.4), so only a zone-explicit form is accepted
+    # 0.1.4 spells a UTC instant zone-explicitly (``TIMESTAMP '… UTC'``). 0.1.3 rendered it
+    # zone-less, which Spark reads in spark.sql.session.timeZone: that form stays refused (with
+    # the reason), so a regression in a future FactLang fails closed
     "databricks": _Forms(
         timestamp=rf"TIMESTAMP '{_DATE}(?: {_TIME} UTC|T{_TIME}\+00:00)'",
         zoneless=f"TIMESTAMP '{_DATE} {_TIME}'",
@@ -465,7 +466,7 @@ def literal_refusal(lit: str, value: object, dialect: str) -> str | None:
 
 
 def literal_matches(lit: str, value: object, dialect: str) -> bool:
-    """Is ``lit`` exactly the literal FactLang 0.1.3 spells for ``value``'s type on
+    """Is ``lit`` exactly the literal FactLang 0.1.4 spells for ``value``'s type on
     ``dialect``? Fail closed: an unknown type, or any other spelling, is ``False``."""
     forms = _DIALECT_FORMS.get(canonical_dialect(dialect), _ANSI_FORMS)
     if value is None:
@@ -506,7 +507,7 @@ def _as_rows(result: Any) -> list[dict[str, Any]]:
 
 
 # dialects whose lexers read a doubled ``''`` as a quote inside a string literal (FactLang
-# 0.1.3's built-in profiles that set ``doubled_quote_escape``, conformance-checked there). On
+# 0.1.4's built-in profiles that set ``doubled_quote_escape``, conformance-checked there). On
 # every other dialect text holding ``'`` is refused: BigQuery rejects ``''`` (syntax error),
 # Databricks/Spark/Hive read adjacent literals as one (``'O''Brien'`` is ``OBrien``, a silently
 # wrong value), and a dialect SchemaGuru does not know gets no benefit of the doubt.
@@ -547,9 +548,11 @@ class InlineConnector:
       Spark, Hive, ...) text holding ``'`` is refused;
     * anything FactLang itself refuses to inline (``FL507``; ``FL500``) is reported as
       ``SG109`` too;
-    * every literal must be exactly the form FactLang 0.1.3 spells for the value's type on
+    * every literal must be exactly the form FactLang 0.1.4 spells for the value's type on
       this dialect (``N'…'`` text, ``1``/``0`` booleans and ISO casts on T-SQL; ``1``/``0``
-      and ``TIMESTAMP 'YYYY-MM-DD HH:MM:SS'`` on Oracle; ANSI elsewhere), else ``SG109``;
+      and ``TIMESTAMP 'YYYY-MM-DD HH:MM:SS'`` on Oracle; ``TIMESTAMP 'YYYY-MM-DD HH:MM:SS UTC'``
+      on Trino and Databricks/Spark, a zone-less Databricks timestamp being refused with its
+      reason; ANSI elsewhere), else ``SG109``;
     * the final SQL must pass the read-only guard (``SG104``) right before the host runs it.
 
     Rows are mappings (or row objects with ``keys``/``items``). Only FactLang's public API is

@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Requires FactLang 0.1.4; Databricks inline timestamps are accepted (FactLang now spells them
+  with an explicit UTC zone).
+
 ## [0.1.1] - 2026-11-25
 
 ### Fixed

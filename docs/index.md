@@ -13,7 +13,7 @@ print(guru.context("monthly revenue by customer segment"))
 ```
 
 !!! note "Status: alpha (0.1.0)"
-    Measurement runs through [FactLang](https://github.com/rupakc/factlang) (0.1.3 or later,
+    Measurement runs through [FactLang](https://github.com/rupakc/factlang) (0.1.4 or later,
     installed with SchemaGuru). Every output on this site was produced by the real library on
     the test **shop** warehouse; the measured numbers in the generated pages come from the test
     suite's backend, which computes them with plain SQL on that warehouse, so the pages are

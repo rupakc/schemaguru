@@ -15,7 +15,7 @@ guru = sg.Guru.connect("duckdb:///warehouse.duckdb")   # a file, opened read-onl
 guru = sg.Guru.connect("duckdb:///:memory:")           # an in-memory database
 ```
 
-When FactLang's `connect()` is installed (FactLang 0.1.3+, the default) it opens the URL and its connector also
+When FactLang's `connect()` is installed (FactLang 0.1.4+, the default) it opens the URL and its connector also
 serves measurement. Without it, SchemaGuru's built-in fallback opens DuckDB itself: a file is
 opened **read-only** (and a path that does not exist is an error, `SG106`, so a typo never
 creates a database). You can also wrap an existing connection:

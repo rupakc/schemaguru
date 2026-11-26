@@ -693,12 +693,34 @@ def test_sampled_cardinality_not_one_to_one() -> None:
     for sample in (KEY, SYS):
         one = card(1, 1, sample)
         assert one["cardinality"] is None and one["cardinality_reason"] == "sampled"
-        # a sampled max of 1 is a lower bound: the right side may repeat keys it did not keep
-        assert card(30, 1, sample)["cardinality"] is None
-        assert card(1, 30, sample)["cardinality"] is None
-        # duplicates seen in a sample are real: both sides repeat keys
+        # a repeat seen in a sample is real (it refutes "1" on that side); a sampled max of 1 is
+        # only a lower bound, so the other side stays unknown ("?"), never "1"
+        assert card(30, 1, sample)["cardinality"] == "N:?"
+        assert card(1, 30, sample)["cardinality"] == "?:N"
         many = card(3, 3, sample)
         assert many["cardinality"] == "N:M" and "cardinality_reason" not in many
     # negative control: an exact measurement still says 1:1
     exact = card(1, 1, None)
     assert exact["cardinality"] == "1:1" and "cardinality_reason" not in exact
+
+
+def test_distinct_equal_rank_tie_is_order_independent() -> None:
+    from schemaguru.measure.convert import resolve_distinct
+
+    def profile(sample: SampleChoice, d: int) -> list[Fact]:
+        return _facts(
+            ProfileColumns(ORD, ("status",), sample=sample),
+            {"row_count": 100, "sampled_rows": 100,
+             "columns": {"status": {"non_null": 100, "distinct_keys": d}}},
+        )  # fmt: skip
+
+    bern = SampleChoice("bernoulli", Decimal("0.01"), 7)
+    a, b = profile(SYS, 4), profile(bern, 5)
+    (da,) = [f for f in a if f.kind.name == "DISTINCT"]
+    (db,) = [f for f in b if f.kind.name == "DISTINCT"]
+    assert da.id == db.id  # same column, same rank: the id cannot break the tie
+    won = {
+        tuple(f.method for f in resolve_distinct(batch) if f.kind.name == "DISTINCT")
+        for batch in (a + b, b + a)
+    }
+    assert len(won) == 1, won

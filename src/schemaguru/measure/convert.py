@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -438,21 +439,27 @@ def _distinct_rank(f: Fact) -> int:
     return 3
 
 
+def _distinct_order(f: Fact) -> tuple[int, str, str, str]:
+    value = json.dumps(dict(f.value), sort_keys=True, default=str)
+    return (_distinct_rank(f), f.method or "", value, f.id)
+
+
 def resolve_distinct(facts: Sequence[Fact]) -> list[Fact]:
     """One ``DISTINCT`` fact per column from one batch, whatever order the batch came in.
 
     A column profile and a key-hash uniqueness probe can both measure a column's distinct count.
     The exact count wins over any estimate, a key-hash estimate (whole keys kept: scaled without
-    bias) over a row sample's, and any number over an unmeasurable one. Ties go to the lower fact
-    id. Error facts and every other kind are kept as they are; the winner takes the place of the
-    column's first ``DISTINCT`` fact."""
+    bias) over a row sample's, and any number over an unmeasurable one. Equal ranks (facts of
+    one column share an id) go to the lower method string, then value. Error facts and every
+    other kind are kept as they are; the winner takes the place of the column's first
+    ``DISTINCT`` fact."""
     best: dict[str, Fact] = {}
     for f in facts:
         if f.kind.name != "DISTINCT" or f.status is Status.ERROR:
             continue
         key = f.subject.canonical()
         cur = best.get(key)
-        if cur is None or (_distinct_rank(f), f.id) < (_distinct_rank(cur), cur.id):
+        if cur is None or _distinct_order(f) < _distinct_order(cur):
             best[key] = f
     out: list[Fact] = []
     placed: set[str] = set()
@@ -469,12 +476,17 @@ def resolve_distinct(facts: Sequence[Fact]) -> list[Fact]:
 
 def _cardinality(ml: int | None, mr: int | None, *, sampled: bool = False) -> str | None:
     """``1:1``/``N:1``/``1:N``/``N:M`` from the largest rows per key on each side. Sampled, a
-    side's max of 1 proves nothing (keys outside the sample may repeat), so only ``N:M`` (a
-    repeat seen on both sides is real) is reported; otherwise ``None``."""
+    repeat seen on a side is real (it refutes "1" there) but a max of 1 proves nothing (keys
+    outside the sample may repeat): that side is ``?`` (``N:?``, ``?:N``), and a sample that saw
+    no repeat on either side gives ``None``, never ``1:1``."""
     if ml is None or mr is None:
         return None
     if sampled:
-        return "N:M" if ml > 1 and mr > 1 else None
+        if ml > 1 and mr > 1:
+            return "N:M"
+        if ml > 1:
+            return "N:?"
+        return "?:N" if mr > 1 else None
     many_left, many_right = ml > 1, mr > 1
     if many_left and many_right:
         return "N:M"

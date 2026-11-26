@@ -357,6 +357,15 @@ def _when_key(f: Fact) -> float:
     return f.observed_at.timestamp() if f.observed_at is not None else float("-inf")
 
 
+def _cards_conflict(declared: str, measured: str) -> bool:
+    """A declared ``1`` side measured as many (``N``/``M``), or the reverse; an unknown side
+    (``?``, from a sample that saw no repeat there) never conflicts."""
+    d, m = declared.split(":"), measured.split(":")
+    if len(d) != 2 or len(m) != 2:
+        return declared != measured
+    return any("?" not in (a, b) and (a == "1") != (b == "1") for a, b in zip(d, m, strict=True))
+
+
 def pick_measured(eff: Effective | None, *, allow_sampled: bool = True) -> Fact | None:
     """The newest usable exact measurement, else the newest sampled one (spec 8.5, 8.6)."""
     if eff is None:
@@ -922,7 +931,7 @@ class _Analyser:
                     f"JOIN {lcols} -> {target}{' ' + card if card else ''}{nums} {how}",
                 )
             ecard = None if exp is None else exp.value.get("cardinality")
-            if isinstance(ecard, str) and isinstance(card, str) and ecard != card:
+            if isinstance(ecard, str) and isinstance(card, str) and _cards_conflict(ecard, card):
                 self.warn(f"{lead} → {target}: declared {ecard} but measured {card} ({phrase(m)})")
         if col is not None:
             self.note(col, LITE_UP, text)

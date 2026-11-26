@@ -298,6 +298,7 @@ def _m(kind: Any, subject: Any, value: dict[str, Any], **kw: Any) -> Fact:
     )
 
 
+F_JOIN = FactKind.JOIN
 MEASURED = datetime(2026, 11, 20, 9, 30, tzinfo=timezone.utc)
 
 
@@ -607,3 +608,35 @@ def test_unknown_age_marked(tmp_path: Path) -> None:
     assert "10,000 rows (measured, observed: date unknown)" in text
     assert "rows (catalog stats, observed: date unknown)" in cust
     assert "stale" not in next(ln for ln in text.splitlines() if "10,000 rows" in ln)
+
+
+def test_sampled_repeat_side_is_labelled_and_warned(tmp_path: Path) -> None:
+    """A sample that saw one side repeat a key refutes "1" on that side: the hop label still
+    names the multiplying side, and a declared "1" there still warns. No sample says 1:1."""
+    from schemaguru.graph.edges import Edge
+    from schemaguru.graph.search import Hop
+    from schemaguru.graph.search import Path as GPath
+    from schemaguru.model.joins import JOIN_VALUE_KEYS
+    from schemaguru.render.table_block import render_path
+
+    jv = {k: None for k in JOIN_VALUE_KEYS}
+    join = j("products.product_id", "ref_parent.id")
+    right_repeat = {**jv, "match_rate": 0.99, "coverage": 0.9, "cardinality": "?:N",
+                    "fraction": "0.1"}  # fmt: skip
+    edge = Edge(join, right_repeat, "OK", estimated=True)
+    path = GPath((Hop(edge, False),), cost=1.0, coverage=0.9, provisional=False, estimated=True)
+    assert any(line.endswith("(?:N)") for line in render_path(path))
+    facts = [
+        _m(F_JOIN, join, right_repeat, status=Status.ESTIMATED, method="sampled:keyhash:0.1:7"),
+        human(F_JOIN, join, {"cardinality": "N:1"}),
+    ]
+    with shop_store(tmp_path / "s.db", [*shop_facts(), *facts]) as s:
+        text = AGENT.render_table(collect(s, t("products"), NOW, CONFIG), DetailLevel.FULL)
+    assert "→ shop.ref_parent.id ?:N" in text
+    assert "declared N:1 but measured ?:N" in text
+    # compatible: a declared N:1 against a sample that saw only the left side repeat
+    left = {**right_repeat, "cardinality": "N:?"}
+    facts[0] = _m(F_JOIN, join, left, status=Status.ESTIMATED, method="sampled:keyhash:0.1:7")
+    with shop_store(tmp_path / "t.db", [*shop_facts(), *facts]) as s:
+        text = AGENT.render_table(collect(s, t("products"), NOW, CONFIG), DetailLevel.FULL)
+    assert "declared N:1" not in text and "1:1" not in text

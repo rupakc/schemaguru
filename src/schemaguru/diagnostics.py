@@ -53,6 +53,8 @@ CODES: Mapping[str, str] = MappingProxyType(
         "(parse_error, too_large, timeout, unsupported_dialect, worker_died), never SQL text",
         "SG212": "column-level lineage needs the `lineage` extra (pip install "
         "'schemaguru[lineage]'); emitted at most once per crawl or import",
+        "SG213": "a lineage ignore entry in an overlay matches no parsed link (the view was "
+        "redefined, or the list is not exactly the parsed one); it hides nothing",
         "SG214": "the dbt manifest has no compiled_code (run `dbt compile`): only table-level "
         "lineage was imported",
         "SG215": "two dbt nodes write one relation with the same inputs but different details "

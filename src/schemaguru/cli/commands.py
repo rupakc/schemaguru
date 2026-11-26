@@ -280,6 +280,16 @@ warehouse: {warehouse}
 # never_query:
 #   - table: shop.orders_backup_2019
 #     reason: frozen copy, not maintained
+#
+# lineage:                          # a human entry replaces the parsed links of its subject
+#   - table: analytics.revenue_daily
+#     upstream: [shop.orders, shop.refunds]
+#   - column: analytics.revenue_daily.net_revenue
+#     inputs: [shop.orders.amount, shop.refunds.amount]
+#     transform: aggregate          # copy | cast | expression | aggregate | window | unknown
+#   - table: analytics.legacy_view
+#     upstream: [shop.orders]
+#     ignore: true                  # hides this parsed link; omit upstream to hide them all
 """
 
 _CONFIG_SKELETON = """\

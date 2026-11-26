@@ -1,0 +1,10 @@
+version: 1
+lineage:
+  - table: analytics.revenue_daily
+    upstream: [shop.orders, shop.refunds]
+  - column: analytics.revenue_daily.net_revenue
+    inputs: [shop.orders.amount, shop.refunds.amount]
+    transform: aggregate
+  - table: analytics.legacy_view
+    upstream: [shop.orders]
+    ignore: true          # hides this parsed link; human always wins

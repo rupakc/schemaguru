@@ -18,6 +18,7 @@ TOP_KEYS = (
     "glossary",
     "never_query",
     "waivers",
+    "lineage",
 )
 TABLE_KEYS = (
     "description",
@@ -37,6 +38,7 @@ WAYPOINT_KEYS = ("pair", "node", "require", "forbid", "because")
 GLOSSARY_KEYS = ("term", "definition", "maps_to")
 NEVER_QUERY_KEYS = ("table", "reason")
 WAIVER_KEYS = ("fact", "reason", "expires")
+LINEAGE_KEYS = ("table", "column", "upstream", "inputs", "transform", "ignore")
 
 CARDINALITIES = ("N:1", "1:1", "1:N", "N:M")
 SEVERITIES = ("warn", "critical")

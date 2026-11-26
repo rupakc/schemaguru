@@ -19,7 +19,13 @@ from schemaguru.diagnostics import Diagnostic, DiagnosticBag, Severity
 from schemaguru.model.chains import Chain, FilterStep, NoteStep, Step
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
 from schemaguru.model.joins import JoinRef, subject_key
-from schemaguru.model.kinds import FactKind, KindSpec, get_kind
+from schemaguru.model.kinds import LINEAGE_KINDS, FactKind, KindSpec, get_kind
+from schemaguru.model.lineage import (
+    TRANSFORMS,
+    column_lineage_value,
+    resolve_lineage,
+    table_lineage_value,
+)
 from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays import schema as S
 from schemaguru.overlays.schema import WaypointSpec
@@ -48,6 +54,7 @@ class _FileLoader:
         self.waivers: list[Waiver] = []
         self._ctor = yaml.SafeLoader("")
         self._subjects: set[str] | None = None
+        self._lineage: list[tuple[Fact, yaml.Node]] = []
 
     # ----- diagnostics ----------------------------------------------------------------------
 
@@ -278,6 +285,10 @@ class _FileLoader:
         if "waivers" in top:
             for n in self.items(top["waivers"], "waivers"):
                 self.waiver(n)
+        if "lineage" in top:
+            for n in self.items(top["lineage"], "lineage"):
+                self.lineage_entry(n)
+            self.settle_lineage()
 
     def tables(self, node: yaml.Node) -> None:
         if not isinstance(node, yaml.MappingNode):
@@ -540,6 +551,120 @@ class _FileLoader:
             node,
         )
 
+    # ----- lineage --------------------------------------------------------------------------
+
+    def lineage_list(
+        self, m: dict[str, yaml.Node], key: str, level_column: bool, where: str
+    ) -> list[str] | None:
+        """The resolved names of ``upstream`` / ``inputs``; ``None`` when absent or any fails."""
+        node = m.get(key)
+        if node is None:
+            return None
+        if not isinstance(node, yaml.SequenceNode):
+            self.diag("SG208", f"{where}: '{key}' must be a list of names", node)
+            return None
+        names = self.texts(node, where) or []
+        if not names or len(names) != len(self.items(node, where)):
+            self.diag("SG208", f"{where}: '{key}' must be a non-empty list of names", node)
+            return None
+        out: list[str] = []
+        for text, item in zip(names, self.items(node, where), strict=True):
+            ref = self.column_ref(text, item) if level_column else self.table(text, item)
+            if ref is None:
+                return None
+            out.append(ref.canonical())
+        return out
+
+    def lineage_entry(self, node: yaml.Node) -> None:
+        where = "lineage"
+        m = self.mapping(node, S.LINEAGE_KEYS, where)
+        if m is None:
+            return
+        if ("table" in m) == ("column" in m):
+            self.diag("SG208", f"{where}: exactly one of 'table' or 'column' is required", node)
+            return
+        is_column = "column" in m
+        wrong = "upstream" if is_column else "inputs"
+        if wrong in m:
+            self.diag(
+                "SG208",
+                f"{where}: '{wrong}' is not allowed with '{'column' if is_column else 'table'}'",
+                m[wrong],
+            )
+            return
+        if "transform" in m and not is_column:
+            self.diag(
+                "SG208", f"{where}: 'transform' is only allowed with 'column'", m["transform"]
+            )
+            return
+        ignore = False
+        if "ignore" in m:
+            raw = self.scalar(m["ignore"]) if isinstance(m["ignore"], yaml.ScalarNode) else None
+            if not isinstance(raw, bool):
+                self.diag("SG208", f"{where}: 'ignore' must be true or false", m["ignore"])
+                return
+            ignore = raw
+        transform: str | None = None
+        if is_column and not ignore:
+            transform = "unknown"
+            if "transform" in m:
+                transform = self.text(m["transform"], where)
+                if transform not in TRANSFORMS:
+                    self.diag(
+                        "SG208",
+                        f"{where}: transform must be one of {', '.join(TRANSFORMS)}",
+                        m["transform"],
+                    )
+                    return
+        subject_node = m["column" if is_column else "table"]
+        text = self.text(subject_node, where)
+        if text is None:
+            self.diag("SG208", f"{where}: expected a name", subject_node)
+            return
+        subject = (
+            self.column_ref(text, subject_node) if is_column else self.table(text, subject_node)
+        )
+        if subject is None:
+            return
+        key = "inputs" if is_column else "upstream"
+        names = self.lineage_list(m, key, is_column, where)
+        if key in m and names is None:
+            return  # the list was malformed or a reference failed: its diagnostic is out
+        if names is None and not ignore:
+            self.diag("SG208", f"{where}: an entry that is not an ignore needs '{key}'", node)
+            return
+        value = (
+            column_lineage_value(names, transform, ignore=ignore)
+            if is_column
+            else table_lineage_value(names, ignore=ignore)
+        )
+        kind = FactKind.COLUMN_LINEAGE if is_column else FactKind.LINEAGE
+        fact = Fact.make(
+            kind, subject, value, Provenance.HUMAN, Status.UNVERIFIED, source=self.source(node)
+        )
+        self._lineage.append((fact, node))
+
+    def settle_lineage(self) -> None:
+        """Entries share a fact id when subject, list and ``ignore`` are equal (the source and the
+        transform are not identity). Identical lines are one fact, kept at the first line; lines
+        that differ in ``transform`` are reported and both dropped: line order never decides."""
+        groups: dict[str, list[tuple[Fact, yaml.Node]]] = {}
+        for item in self._lineage:
+            groups.setdefault(item[0].id, []).append(item)
+        self._lineage = []
+        for _fid, items in groups.items():
+            if len({it[0].value.get("transform") for it in items}) > 1:
+                lines = " and ".join(f"line {self.line(n)}" for _, n in items)
+                self.diag(
+                    "SG208",
+                    f"lineage: {lines} declare the same column inputs with a different "
+                    f"'transform'; neither is applied",
+                    items[0][1],
+                    hint="keep one entry",
+                )
+                continue
+            self.facts.append(items[0][0])
+
     def never_query(self, node: yaml.Node) -> None:
         m = self.mapping(node, S.NEVER_QUERY_KEYS, "never_query")
         if m is None:
@@ -634,6 +759,45 @@ class _FileLoader:
             except ValueError:
                 return None
         return None
+
+
+def lineage_ignore_diagnostics(store: Store, loaded: Sequence[Fact]) -> list[Diagnostic]:
+    """SG213 for each loaded overlay ignore that hides no parsed link of its subject and level.
+
+    Run after the facts are in the store: what an ignore matches is whatever parsed lineage the
+    store holds now (a view redefined after the ignore was written leaves it matching nothing).
+    """
+    ignores = {
+        f.id: f
+        for f in loaded
+        if f.kind.name in LINEAGE_KINDS
+        and f.provenance is Provenance.HUMAN
+        and f.value.get("ignore")
+    }
+    out: list[Diagnostic] = []
+    done: set[tuple[str, str]] = set()
+    for f in sorted(ignores.values(), key=lambda x: x.id):
+        key = (subject_key(f.subject), f.kind.name)
+        if key in done:
+            continue
+        done.add(key)
+        for u in resolve_lineage(store.facts_for([f.subject], LINEAGE_KINDS)).unmatched_ignores:
+            if (g := ignores.get(u.id)) is not None:
+                where = (
+                    (g.source or "")[len(_SOURCE) :]
+                    if (g.source or "").startswith(_SOURCE)
+                    else g.source
+                )
+                out.append(
+                    Diagnostic(
+                        "SG213",
+                        Severity.WARNING,
+                        "lineage ignore entry matches no parsed link",
+                        where,
+                        "an ignore with a list hides only a parsed link with exactly that list",
+                    )
+                )
+    return out
 
 
 def _expand(paths: Iterable[str | Path]) -> list[Path]:

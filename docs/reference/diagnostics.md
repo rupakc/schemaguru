@@ -25,6 +25,7 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG210 | a declared soft-delete filter does not match the catalog or the measured values; it is shown with a warning and never applied in SQL snippets |
 | SG211 | lineage could not be parsed for a definition; the reason is a fixed category (parse_error, too_large, timeout, unsupported_dialect, worker_died), never SQL text |
 | SG212 | column-level lineage needs the `lineage` extra (pip install 'schemaguru[lineage]'); emitted at most once per crawl or import |
+| SG213 | a lineage ignore entry in an overlay matches no parsed link (the view was redefined, or the list is not exactly the parsed one); it hides nothing |
 | SG214 | the dbt manifest has no compiled_code (run `dbt compile`): only table-level lineage was imported |
 | SG215 | two dbt nodes write one relation with the same inputs but different details (for example another transform); the first by node id is kept |
 | SG301 | probe over the per-probe byte budget was not run (fact ERROR over_budget) |

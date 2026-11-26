@@ -79,7 +79,7 @@ waivers:
 
 | Section | Keys |
 |---|---|
-| top level | `version` (must be `1`), `warehouse`, `tables`, `chains`, `waypoints`, `glossary`, `never_query`, `waivers` |
+| top level | `version` (must be `1`), `warehouse`, `tables`, `chains`, `waypoints`, `glossary`, `never_query`, `waivers`, `lineage` |
 | a table | `description`, `use_cases`, `entity_type`, `soft_delete`, `pitfalls`, `columns`, `joins` |
 | a column | `description`, `values`, `values_split`, `type_note` |
 | a pitfall | `rule`, `fix`, `severity` (`warn` or `critical`) |
@@ -89,6 +89,7 @@ waivers:
 | glossary | `term`, `definition`, `maps_to` |
 | never_query | `table`, `reason` |
 | waiver | `fact` (`"<KIND> <subject>"`), `reason`, `expires` |
+| lineage | `table` or `column`, `upstream` (with `table`), `inputs` (with `column`), `transform`, `ignore` |
 
 An unknown key is `SG202` with a close-match suggestion ("did you mean ..."). An empty key
 (`description:` with nothing after it) is treated as absent.
@@ -178,3 +179,21 @@ from measurement.
 - [[Concepts]] - why HUMAN beats DRAFTED and expectations are never replaced
 - [[Drafting]] - accepting LLM drafts into overlays
 - [[CLI]] - `init`, `lint`, `import-dbt`, `accept`
+
+### Lineage
+
+```yaml
+lineage:
+  - table: analytics.revenue_daily
+    upstream: [shop.orders, shop.refunds]
+  - column: analytics.revenue_daily.net_revenue
+    inputs: [shop.orders.amount, shop.refunds.amount]
+    transform: aggregate
+  - table: analytics.legacy_view
+    upstream: [shop.orders]
+    ignore: true
+```
+
+A human entry replaces the parsed links of its subject and level; `ignore: true` hides them (all of
+them without a list, only an exactly equal list with one). Hidden facts stay in the store. An ignore
+that matches no parsed link is `SG213`.

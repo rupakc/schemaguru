@@ -26,6 +26,7 @@ test suite loads (spec §14.1):
 | `glossary` | `term`, `definition`, `maps_to` tables | glossary facts; their tables join the scope when the term is asked about |
 | `never_query` | tables agents must not use, with a `reason` | listed in every view; `sg.guard.check_sql(..., never_query=...)` refuses SQL reading them |
 | `waivers` | an acknowledged contradiction, with `reason` and a mandatory `expires` | `WAIVED` until the date |
+| `lineage` | where a table or column comes from: `table` + `upstream`, or `column` + `inputs` + `transform`; `ignore: true` hides parsed links | `LINEAGE` / `COLUMN_LINEAGE` facts, human-written; see [Lineage entries](#lineage-entries) |
 
 ## Loading
 
@@ -119,3 +120,31 @@ but can never apply). Glossary `maps_to` takes tables only; a column is `SG203`.
 - `export-drafts` and `accept --write-overlay` write only kinds that have an overlay form;
   the others are left out and named in a warning (and printed by `export-drafts`).
 
+## Lineage entries
+
+```yaml
+lineage:
+  - table: analytics.revenue_daily
+    upstream: [shop.orders, shop.refunds]
+  - column: analytics.revenue_daily.net_revenue
+    inputs: [shop.orders.amount, shop.refunds.amount]
+    transform: aggregate        # copy | cast | expression | aggregate | window | unknown (default)
+  - table: analytics.legacy_view
+    upstream: [shop.orders]
+    ignore: true                # hides this parsed link; human always wins
+```
+
+Each entry is one human fact (`source` `overlay:<file>:<line>`). Exactly one of `table` / `column`;
+`upstream` goes with `table`, `inputs` with `column`; every name must resolve (`SG203` / `SG204`
+drop the entry); a non-ignore entry needs a non-empty list; a malformed entry is `SG208`.
+
+- A human entry with a list **replaces** every parsed link (view definition, dbt) of that subject and
+  level. Table and column levels are independent.
+- `ignore: true` **without** a list hides all parsed links of that level for the subject; **with** a
+  list it hides only a parsed link whose sorted list is exactly equal. Hidden facts stay in the
+  store (`explain` shows them) and return when the entry is removed.
+- An ignore that hides nothing is `SG213` (a warning, reported by `load_overlays` and `schemaguru
+  lint`): typically the view was redefined after the ignore was written, so its old link is gone and
+  the new one is shown. Update the ignore to the new list or drop it.
+- Two identical lines are one fact (kept at the first line). Two lines with the same column inputs but
+  a different `transform` are `SG208` and neither is applied; keep one.

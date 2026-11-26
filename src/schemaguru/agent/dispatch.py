@@ -392,12 +392,39 @@ def _explain_term(guru: ToolHost, args: dict[str, Any]) -> dict[str, Any]:
     return _result({"text": text or empty, "entries": entries}, mode)
 
 
+def count_claims(text: str) -> int:
+    """Claims in ``text`` by FactLang's line rule: after joining ``\\`` continuations, a line
+    counts unless it is blank, comment-only (``#``) or a ``USE`` directive."""
+    count = 0
+    logical = ""
+    for raw in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = raw.rstrip()
+        if not line.lstrip().startswith("#") and line.endswith("\\"):
+            logical += line[:-1] + " "
+            continue
+        logical += "" if line.lstrip().startswith("#") else line
+        words = logical.split(None, 1)
+        if words and words[0] != "USE":
+            count += 1
+        logical = ""
+    words = logical.split(None, 1)
+    return count + (1 if words and words[0] != "USE" else 0)
+
+
 def _check_fact(guru: ToolHost, args: dict[str, Any], spec: Mapping[str, Any]) -> dict[str, Any]:
     schema = spec["input_schema"]
     names = [n for n in schema.get("required", []) if isinstance(args.get(n), str)]
     if not names:
         raise ToolError("SG803", "check_fact: no claim text given")
     claims = str(args[names[0]])
+    cap = guru.config.check_max_claims
+    if cap is not None:  # SchemaGuru's own cap, before any estimate or spend
+        n = count_claims(claims)
+        if n > cap:
+            raise ToolError(
+                "too_many_claims",
+                f"check_fact: {n} claims is over the limit of {cap}; send fewer per call",
+            )
     # the measurement period guard: one byte total, and max_probes / max_seconds count across
     # calls (no run is started here; a drainer run restarts the probe count and the clock)
     guard = guru._agent_guard()

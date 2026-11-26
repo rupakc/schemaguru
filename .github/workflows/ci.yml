@@ -156,6 +156,8 @@ jobs:
       - run: pytest -m integration -rs -p no:cacheprovider
 
   denylist:
+    # skipped on pull requests from forks (they cannot read the secret)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     env:
       SCHEMAGURU_DENYLIST: ${{ secrets.SCHEMAGURU_DENYLIST }}
@@ -167,7 +169,15 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pytest
-      # With the secret unset the repo scan is skipped (the job still passes).
+      # On the upstream's main the secret is required: an empty one would skip the scan silently.
+      # Forks and pull requests (which may not see the secret) still pass with the scan skipped.
+      - name: Require the denylist secret on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'rupakc/schemaguru'
+        run: |
+          if [ -z "$SCHEMAGURU_DENYLIST" ]; then
+            echo "::error::SCHEMAGURU_DENYLIST is empty; the denylist scan would be skipped"
+            exit 1
+          fi
       - run: pytest tests/architecture/test_denylist.py -rs -p no:cacheprovider
 
   build:

@@ -171,9 +171,11 @@ def check_spec(guru: ToolHost) -> dict[str, Any] | None:
             prop.setdefault("description", "FactLang claim text")
             if prop.get("type") == "string":
                 prop.setdefault("maxLength", MAX_TEXT)
+    cap = guru.config.check_max_claims
+    limit = "" if cap is None else f" A call may carry at most {cap} claims."
     return {
         "name": "check_fact",
-        "description": f"{fl['description']} {CHECK_PREAMBLE}".strip(),
+        "description": f"{fl['description']} {CHECK_PREAMBLE}{limit}".strip(),
         "input_schema": schema,
     }
 

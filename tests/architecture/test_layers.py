@@ -162,7 +162,12 @@ def check_layering(
     for node in _module_level_imports(ast.parse(source, filename)):
         for target in _imported_modules(node, importer, is_pkg):
             key = layer_key(target)
-            if key is None:
+            if target == FACADE:
+                problems.append(
+                    f"{filename}:{node.lineno}: '{importer}' imports the public facade "
+                    f"'{FACADE}'; import the defining module"
+                )
+            elif key is None:
                 problems.append(f"{filename}:{node.lineno}: '{target}' has no layer in LAYERS")
             elif key != own_key and LAYERS[key] >= own:
                 problems.append(
@@ -197,16 +202,24 @@ def check_optional_deps_lazy(source: str, filename: str = "<module>") -> list[st
 # --- the real tree ---------------------------------------------------------------
 
 
-def test_layering() -> None:
-    assert _py_files(), f"no source files found under {SRC}"
+def check_tree_layering(root: Path = SRC) -> list[str]:
+    """The real-tree walker: every module under ``root`` through :func:`check_layering`."""
+    files = _py_files(root)
+    if not files:
+        return [f"no source files found under {root}"]
     problems: list[str] = []
-    for path in _py_files():
+    for path in files:
         problems += check_layering(
             path.read_text(encoding="utf-8"),
-            module_name(path),
+            module_name(path, root),
             str(path),
             is_pkg=path.name == "__init__.py",
         )
+    return problems
+
+
+def test_layering() -> None:
+    problems = check_tree_layering()
     assert not problems, "\n".join(problems)
 
 
@@ -371,11 +384,11 @@ def test_layer_table_matches_spec_5_1() -> None:
     assert LAYERS["schemaguru.store"] == LAYERS["schemaguru.config"] == 2
     assert LAYERS["schemaguru.measure"] == LAYERS["schemaguru.knowledge"] == 4
     assert LAYERS["schemaguru.server"] == 8
-    assert {m for m in FACTLANG_SEAM} == {
+    assert {
         "schemaguru.measure.flbridge",
         "schemaguru.catalog.executor",
         "schemaguru.render.fragments",
-    }
+    } == FACTLANG_SEAM
     # every seam module is governed by a layer
     assert all(layer_key(m) for m in FACTLANG_SEAM)
 
@@ -405,3 +418,57 @@ def test_negative_control_type_checking_upward_import(tmp_path: Path) -> None:
 def test_real_tree_guard_detects_missing_source(tmp_path: Path) -> None:
     assert _py_files(tmp_path / "does-not-exist") == []
     assert _py_files()
+
+
+def _tmp_tree(tmp_path: Path, files: dict[str, str]) -> Path:
+    root = tmp_path / "schemaguru"
+    for rel, text in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    return root
+
+
+def test_walker_flags_tmp_tree(tmp_path: Path) -> None:
+    root = _tmp_tree(
+        tmp_path,
+        {
+            "model/__init__.py": "",
+            "model/bad.py": "from schemaguru.guru import Guru\n",
+            "guru/__init__.py": "",
+            "guru/ok.py": "from schemaguru.model import bad\n",
+        },
+    )
+    problems = check_tree_layering(root)
+    assert len(problems) == 1 and "bad.py" in problems[0] and "layer 7" in problems[0]
+    # the walker also wires `__init__.py` as a package (relative imports resolve from it)
+    root = _tmp_tree(tmp_path / "rel", {"store/__init__.py": "from ..guru import G\n"})
+    assert len(check_tree_layering(root)) == 1
+
+
+def test_facade_import_message() -> None:
+    (msg,) = check_layering("from schemaguru import Guru\n", "schemaguru.model.ref", "m.py")
+    assert "imports the public facade 'schemaguru'; import the defining module" in msg
+    assert "no layer" not in msg
+    (msg,) = check_layering("import schemaguru\n", "schemaguru.model.ref", "m.py")
+    assert "public facade" in msg
+
+
+def test_nested_type_checking_real_tree(tmp_path: Path) -> None:
+    nested = (
+        "import sys\nfrom typing import TYPE_CHECKING\n"
+        "if sys.version_info >= (3, 11):\n    if TYPE_CHECKING:\n"
+        "        from schemaguru.guru import G\n        import numpy\n"
+    )
+    root = _tmp_tree(tmp_path, {"model/__init__.py": "", "model/n.py": nested})
+    # the layer rule still holds under a nested TYPE_CHECKING; the lazy-deps rule skips it
+    assert len(check_tree_layering(root)) == 1
+    assert check_optional_deps_lazy(nested, "n.py") == []
+    # ... and the else branch of a nested guard stays subject to both
+    other = nested + "    else:\n        import numpy\n"
+    assert len(check_optional_deps_lazy(other, "n.py")) == 1
+    # the I2 guard: an empty or missing tree is itself a finding, never a silent pass
+    assert check_tree_layering(tmp_path / "does-not-exist")
+    (tmp_path / "empty").mkdir()
+    assert "no source files" in check_tree_layering(tmp_path / "empty")[0]
+    assert check_tree_layering() == []  # and the real tree is clean

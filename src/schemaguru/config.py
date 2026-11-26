@@ -144,9 +144,16 @@ class Config:
     # admits each check through the Guru's one per-period budget guard, shared with the
     # background drainer
     agent_checks: Literal["allow", "deny"] = "deny"
+    # the most claims one ``check_fact`` call may carry (refused with ``too_many_claims`` before
+    # any warehouse spend; None disables the cap). SchemaGuru's own limit: claims run through
+    # the backend directly, not through FactLang's ``max_claims``
+    check_max_claims: int | None = 200
 
     def __post_init__(self) -> None:
         _check("agent_checks", self.agent_checks, ("allow", "deny"))
+        mc = self.check_max_claims
+        if mc is not None and (isinstance(mc, bool) or not isinstance(mc, int) or mc < 1):
+            raise ConfigError(f"check_max_claims: {mc!r} is not a positive integer or None")
         _check("measure_on_demand", self.measure_on_demand, ("queue", "background", "block"))
         _check("token_counter", self.token_counter, ("chars", "tiktoken"))
 

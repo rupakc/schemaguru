@@ -47,6 +47,7 @@ guru.close()
 | Setting | Effect |
 |---|---|
 | `measure_on_demand` | `queue` (default): questions never spend; `background`: a daemon thread drains the queue under the budget; `block`: measure scoped tables before answering, at most `block_timeout_s` |
+| `check_max_claims` | `200`: the most claims one `check_fact` call carries (`too_many_claims` above it, before any spend); `None` disables |
 | `agent_checks` | `deny` (default): no `check_fact` tool; `allow`: agents may run FactLang claims, each admitted through the budget |
 | `sampling.llm_values` | `masked` (default), `raw` (opt-in), `none` — see [PII](pii.md) |
 | `sampling.measurement` | `auto` (sample only large tables), `off`, `force` — see [Sampling](sampling.md) |

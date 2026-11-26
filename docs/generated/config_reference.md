@@ -10,6 +10,7 @@
 | `llm_model` | str | `'claude-sonnet-5-5'` |
 | `token_counter` | Literal['chars', 'tiktoken'] | `'chars'` |
 | `agent_checks` | Literal['allow', 'deny'] | `'deny'` |
+| `check_max_claims` | int \| None | `200` |
 
 ### `Budget`
 

@@ -173,6 +173,41 @@ def test_check_fact_denied_by_config(
         g.close()
 
 
+def test_check_fact_claim_cap(
+    tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts], seam_check: Any
+) -> None:
+    def many(n: int) -> str:
+        return "\n".join(f"ROWS shop.orders VALUE >={i}" for i in range(n))
+
+    backend = CheckingBackend(shop_duckdb[0], [_evidence()])
+    g = make_shop_guru(tmp_path, shop_duckdb[0], backend=backend)
+    try:
+        assert g.config.check_max_claims == 200
+        out = call(g, "check_fact", {"claims": many(201)})
+        assert out["error"]["code"] == "too_many_claims" and "201" in out["error"]["message"]
+        assert backend.checked == []  # refused before any warehouse spend
+        assert g.store.ledger_total("agent_check", "queries", None) == 0
+        # comments, blank lines, USE directives and continuations are not claims
+        padded = "# note\n\nUSE shop\n" + many(200) + "\n# tail\n"
+        assert "error" not in call(g, "check_fact", {"claims": padded})
+        assert len(backend.checked) == 1
+        assert "error" not in call(g, "check_fact", {"claims": many(200)})  # exactly the cap
+        g.config = replace(g.config, check_max_claims=None)  # None disables the cap
+        assert "error" not in call(g, "check_fact", {"claims": many(201)})
+        g.config = replace(g.config, check_max_claims=3)
+        assert call(g, "check_fact", {"claims": many(4)})["error"]["code"] == "too_many_claims"
+        cont = (
+            "ROWS shop.orders \\\n VALUE >=1\n"
+            "ROWS shop.orders VALUE >=2\nROWS shop.orders VALUE >=3"
+        )
+        assert "error" not in call(g, "check_fact", {"claims": cont})  # 3 logical lines
+        assert "at most 3" in str(
+            next(s for s in g.tools() if s["name"] == "check_fact")["description"]
+        )
+    finally:
+        g.close()
+
+
 # --- privacy: every planted secret through every tool, masked and none ------------------------
 
 

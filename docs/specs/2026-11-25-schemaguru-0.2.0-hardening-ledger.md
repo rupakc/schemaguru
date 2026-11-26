@@ -113,9 +113,9 @@ Audited against `main` at `710e21f` (Task 1). Tasks 2–8 turn the `open` rows i
 | A6.10 | `overlays/dbt.py` module docstring missing | fixed | test tests/unit/overlays/test_dbt.py::test_module_docstring |
 | A6.11 | rule requirements merged across rules uncapped | fixed | test tests/unit/graph/test_waypoints.py::test_merged_requirements_capped |
 | A6.12 | bare rule ref with a quoted `(` rejected | fixed | test tests/unit/graph/test_waypoints.py::test_quoted_paren_ref_accepted |
-| A7.1 | per-graph memo not thread-safe (shared `Graph` under the server) | open | Task 8 |
-| A7.2 | hop-limit naming capped at 2×hop_limit | open | Task 8 |
-| A7.3 | via-success search near the 1 s benchmark bound | open | Task 8 |
+| A7.1 | per-graph memo not thread-safe (shared `Graph` under the server) | fixed | test tests/unit/graph/test_search.py::test_shared_graph_thread_safe |
+| A7.2 | hop-limit naming capped at 2×hop_limit | fixed | test tests/unit/graph/test_search.py::test_refusal_names_hop_limit |
+| A7.3 | via-success search near the 1 s benchmark bound | fixed | test tests/unit/graph/test_search.py::test_via_success_bounded_work |
 | A7.4 | the denylist scanner misses ALLCAPS+CamelCase (`ZORBClient`) | already fixed | commit 47fccb4 · test tests/architecture/test_denylist.py::test_camel_case_and_digit_edges |
 | A7.5 | qualified `t.isDeleted` left bare in a live-rows filter | already fixed | commit 65a7c51 · test tests/unit/render/test_fragments.py::test_quote_catalog_names |
 | A7.6 | ambiguous case-insensitive filter column left bare without a diagnostic | already fixed | commit 65a7c51 · test tests/unit/render/test_fragments.py::test_ambiguous_filter_column_is_reported |
@@ -123,15 +123,15 @@ Audited against `main` at `710e21f` (Task 1). Tasks 2–8 turn the `open` rows i
 | A8.2 | Sampling page states the rows threshold only when bytes are unknown — clarify | already fixed | commit 28b0a17 · test tests/conformance/test_wiki_facts.py::test_sampling_thresholds_stated |
 | A8.3 | owner name in the wiki footer | ruled out | the owner is the named MIT copyright holder; intended (spec [call]) |
 | A8.4 | clearer error if the wiki repository is missing | already fixed | commit 28b0a17 · test tests/conformance/test_wiki_facts.py::test_wiki_sync_explains_a_missing_wiki_repository |
-| A8.5 | wiki-facts negative controls exercise helpers on synthetic input only | open | Task 8 |
-| A8.6 | layer walker wiring not proven by a tmp-tree control | open | Task 8 |
-| A8.7 | a facade import is reported as "no layer" | open | Task 8 |
-| A8.8 | no-op set comprehension in `test_layers` | open | Task 8 |
-| A8.9 | nested `TYPE_CHECKING` handling and the I2 guard lack real-tree negative controls | open | Task 8 |
+| A8.5 | wiki-facts negative controls exercise helpers on synthetic input only | fixed | test tests/conformance/test_wiki_facts.py::test_negative_control_real_page |
+| A8.6 | layer walker wiring not proven by a tmp-tree control | fixed | test tests/architecture/test_layers.py::test_walker_flags_tmp_tree |
+| A8.7 | a facade import is reported as "no layer" | fixed | test tests/architecture/test_layers.py::test_facade_import_message |
+| A8.8 | no-op set comprehension in `test_layers` | fixed | test tests/architecture/test_layers.py::test_layer_table_matches_spec_5_1 |
+| A8.9 | nested `TYPE_CHECKING` handling and the I2 guard lack real-tree negative controls | fixed | test tests/architecture/test_layers.py::test_nested_type_checking_real_tree |
 | A8.10 | `tests/test_version.py` `__all__` assertion (check still valid) | already fixed | commit c603a11 · test tests/test_version.py::test_version |
-| A8.11 | the denylist CI job passes silently when the secret is empty | open | Task 8 |
+| A8.11 | the denylist CI job passes silently when the secret is empty | fixed | test tests/unit/test_ci_workflow.py::test_denylist_fails_on_main_without_secret |
 | A9.1 | `InlineConnector` docstring omits the trino `… UTC` form and the databricks zone-less refusal | fixed | test tests/unit/test_connectors.py::test_inline_connector_docstring_names_the_zone_explicit_forms |
 | A9.2 | FL507 tests assert only `SG109` (pin `precision 39` / `64-bit`) | fixed | test tests/unit/test_connectors.py::test_fl507_refusals_pin_reason |
 | A9.3 | `test_trino_rejects_the_old_timestamp_form` also asserts the zone-less form | fixed | test tests/unit/test_connectors.py::test_trino_rejects_zone_less_timestamp |
 | A9.4 | `literal_refusal` became a public name in 0.1.1 | ruled out | renaming would remove a name released in 0.1.1 (public API additive only); kept as is and documented · docs: docs/guide/security.md |
-| A9.5 | `check_fact` has no claim cap (SchemaGuru calls `Checker.check` directly, bypassing `max_claims`) | open | Task 8 |
+| A9.5 | `check_fact` has no claim cap (SchemaGuru calls `Checker.check` directly, bypassing `max_claims`) | fixed | test tests/unit/agent/test_dispatch.py::test_check_fact_claim_cap |

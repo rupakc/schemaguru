@@ -39,6 +39,7 @@ WIKI = Path(__file__).resolve().parent.parent.parent / "docs" / "wiki"
 # (config class, field) whose default the Configuration page must state
 CONFIG_FIELDS: tuple[tuple[type, str], ...] = (
     (Config, "agent_checks"),
+    (Config, "check_max_claims"),
     (Config, "measure_on_demand"),
     (Config, "block_timeout_s"),
     (Config, "fact_ttl_days"),
@@ -151,10 +152,26 @@ def test_configuration_states_current_default(cls: type, name: str) -> None:
     )
 
 
+def missing_subcommands(text: str) -> list[str]:
+    return [c for c in subcommands() if f"| `{c}" not in text]
+
+
 def test_cli_page_lists_every_subcommand() -> None:
-    text = _read("CLI")
-    missing = [c for c in subcommands() if f"| `{c}" not in text]
-    assert not missing, missing
+    assert not missing_subcommands(_read("CLI"))
+
+
+def test_negative_control_real_page() -> None:
+    """The checker run on a mutated copy of the REAL page fails: no synthetic input."""
+    lines = _read("CLI").splitlines()
+    rows = [i for i, ln in enumerate(lines) if ln.startswith("| `")]
+    assert rows, "CLI.md has no subcommand rows"
+    for victim in rows:
+        dropped = lines[victim].split("`")[1].split()[0]
+        mutated = "\n".join(ln for i, ln in enumerate(lines) if i != victim)
+        if dropped in subcommands():
+            assert dropped in missing_subcommands(mutated), dropped
+            return
+    raise AssertionError("no CLI.md row names a real subcommand")
 
 
 @pytest.mark.parametrize("page", sorted(PROTOCOL_PAGES))

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import heapq
 import math
+import threading
 from collections.abc import Collection, Hashable, Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -169,6 +170,8 @@ class Graph:
         self._indeg_by_id = [self._in_degree.get(r, 0) for r in refs]
         # per-config memo of hop costs and lower bounds, reused across calls (bounded)
         self._ctxs: dict[GraphConfig, _Ctx] = {}
+        # one lock guards every lazy structure (components, memos): a server shares one Graph
+        self._lock = threading.RLock()
         self._thin: dict[float, frozenset[ObjectRef]] = {}
         # largest known distinct_left: the price of an unknown fan-out (spec 9.3)
         self.worst_fanout: float | None = worst
@@ -206,7 +209,8 @@ class Graph:
                 for rev in (False, True)
                 if (sup := hop_support(e, reverse=rev)) is not None and sup < thin
             )
-            self._thin[thin] = comps
+            with self._lock:
+                comps = self._thin.setdefault(thin, comps)
         return self._component.get(table) in comps
 
     def hop_count(self) -> int:
@@ -233,10 +237,13 @@ class Graph:
         return () if tid is None else tuple(a[0] for a in self.arcs(tid))
 
     def _build(self, tid: int) -> None:
+        with self._lock:
+            self._build_locked(tid)
+
+    def _build_locked(self, tid: int) -> None:
         comp = self._comp_of[tid]
         if comp in self._built:
             return
-        self._built.add(comp)
         comp_of, bits_of = self._comp_of, self._bits_by_id
         lists: dict[int, list[tuple[int, str, bool, Hop]]] = {}
         for e, (lo, ro) in zip(self.edges, self._ends, strict=True):
@@ -254,6 +261,7 @@ class Graph:
                 self._n_hops += 1
                 self._hops.append((h, end))
             self._arcs[start] = tuple(arcs)
+        self._built.add(comp)  # only once every arc of the component is in place
 
 
 # ---------------------------------------------------------------------------------------------
@@ -295,9 +303,12 @@ class _Ctx:
         ctxs = graph._ctxs
         ctx = ctxs.get(cfg)
         if ctx is None:
-            if len(ctxs) >= _MAX_CONFIGS:
-                del ctxs[next(iter(ctxs))]
-            ctx = ctxs[cfg] = cls(graph, cfg)
+            with graph._lock:
+                ctx = ctxs.get(cfg)
+                if ctx is None:
+                    if len(ctxs) >= _MAX_CONFIGS:
+                        del ctxs[next(iter(ctxs))]
+                    ctx = ctxs[cfg] = cls(graph, cfg)
         return ctx
 
     def __init__(self, graph: Graph, cfg: GraphConfig) -> None:
@@ -332,6 +343,14 @@ class _Ctx:
         h = self._lower.get(cache_key)
         if h is not None:
             return h
+        g = self.graph
+        with g._lock:  # builds components and sizes the cost memo: one thread at a time
+            h = self._lower.get(cache_key)
+            if h is None:
+                h = self._lower_bound_locked(cache_key)
+        return h
+
+    def _lower_bound_locked(self, cache_key: tuple[int, ...]) -> list[float]:
         g = self.graph
         for t in cache_key:
             g.arcs(t)  # builds the component
@@ -387,9 +406,10 @@ class _Ctx:
     def tables_by_hop(self) -> tuple[list[float | None], list[bool | None]]:
         """Per-hop-index memo lists (cost, attribution), grown to the graph's built hops."""
         n = self.graph.hop_count()
-        for memo in (self._cost_i, self._attr_i):
-            if len(memo) < n:
-                memo.extend([None] * (n - len(memo)))
+        with self.graph._lock:
+            for memo in (self._cost_i, self._attr_i):
+                if len(memo) < n:
+                    memo.extend([None] * (n - len(memo)))
         return self._cost_i, self._attr_i
 
     def attribution(self, edge: Edge) -> bool:
@@ -660,9 +680,9 @@ def _diagnose(ctx: _Ctx, src: ObjectRef, dst: ObjectRef, automaton: Automaton | 
         return _dijkstra(ctx, _replay(ctx, src, (), mode)[0], dst, mode)
 
     def ruled_needs() -> str:
-        """The rules plus a longer hop limit (capped): name both when only that opens a route."""
-        cap = 2 * cfg.hop_limit
-        longer = probe(_Mode(False, True, cap, automaton))
+        """The rules plus a longer hop limit: name both when only that opens a route."""
+        # searched without a cap of our own: a simple route cannot use more hops than tables
+        longer = probe(_Mode(False, True, max(cfg.hop_limit, len(graph.tables)), automaton))
         if longer is None:
             return ""
         return f"; the required route needs {len(longer)} hops; hop limit is {cfg.hop_limit}"

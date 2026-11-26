@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from itertools import pairwise
 
 import pytest
 
@@ -226,3 +227,103 @@ def test_component_adjacency_is_lazy() -> None:
 def test_edges_property_kept_on_hop() -> None:
     (p,) = find_paths(SHOP, t("payments"), t("orders"), cfg=replace(CFG, k_paths=1)).paths
     assert isinstance(p.hops[0].edge, Edge) and p.hops[0].start == t("payments")
+
+
+def _many_component_graph(n: int = 12) -> Graph:
+    facts = [_syn(f"c{i}a.k", f"c{i}b.id", 1.0) for i in range(n)]
+    facts += [_syn(f"c{i}b.k", f"c{i}c.id", 0.9) for i in range(n)]
+    return _graph(facts)
+
+
+def _signature(res: object) -> tuple[object, ...]:
+    from schemaguru.graph.search import PathResult
+
+    assert isinstance(res, PathResult)
+    return (res.refusal, tuple((_route(p), p.cost) for p in res.paths))
+
+
+def _hammer(
+    shared: Graph, pairs: list[tuple[ObjectRef, ObjectRef]]
+) -> tuple[list[BaseException], list[list[tuple[object, ...]]]]:
+    """8 threads x 50 ``find_path`` calls on one graph, released together."""
+    import threading
+
+    errors: list[BaseException] = []
+    results: list[list[tuple[object, ...]]] = []
+    barrier = threading.Barrier(8)
+
+    def work(offset: int) -> None:
+        try:
+            barrier.wait()
+            out = []
+            for k in range(50):
+                a, b = pairs[(offset + k) % len(pairs)]
+                out.append(_signature(find_paths(shared, a, b, cfg=CFG)))
+            results.append(out)
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=work, args=(i,)) for i in range(8)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    return errors, results
+
+
+def test_shared_graph_thread_safe() -> None:
+    import sys
+
+    n = 12
+    pairs = [(t(f"c{i}a"), t(f"c{i}c")) for i in range(n)]
+    serial_graph = _many_component_graph(n)
+    expected = [_signature(find_paths(serial_graph, a, b, cfg=CFG)) for a, b in pairs]
+    old = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for _ in range(5):  # a fresh graph per round, so the lazy builds race every time
+            shared = _many_component_graph(n)
+            errors, results = _hammer(shared, pairs)
+            assert not errors
+            assert len(results) == 8 and all(len(out) == 50 for out in results)
+            assert all(sig in expected for out in results for sig in out)
+            # and the memo agrees with a serial run on the same graph afterwards
+            assert [_signature(find_paths(shared, a, b, cfg=CFG)) for a, b in pairs] == expected
+    finally:
+        sys.setswitchinterval(old)
+
+
+def test_refusal_names_hop_limit() -> None:
+    # users -> orders directly; a rule requiring `far` forces an 8-hop detour, past 2 x the limit
+    chain = [f"n{i}" for i in range(9)]
+    facts = [_syn(f"{a}.k", f"{b}.id", 1.0) for a, b in pairwise(chain)]
+    facts.append(_syn("n0.x", "n8.id", 0.5))
+    g = _graph(facts)
+    cfg = replace(CFG, hop_limit=2)
+    res = find_paths(g, t("n0"), t("n8"), cfg=cfg, automaton=RequireTable(t("n4")))
+    assert res.refusal is Refusal.RULE_REJECTS_ALL
+    assert "hop limit is 2" in res.explanation
+    assert "needs 5 hops" in res.explanation or "needs 8 hops" in res.explanation
+
+
+def test_via_success_bounded_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    import heapq
+
+    from schemaguru.graph import search as search_mod
+    from tests.unit.graph.test_search_fix2 import Via, _bench_pairs, _big
+
+    g, names = _big()
+    a, b, w = _bench_pairs(names)[0]
+    pops = 0
+    real = heapq.heappop
+
+    def counting(heap: list[object]) -> object:
+        nonlocal pops
+        pops += 1
+        return real(heap)
+
+    monkeypatch.setattr(search_mod.heapq, "heappop", counting)
+    res = find_paths(g, a, b, cfg=GraphConfig(), automaton=Via(w))
+    assert res.paths or res.refusal is not None
+    print("POPS", pops)
+    assert 0 < pops <= 200_000, pops

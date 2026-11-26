@@ -69,6 +69,7 @@ the scheduler is reconfigured between runs, cached views are dropped.
 | `store_path` | `None` | default store file (else `.schemaguru/<name>.db`) |
 | `llm_model` | `"claude-sonnet-5-5"` | default model for `schemaguru draft` |
 | `token_counter` | `"chars"` | `chars` (len/4 heuristic) or `tiktoken` (extra) |
+| `check_max_claims` | `200` | the most claims one `check_fact` call may carry; more is refused with `too_many_claims` before any warehouse spend (`None` disables the cap) |
 | `agent_checks` | `"deny"` | `allow` offers the spending `check_fact` agent tool, admitted through the per-period budget it shares with the background drainer |
 
 ## `Budget`

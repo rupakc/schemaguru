@@ -70,6 +70,7 @@ def test_mask_free_text_lives_in_pii_and_masks_shapes() -> None:
 import pytest  # noqa: E402
 
 from schemaguru.pii import scrub_tree, sql_template  # noqa: E402
+from schemaguru.pii.mask import definition_template  # noqa: E402
 
 
 @pytest.mark.parametrize(
@@ -114,3 +115,40 @@ def test_sql_template_keeps_identifiers_that_only_look_like_names(ident: str) ->
 @pytest.mark.parametrize("value", ["alice@example.com", "+49 170 1234567"])
 def test_sql_template_replaces_shape_hits_in_double_quoted_spans(value: str) -> None:
     assert sql_template(f'SELECT 1 WHERE c = "{value}"') == "SELECT 1 WHERE c = ?"
+
+
+# ----- final review: dialects where "..." is a string literal ---------------------------------
+
+STRING_QUOTE_DIALECTS = ("bigquery", "databricks", "spark", "spark2", "hive", "mysql", "mariadb")
+DQ_LITERALS = ("Maria Garcia", "12 Baker Street")
+DQ_SQL = 'SELECT id FROM t WHERE name = "Maria Garcia" OR addr = "12 Baker Street"'
+
+
+@pytest.mark.parametrize("dialect", STRING_QUOTE_DIALECTS)
+def test_definition_template_blanks_double_quoted_strings(dialect: str) -> None:
+    out = definition_template(DQ_SQL, dialect)
+    assert out == "SELECT id FROM t WHERE name = ? OR addr = ?", out
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "snowflake", "duckdb", "trino", "redshift"])
+def test_definition_template_ansi_keeps_quoted_identifiers(dialect: str) -> None:
+    sql = 'SELECT "Unit Price" FROM "Order Items" WHERE c = \'Maria Garcia\''
+    assert definition_template(sql, dialect) == 'SELECT "Unit Price" FROM "Order Items" WHERE c = ?'
+
+
+@pytest.mark.parametrize("dialect", ["", "no-such-dialect", "athena2"])
+def test_definition_template_unknown_dialect_fails_closed(dialect: str) -> None:
+    out = definition_template(DQ_SQL, dialect)
+    assert out is None or not any(lit in out for lit in DQ_LITERALS), out
+
+
+def test_string_quote_dialect_table_matches_sqlglot() -> None:
+    sqlglot = pytest.importorskip("sqlglot")
+    from schemaguru.lineage.dialects import DBT_ADAPTERS, SQLGLOT_DIALECTS
+    from schemaguru.pii.mask import DQ_IDENTIFIER_DIALECTS
+
+    names = {*SQLGLOT_DIALECTS.values(), *DBT_ADAPTERS.values(), *DQ_IDENTIFIER_DIALECTS}
+    for name in sorted(names):
+        quotes = sqlglot.Dialect.get_or_raise(name).tokenizer_class._QUOTES
+        # an identifier-quote dialect must never treat "..." as a string
+        assert (name in DQ_IDENTIFIER_DIALECTS) == ('"' not in quotes), name

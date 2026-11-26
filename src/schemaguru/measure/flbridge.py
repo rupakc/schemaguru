@@ -379,7 +379,7 @@ def _scrubbed(ev: Evidence, mode: Mode) -> Evidence:
     return dataclasses.replace(
         ev,
         claim_text=None if ev.claim_text is None else scrub_tree(ev.claim_text, mode),
-        sql=None if ev.sql is None else sql_template(ev.sql),
+        sql=None if ev.sql is None else sql_template(ev.sql, ev.dialect),
         params=_scrub_params(ev.params, mode),
         raw=scrub_tree(dict(ev.raw), mode),
         sample=None if ev.sample is None else scrub_tree(dict(ev.sample), mode),

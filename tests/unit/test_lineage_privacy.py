@@ -117,3 +117,59 @@ def test_literals_absent_from_every_surface(
     for name, text in surfaces.items():
         for literal in literals:
             assert literal not in text, (name, literal)
+
+
+# ----- dialects where "..." is a string literal (final review) --------------------------------
+
+DQ_LITERALS = ("Maria Garcia", "12 Baker Street")
+DQ_WHERE = 'note = "Maria Garcia" OR note = "12 Baker Street"'
+
+
+def _blobs(store_path: Path, exported: Path) -> list[bytes]:
+    blobs = [exported.read_bytes()]
+    for suffix in ("", "-wal", "-shm"):
+        path = Path(f"{store_path}{suffix}")
+        if path.exists():
+            blobs.append(path.read_bytes())
+    return blobs
+
+
+@pytest.mark.parametrize("dialect", ["bigquery", "databricks", "mysql"])
+def test_crawl_blanks_double_quoted_strings(tmp_path: Path, dialect: str) -> None:
+    from tests.unit.catalog.fake_reader import ViewFakeReader
+
+    reader = ViewFakeReader(
+        {"shop.orders": ["id", "note"], "shop.v_named": ["id"]},
+        {
+            "shop.v_named": "CREATE VIEW shop.v_named AS SELECT id FROM shop.orders WHERE "
+            + DQ_WHERE
+        },
+    )
+    reader.dialect = dialect  # type: ignore[misc]
+    db = tmp_path / "s.db"
+    store = SQLiteStore(db)
+    assert crawl(reader, store).views_parsed == 1
+    table = next(f for f in store.facts_for([ObjectRef(None, "shop", "v_named")], ["LINEAGE"]))
+    assert table.evidence is not None and table.evidence.sql is not None, "template kept"
+    assert "note = ?" in table.evidence.sql
+    exported = tmp_path / "export.json"
+    export_json(store, exported)
+    store.close()
+    for literal in DQ_LITERALS:
+        for enc in _encodings(literal):
+            assert not any(enc in b for b in _blobs(db, exported)), (dialect, literal)
+
+
+def test_crawl_ansi_dialect_keeps_quoted_identifier(tmp_path: Path) -> None:
+    from tests.unit.catalog.fake_reader import ViewFakeReader
+
+    reader = ViewFakeReader(
+        {"shop.orders": ["id", "note"], "shop.v_named": ["id"]},
+        {"shop.v_named": 'CREATE VIEW shop.v_named AS SELECT "id" FROM shop.orders'},
+    )
+    store = SQLiteStore(tmp_path / "s.db")
+    crawl(reader, store)
+    table = next(f for f in store.facts_for([ObjectRef(None, "shop", "v_named")], ["LINEAGE"]))
+    assert table.evidence is not None and table.evidence.sql is not None
+    assert 'SELECT "id" FROM' in table.evidence.sql
+    store.close()

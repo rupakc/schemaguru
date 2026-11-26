@@ -50,7 +50,8 @@ definition over 1,000,000 characters is skipped before parsing. On Linux the wor
 The raw definition text lives in memory only while it is parsed. The store keeps the lineage
 facts, a sha256 of the definition plus the relation names it reads (so an unchanged view whose
 names still resolve the same way is not parsed again) and a template of it
-with every literal replaced by a placeholder. Nothing raw is persisted, logged, rendered, put in a
+with every literal replaced by a placeholder (`"..."` too, in dialects where it can be a string:
+BigQuery, Databricks/Spark, Hive, MySQL/MariaDB, T-SQL, unknown). Nothing raw is persisted, logged, rendered, put in a
 diagnostic or sent to an LLM. See [[PII-and-Sampling-Policy]] and [[Security]].
 
 ## What an agent sees

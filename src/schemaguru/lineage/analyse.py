@@ -64,7 +64,7 @@ def analyse_definitions(
     *,
     resolve: Resolver,
     pool: ParserPool,
-    template: Callable[[str], str | None],
+    template: Callable[[str, str], str | None],
     columns: bool = True,
 ) -> list[DefinitionResult]:
     """One result per item, in input order: two ``pool.map`` calls per batch (the relations each
@@ -98,7 +98,7 @@ def analyse_definitions(
                 sha256=definition_sha256(item.sql),
                 parsed=p,
                 failure=failures.get(n),
-                template=None if p is None else template(item.sql),
+                template=None if p is None else template(item.sql, item.dialect),
                 names=() if p is None else names.get(n, ()),
             )
         )

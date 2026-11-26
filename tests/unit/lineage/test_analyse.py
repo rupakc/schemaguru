@@ -114,7 +114,7 @@ def test_no_template_no_evidence(pool: ParserPool) -> None:
         [DefinitionItem(VIEW, SQL, "postgres")],
         resolve=_resolve,
         pool=pool,
-        template=lambda _sql: None,
+        template=lambda _sql, _dialect: None,
     )
     assert res.template is None
     assert all(f.evidence is None for f in _facts(res, evidence=True))

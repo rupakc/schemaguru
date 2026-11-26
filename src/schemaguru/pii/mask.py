@@ -106,15 +106,31 @@ def _shape_hit(text: str) -> bool:
     return any(hit in _SHAPES for hit in sweep_detail(text)[1])
 
 
-def sql_template(sql: str) -> str | None:
+# dialects (sqlglot names) where ``"..."`` is ONLY a quoted identifier, never a string literal; a
+# test pins this against sqlglot's tokenizers. Every other dialect (BigQuery, Databricks/Spark,
+# Hive, MySQL/MariaDB, T-SQL with QUOTED_IDENTIFIER OFF, an unknown name) may read ``"..."`` as
+# a string, so a definition template blanks it there: fail closed.
+DQ_IDENTIFIER_DIALECTS = frozenset(
+    {
+        "athena", "clickhouse", "dune", "duckdb", "exasol", "materialize", "oracle", "postgres",
+        "presto", "redshift", "risingwave", "snowflake", "sqlite", "teradata", "trino",
+    }
+)  # fmt: skip
+
+
+def sql_template(sql: str, dialect: str | None = None) -> str | None:
     """The SQL with every string literal replaced by ``?`` (spec 11); ``None`` when unsure.
 
     Segmentation is the shared agreed lexer (:func:`schemaguru._util.sqltext.agreed_lex`): when
     dialect variants (backslash escapes, ``$tag$``, triple quotes, ``q''``, ...) disagree, or a
     literal is left open, nothing is stored. Comments are dropped. Quoted identifiers are kept
     unless a shape detector (email, phone, IBAN, card, IP, UUID, long hex, secret) hits;
-    never on the name, address or free-text detectors.
+    never on the name, address or free-text detectors. With a ``dialect`` that is not in
+    :data:`DQ_IDENTIFIER_DIALECTS` (``""`` and unknown names included), every ``"..."`` span is
+    blanked like a ``'...'`` literal: there it may be a string. ``dialect=None`` (no dialect
+    known, e.g. SQL SchemaGuru generated itself) keeps the shape-only rule.
     """
+    dq_string = dialect is not None and dialect.lower() not in DQ_IDENTIFIER_DIALECTS
     lexed, ok = agreed_lex(sql)
     if not ok or not lexed.terminated or lexed.bang:
         return None
@@ -126,7 +142,7 @@ def sql_template(sql: str) -> str | None:
             out.append("?")
         elif m.group(2):
             inner = text[1:-1] if len(text) >= 2 else text
-            out.append("?" if _shape_hit(inner) else text)
+            out.append("?" if (dq_string and '"' in text) or _shape_hit(inner) else text)
         elif m.group(3):
             out.append(" ")
         else:
@@ -143,14 +159,16 @@ _NUMBER = re.compile(
 )
 
 
-def definition_template(sql: str) -> str | None:
+def definition_template(sql: str, dialect: str) -> str | None:
     """A view/model definition as it may be stored (0.2.0 spec 4.4): :func:`sql_template` (string
     literals become ``?``, comments dropped) and numeric literals in code become ``?`` too.
+    ``dialect`` decides whether ``"..."`` is a string (blanked) or an identifier (kept); an
+    unknown one blanks it (see :data:`DQ_IDENTIFIER_DIALECTS`).
 
     ``None`` when unsure (the shared lexer disagrees on the input or on the template) or when the
     result is longer than :data:`TEMPLATE_MAX_CHARS` (it bounds stored evidence).
     """
-    templ = sql_template(sql)
+    templ = sql_template(sql, dialect)
     if templ is None:
         return None
     lexed, ok = agreed_lex(templ)

@@ -387,3 +387,22 @@ def test_import_dbt_keeps_base_facts_when_lineage_raises(
 
 def bag_text(bag: DiagnosticBag) -> str:
     return " ".join(d.message for d in bag)
+
+
+@pytest.mark.parametrize("adapter", ["bigquery", "databricks", "spark", "mysql", "mariadb"])
+def test_compiled_code_double_quoted_strings_are_blanked(
+    lstore: SQLiteStore, pool: ParserPool, tmp_path: Path, adapter: str
+) -> None:
+    from schemaguru.store.export import export_json
+
+    sql = (
+        "select o.customer_id, sum(o.amount) as net_revenue from `shop`.`orders` as o "
+        'where o.note = "Maria Garcia" or o.note = "12 Baker Street" group by o.customer_id'
+    )
+    facts = apply_dbt(_with_adapter(tmp_path, adapter, sql), lstore, parser_pool=pool)
+    rev = _lineage(facts, "LINEAGE")["shop.revenue"]
+    assert rev.evidence is not None and rev.evidence.sql, "the template is kept"
+    exported = tmp_path / "export.json"
+    export_json(lstore, exported)
+    for blob in (json.dumps([f.to_dict() for f in facts]), exported.read_text("utf-8")):
+        assert "Maria Garcia" not in blob and "12 Baker Street" not in blob, adapter

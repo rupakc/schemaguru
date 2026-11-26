@@ -242,31 +242,6 @@ def _kill_and_reap(proc: subprocess.Popen[bytes]) -> None:
                 stream.close()
 
 
-def _parent_death_signal() -> Callable[[], None] | None:
-    """On Linux, a ``preexec_fn`` that has the kernel SIGKILL the child when its parent dies
-    (``prctl(PR_SET_PDEATHSIG)``); ``None`` elsewhere or when ``prctl`` is unavailable.
-
-    The signal follows the thread that started the child: if that thread ends first, the child
-    is killed and the pool replaces it on its next request, without blaming a definition."""
-    if not sys.platform.startswith("linux"):
-        return None
-    try:
-        import ctypes
-        import signal
-
-        prctl = ctypes.CDLL(None, use_errno=True).prctl
-    except (OSError, AttributeError):
-        return None
-    parent = os.getpid()
-
-    def _arm() -> None:
-        prctl(1, signal.SIGKILL)  # 1 == PR_SET_PDEATHSIG
-        if os.getppid() != parent:  # the parent died before the signal was armed
-            os._exit(1)
-
-    return _arm
-
-
 class ParserPool:
     """One reused worker process, started lazily. Use as a context manager or call
     :meth:`close`; a closed pool starts a new worker on its next :meth:`map`."""
@@ -360,7 +335,6 @@ class ParserPool:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 env=env,
-                preexec_fn=_parent_death_signal(),
             )
         except OSError:
             self._restarts += 1

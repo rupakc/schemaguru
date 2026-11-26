@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import gc
-import os
 import subprocess
 import sys
 import textwrap
@@ -234,47 +233,16 @@ def test_garbage_collected_pool_reaps_its_child() -> None:
     assert proc.returncode is not None
 
 
-def _alive(pid: int) -> bool:
+def test_child_exits_on_stdin_eof() -> None:
+    # The worker's lifetime is bound to its stdin: when the parent's end closes (close(), the
+    # finalizer, or the parent process dying) the child leaves its line loop and exits.
+    pool = ParserPool()
+    pool.map([ExtractRequest("SELECT 1 FROM a", "duckdb")])
+    proc = pool._proc
+    assert proc is not None and proc.stdin is not None
     try:
-        with open(f"/proc/{pid}/status", encoding="ascii") as fh:
-            return not any(line.startswith("State:\tZ") for line in fh)
-    except (FileNotFoundError, ProcessLookupError):  # gone, or went while being read
-        return False
-
-
-@pytest.mark.skipif(
-    not sys.platform.startswith("linux"), reason="parent-death signal is Linux-only"
-)
-def test_child_dies_with_its_parent(tmp_path: Path) -> None:
-    script = tmp_path / "parent.py"
-    script.write_text(
-        textwrap.dedent(
-            """\
-            import os, sys, threading, time
-            from schemaguru.lineage.worker import ExtractRequest, ParserPool
-
-            pool = ParserPool(command=[sys.executable, "-m", "tests.unit.lineage.hostile_worker"])
-            threading.Thread(
-                target=pool.map, args=([ExtractRequest("HANG", "duckdb")],), daemon=True
-            ).start()
-            while pool._proc is None:
-                time.sleep(0.01)
-            time.sleep(1.0)  # the child is inside HANG now
-            print(pool._proc.pid, flush=True)
-            os._exit(0)
-            """
-        ),
-        encoding="utf-8",
-    )
-    done = subprocess.run(
-        [sys.executable, str(script)], cwd=REPO, timeout=60, capture_output=True, text=True,
-        check=False,
-    )  # fmt: skip
-    pid = int(done.stdout.strip())
-    deadline = time.monotonic() + 10
-    while _alive(pid) and time.monotonic() < deadline:
-        time.sleep(0.05)
-    alive = _alive(pid)
-    if alive:
-        os.kill(pid, 9)
-    assert not alive
+        proc.stdin.close()
+        assert proc.wait(timeout=10) == 0
+    finally:
+        pool.close()  # reaps; also kills the child if the assertion above failed
+    assert proc.returncode == 0

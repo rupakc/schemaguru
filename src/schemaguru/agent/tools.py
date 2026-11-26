@@ -15,6 +15,7 @@ from typing import Any, Protocol, TypeVar
 
 from schemaguru.config import Config
 from schemaguru.graph.search import PathResult
+from schemaguru.knowledge.lineage import MAX_DEPTH, LineageResult
 from schemaguru.measure import flbridge
 from schemaguru.measure.backend import MeasureBackend
 from schemaguru.measure.budget import BudgetGuard
@@ -33,6 +34,7 @@ TOOL_NAMES = (
     "column_values",
     "check_fact",
     "explain_term",
+    "lineage",
 )
 CHECK_PREAMBLE = "Runs on the warehouse under the measurement budget; use it sparingly. "
 
@@ -64,6 +66,14 @@ class ToolHost(Protocol):
     def find_path(
         self, a: str | ObjectRef, b: str | ObjectRef, *, k: int | None = None
     ) -> PathResult: ...
+
+    def lineage(
+        self,
+        ref: str | ObjectRef,
+        direction: str = "upstream",
+        depth: int = 2,
+        level: str | None = None,
+    ) -> LineageResult: ...
 
     def _with_renderer(self, fn: Callable[[ViewRenderer], _T], profile: str = "agent") -> _T: ...
 
@@ -149,6 +159,33 @@ _BASE: dict[str, dict[str, Any]] = {
         "What a business term or metric means and which tables it maps to.",
         {"term": _string("the business term or metric name", MAX_TEXT)},
         ["term"],
+    ),
+    "lineage": _spec(
+        "lineage",
+        "Which tables and columns a table or column is built from (upstream) or feeds "
+        "(downstream), from dbt manifests, view definitions and overlays. Declared or parsed, "
+        "never measured; not a join path.",
+        {
+            "ref": _string("table or column: schema.table or schema.table.column"),
+            "direction": {
+                "type": "string",
+                "enum": ["upstream", "downstream"],
+                "description": "upstream: what it is built from (default); downstream: what "
+                "reads it",
+            },
+            "depth": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": MAX_DEPTH,
+                "description": f"hops to follow, 1..{MAX_DEPTH} (default 2)",
+            },
+            "level": {
+                "type": "string",
+                "enum": ["table", "column"],
+                "description": "table or column lineage (default: the level of `ref`)",
+            },
+        },
+        ["ref"],
     ),
 }
 

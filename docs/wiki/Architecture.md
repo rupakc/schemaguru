@@ -129,7 +129,7 @@ adds on top:
   day, and shared by scoping, rendering and `find_path`. Concurrent `context()` calls are safe.
 - **Names**: `guru.table_ref("orders")` resolves a bare name when it is unambiguous and raises a
   `SchemaGuruError` listing the candidates when it is not.
-- **Async twins**: `acrawl`, `ameasure`, `adraft`, `acontext`, `arefresh`, `afind_path` run the
+- **Async twins**: `acrawl`, `ameasure`, `adraft`, `acontext`, `arefresh`, `afind_path`, `alineage` run the
   sync method in a worker thread.
 
 ## Robustness rules that shape the code

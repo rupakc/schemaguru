@@ -64,13 +64,19 @@ from schemaguru.draft.accept import write_accepted
 from schemaguru.draft.pipeline import DraftReport, draft_tables
 from schemaguru.draft.provider import LLMProvider
 from schemaguru.draft.verify import verify_drafts
-from schemaguru.errors import AmbiguousNameError, SchemaGuruError
+from schemaguru.errors import (
+    AmbiguousNameError,
+    SchemaGuruError,
+    StoreConfigError,
+    StoreUnavailableError,
+)
 from schemaguru.feedback.intake import report_error as _report_error
 from schemaguru.graph.chains import compile_chain
 from schemaguru.graph.edges import build_edges, entity_tables
 from schemaguru.graph.hubs import Hubs
 from schemaguru.graph.search import Automaton, Graph, PathResult, find_paths
 from schemaguru.graph.waypoints import compile_rules, lint_rules, validate_rules
+from schemaguru.knowledge.lineage import Direction, LineageResult, traverse
 from schemaguru.knowledge.resolve import resolve
 from schemaguru.knowledge.soft_delete import store_mismatch
 from schemaguru.measure.backend import CostEstimate, MeasureBackend, MeasureResult
@@ -82,6 +88,7 @@ from schemaguru.measure.scheduler import BackgroundDrainer, MeasureReport, Sched
 from schemaguru.model.chains import Chain, FilterStep
 from schemaguru.model.evidence import Evidence
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
+from schemaguru.model.lineage import Level
 from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays.dbt import apply_dbt
 from schemaguru.overlays.loader import lineage_ignore_diagnostics, retract_removed
@@ -806,6 +813,58 @@ class Guru:
             cfg = self._config.graph if k is None else replace(self._config.graph, k_paths=k)
             return find_paths(graph, src, dst, cfg=cfg, automaton=self._rules(src, dst))
 
+    # ----- lineage ----------------------------------------------------------------------------
+
+    def _subject_ref(self, name: Target) -> ObjectRef:
+        """A stored table or column: the store's own resolution first (it keeps a column), then
+        the bare-name rules of :meth:`table_ref`, then :meth:`column_ref`."""
+        if isinstance(name, ObjectRef):
+            return self.column_ref(name) if name.column is not None else self.table_ref(name)
+        ref, cands = self.store.resolve(name)
+        if ref is not None:
+            return ref
+        if cands:
+            listed = ", ".join(c.canonical() for c in cands)
+            raise AmbiguousNameError(
+                f"name {name!r} is ambiguous: {listed}", tuple(c.canonical() for c in cands)
+            )
+        try:
+            return self.table_ref(name)
+        except (AmbiguousNameError, StoreUnavailableError, StoreConfigError):
+            raise
+        except SchemaGuruError:
+            pass
+        try:
+            return self.column_ref(name)
+        except (StoreUnavailableError, StoreConfigError):
+            raise
+        except SchemaGuruError:
+            raise SchemaGuruError(f"unknown table or column {name!r}") from None
+
+    def lineage(
+        self,
+        ref: Target,
+        direction: str = "upstream",
+        depth: int = 2,
+        level: str | None = None,
+    ) -> LineageResult:
+        """What ``ref`` (a table or column) is built from (``upstream``) or feeds
+        (``downstream``), up to ``depth`` hops (1..5). ``level`` defaults to the ref's own;
+        ``"table"`` on a column walks its table. Declared or parsed lineage only: never measured,
+        never VERIFIED, and never a join path (0.2.0 spec 4.8)."""
+        if direction not in ("upstream", "downstream"):
+            raise ValueError(f"direction must be 'upstream' or 'downstream': {direction!r}")
+        if level not in (None, "table", "column"):
+            raise ValueError(f"level must be 'table' or 'column': {level!r}")
+        subject = self._subject_ref(ref)
+        if level == "column" and subject.column is None:
+            raise SchemaGuruError(
+                f"{subject.canonical()} is a table; level 'column' needs a column reference"
+            )
+        way: Direction = "upstream" if direction == "upstream" else "downstream"
+        lvl: Level | None = None if level is None else ("table" if level == "table" else "column")
+        return traverse(self.store, subject, direction=way, depth=depth, level=lvl)
+
     # ----- context ----------------------------------------------------------------------------
 
     def _renderer(self, profile: str) -> ViewRenderer:
@@ -1065,6 +1124,15 @@ class Guru:
 
     async def afind_path(self, a: Target, b: Target, *, k: int | None = None) -> PathResult:
         return await asyncio.to_thread(self.find_path, a, b, k=k)
+
+    async def alineage(
+        self,
+        ref: Target,
+        direction: str = "upstream",
+        depth: int = 2,
+        level: str | None = None,
+    ) -> LineageResult:
+        return await asyncio.to_thread(self.lineage, ref, direction, depth, level)
 
 
 __all__ = ["FIRST_TOUCH", "Guru"]

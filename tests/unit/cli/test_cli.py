@@ -725,3 +725,38 @@ def test_json_format_errors_are_a_json_object_on_stderr(run: Run) -> None:
     # text format keeps the plain line (negative control)
     code, _, err = run("crawl")
     assert err.startswith("error: ")
+
+
+def test_lineage_text_and_json(run: Run, crawled: str) -> None:
+    from schemaguru.model.lineage import table_lineage_value
+
+    pay = ObjectRef(None, "shop", "payments")
+    with SQLiteStore(crawled) as st:
+        st.put_facts(
+            [
+                Fact.make(
+                    FactKind.LINEAGE, pay, table_lineage_value(["shop.orders"]),
+                    Provenance.CATALOG, Status.UNVERIFIED, source="view_definition",
+                )
+            ]
+        )  # fmt: skip
+    code, out, err = run("lineage", "payments", "--store", crawled)
+    assert code == 0, err
+    assert out.splitlines()[1] == "  shop.payments <- shop.orders [view_definition]"
+    code, out, _ = run(
+        "lineage", "shop.orders", "--downstream", "--depth", "1", "--store", crawled,
+        "--format", "json",
+    )  # fmt: skip
+    data = jloads(out)
+    assert code == 0 and (data["direction"], data["depth"]) == ("downstream", 1)
+    assert data["edges"] == [
+        {"upstream": "shop.orders", "downstream": "shop.payments",
+         "source": ["view_definition"], "transform": None}
+    ]  # fmt: skip
+    assert data["text"].startswith("Lineage downstream of shop.orders")
+    code, out, _ = run("lineage", "payments", "--level", "table", "--store", crawled)
+    assert code == 0 and "shop.payments <- shop.orders" in out
+    assert run("lineage", "payments", "--depth", "9", "--store", crawled)[0] == 2
+    assert run("lineage", "payments", "--level", "row", "--store", crawled)[0] == 2
+    code, _, err = run("lineage", "shop.nosuch", "--store", crawled)
+    assert code == 2 and "nosuch" in err

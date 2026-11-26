@@ -123,6 +123,17 @@ measured join routes between two tables (1 if none)
 | `a` |  |
 | `b` |  |
 
+## `lineage`
+
+what a table or column is built from (declared/parsed)
+
+| Argument | Meaning |
+|---|---|
+| `ref` | table or column (schema.table[.column]) |
+| `--downstream` | what reads it, instead of what it reads |
+| `--depth` `DEPTH` | hops to follow, 1..5 (default 2) |
+| `--level` `LEVEL` | default: the ref's own; one of `table`, `column` |
+
 ## `refresh`
 
 recrawl, re-measure, classify changes (exit code = report)

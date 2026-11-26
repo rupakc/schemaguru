@@ -45,6 +45,7 @@ PROTECTED = [
     ("GET", "/tables/shop.orders"),
     ("GET", "/paths?from=orders&to=customers"),
     ("GET", "/facts?subject=shop.orders"),
+    ("GET", "/lineage?ref=shop.orders"),
     ("POST", "/refresh"),
     ("GET", "/mcp"),
 ]
@@ -441,3 +442,47 @@ def test_store_credentials_rejected_is_500_config(
     monkeypatch.setattr(guru.store, "search", refused)
     r = client.get("/search?q=orders", headers=H_READER)
     assert r.status_code == 500 and r.json()["error"]["code"] == "SG704"
+
+
+def _seed_lineage(guru: Guru) -> None:
+    from schemaguru.model.facts import Fact, Provenance, Status
+    from schemaguru.model.kinds import FactKind
+    from schemaguru.model.lineage import table_lineage_value
+    from schemaguru.model.refs import ObjectRef
+
+    guru.store.put_facts(
+        [
+            Fact.make(
+                FactKind.LINEAGE, ObjectRef(None, "shop", "payments"),
+                table_lineage_value(["shop.orders"]), Provenance.CATALOG, Status.UNVERIFIED,
+                source="view_definition",
+            )
+        ]
+    )  # fmt: skip
+
+
+def test_get_lineage(client: TestClient, guru: Guru) -> None:
+    _seed_lineage(guru)
+    r = client.get("/lineage", params={"ref": "payments"}, headers=H_READER)
+    assert r.status_code == 200, r.text
+    assert r.json() == guru.handle_tool_call("lineage", {"ref": "payments"})
+    assert r.json()["edges"][0]["upstream"] == "shop.orders"
+    params = {"ref": "shop.orders", "direction": "downstream", "depth": "3", "level": "table"}
+    r = client.get("/lineage", params=params, headers=H_READER)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["direction"], body["depth"]) == ("downstream", 3)
+    assert [e["downstream"] for e in body["edges"]] == ["shop.payments"]
+    r = client.get("/lineage", params={"ref": "shop.nowhere"}, headers=H_READER)
+    assert r.status_code == 400 and r.json()["error"]["code"] == "SG803"
+
+
+def test_get_lineage_bad_depth_400(client: TestClient) -> None:
+    for depth in ("x", "0", "9"):
+        r = client.get("/lineage", params={"ref": "orders", "depth": depth}, headers=H_READER)
+        assert r.status_code == 400, (depth, r.text)
+        assert r.json()["error"]["code"] in ("SG807", "SG803")
+    r = client.get("/lineage", headers=H_READER)
+    assert r.status_code == 400 and r.json()["error"]["code"] == "SG807"
+    r = client.get("/lineage", params={"ref": "orders", "direction": "up"}, headers=H_READER)
+    assert r.status_code == 400 and r.json()["error"]["code"] == "SG803"

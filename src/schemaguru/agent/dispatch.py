@@ -47,6 +47,7 @@ from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays.schema import GLOBAL_SUBJECT
 from schemaguru.pii import ValuePolicy, mask_free_text
 from schemaguru.pii.policy import Mode
+from schemaguru.render.lineage import lineage_text
 from schemaguru.render.table_block import (
     ValuePresenter,
     ident,
@@ -191,6 +192,10 @@ def _validate(spec: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any
                 raise ToolError("SG803", f"{spec['name']}: `{name}` must be >= {lo}")
             if hi is not None and value > hi:
                 raise ToolError("SG803", f"{spec['name']}: `{name}` must be <= {hi}")
+        allowed = prop.get("enum")
+        if isinstance(allowed, list) and value not in allowed:
+            listed = ", ".join(str(a) for a in allowed)
+            raise ToolError("SG803", f"{spec['name']}: `{name}` must be one of {listed}")
         if isinstance(value, str) and len(value.strip()) < int(prop.get("minLength", 0)):
             raise ToolError("SG803", f"{spec['name']}: `{name}` must not be empty")
         cap = prop.get("maxLength")
@@ -446,6 +451,26 @@ def _outbound_evidence(ev: Evidence, mode: str) -> dict[str, Any]:
     return out
 
 
+def _lineage(guru: ToolHost, args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        r = guru.lineage(
+            args["ref"],
+            direction=str(args.get("direction", "upstream")),
+            depth=int(args.get("depth", 2)),
+            level=args.get("level"),
+        )
+    except AmbiguousNameError as e:
+        raise ToolError("SG803", str(e), e.candidates) from None
+    except SchemaGuruError as e:
+        if isinstance(e, StoreUnavailableError | StoreConfigError):
+            raise
+        code = "SG705" if str(e).startswith("SG705") else "SG803"
+        raise ToolError(code, f"lineage: {e}") from None
+    tables = [ObjectRef.parse(n.ref, has_column=n.level == "column").table_ref()
+              for n in r.nodes if n.in_catalog]  # fmt: skip
+    return _result({"text": lineage_text(r), **r.to_dict()}, outbound_mode(guru, tables))
+
+
 _HANDLERS: dict[str, Callable[[ToolHost, dict[str, Any]], dict[str, Any]]] = {
     "schema_context": _schema_context,
     "search_tables": _search_tables,
@@ -453,6 +478,7 @@ _HANDLERS: dict[str, Callable[[ToolHost, dict[str, Any]], dict[str, Any]]] = {
     "find_join_path": _find_join_path,
     "column_values": _column_values,
     "explain_term": _explain_term,
+    "lineage": _lineage,
 }
 
 

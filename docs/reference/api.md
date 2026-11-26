@@ -24,6 +24,7 @@ print(sorted(n for n in sg.__all__ if n[0].isupper()))
         - verify
         - load_overlays
         - find_path
+        - lineage
         - context
         - fingerprint_views
         - report_error
@@ -72,6 +73,8 @@ print(sorted(n for n in sg.__all__ if n[0].isupper()))
 ::: schemaguru.Refusal
 
 ::: schemaguru.RefreshReport
+
+::: schemaguru.LineageResult
 
 ::: schemaguru.Diagnostic
 

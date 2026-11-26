@@ -22,5 +22,9 @@
   {
     "name": "explain_term",
     "description": "What a business term or metric means and which tables it maps to."
+  },
+  {
+    "name": "lineage",
+    "description": "Which tables and columns a table or column is built from (upstream) or feeds (downstream), from dbt manifests, view definitions and overlays. Declared or parsed, never measured; not a join path."
   }
 ]

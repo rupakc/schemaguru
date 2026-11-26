@@ -20,6 +20,8 @@ USAGE = (
     "back as an error listing the candidates.",
     "- Use column_values before filtering on a coded column; values may be masked by policy.",
     "- Use explain_term for business terms and metrics.",
+    "- Use `lineage` to see what a table or column is built from or feeds; it is declared or "
+    "parsed, never measured, and never a join path.",
 )
 CHECK_USAGE = (
     "- check_fact runs a claim on the warehouse under a spending budget; use it to confirm a "

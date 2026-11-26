@@ -10,6 +10,8 @@ the agent surface's, already masked by the render layer) and adds no logic of it
 ``GET  /search``           ``search_tables`` (``q``, ``k``)                   reader
 ``GET  /tables/{ref}``     ``describe_table``                                 reader
 ``GET  /paths``            ``find_join_path`` (``from``, ``to``)              reader
+``GET  /lineage``          ``lineage`` (``ref``, ``direction``, ``depth``,
+                           ``level``)                                        reader
 ``GET  /facts``            ``agent.facts.outbound_facts`` for one table or column
                            ``subject`` (``kind`` repeatable)                 reader
 ``POST /refresh``          ``Guru.refresh`` (JSON ``label``), one at a time   admin
@@ -69,7 +71,10 @@ class _Fail(Exception):
         self.status, self.code, self.message = status, code, message
 
 
-_STATUS = {"SG803": 400, "SG804": 500, "SG301": 429, "SG302": 429, "SG703": 503, "SG704": 500}
+_STATUS = {
+    "SG803": 400, "SG804": 500, "SG301": 429, "SG302": 429, "SG703": 503, "SG704": 500,
+    "SG705": 501,  # a custom store without the lineage index: downstream lineage
+}  # fmt: skip
 
 
 def _budget_range(guru: Guru) -> tuple[int, int]:
@@ -287,6 +292,17 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
         args = {"from": need_param(request, "from"), "to": need_param(request, "to")}
         return guru.handle_tool_call("find_join_path", args)
 
+    def lineage(request: Request, body: bytes) -> dict[str, Any]:
+        q = request.query_params
+        args: dict[str, Any] = {
+            "ref": need_param(request, "ref"),
+            "depth": int_param(q.get("depth"), "depth", 2),
+        }
+        for name in ("direction", "level"):
+            if q.get(name) is not None:
+                args[name] = q[name]
+        return guru.handle_tool_call("lineage", args)
+
     def subject_of(text: str) -> ObjectRef:
         """A table or a column: the store's own resolution first (it keeps the column), then
         the façade's bare-name rules."""
@@ -343,6 +359,7 @@ def create_app(guru: Guru, *, authenticator: Authenticator) -> Starlette:
         Route("/search", endpoint("reader", search), methods=["GET"]),
         Route("/tables/{ref:path}", endpoint("reader", table), methods=["GET"]),
         Route("/paths", endpoint("reader", paths), methods=["GET"]),
+        Route("/lineage", endpoint("reader", lineage), methods=["GET"]),
         Route("/facts", endpoint("reader", facts), methods=["GET"]),
         Route("/refresh", endpoint("admin", refresh), methods=["POST"]),
     ]

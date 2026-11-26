@@ -553,7 +553,7 @@ def test_g8_agent_native_surfaces(measured: sg.Guru) -> None:
     names = [t["name"] for t in measured.tools()]
     assert names == [
         "schema_context", "search_tables", "describe_table", "find_join_path",
-        "column_values", "explain_term",
+        "column_values", "explain_term", "lineage",
     ]  # fmt: skip
     calls = {
         "schema_context": {"question": "orders per customer"},
@@ -562,6 +562,7 @@ def test_g8_agent_native_surfaces(measured: sg.Guru) -> None:
         "find_join_path": {"from": "shop.orders", "to": "shop.customers"},
         "column_values": {"column": "shop.customers.segment"},
         "explain_term": {"term": "refund rate"},
+        "lineage": {"ref": "shop.orders"},
     }
     for name, args in calls.items():
         result = measured.handle_tool_call(name, args)

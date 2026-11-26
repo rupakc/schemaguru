@@ -41,6 +41,7 @@ app = create_app(guru, authenticator=BearerTokens({"<token>": "reader"}))  # an 
 | `GET /search` | `search_tables` (`q`, `k`) | reader |
 | `GET /tables/{ref}` | `describe_table` | reader |
 | `GET /paths` | `find_join_path` (`from`, `to`) | reader |
+| `GET /lineage` | `lineage` (`ref`, `direction`, `depth`, `level`) | reader |
 | `GET /facts` | the facts of one table or column (`subject`, `kind` repeatable), through the agent value policy | reader |
 | `POST /refresh` | `Guru.refresh` (JSON `label`); one at a time | admin |
 | `/mcp` | MCP over streamable HTTP: the agent tools and `schema://tables/{ref}` resources, JSON responses, stateful sessions bound to the token that opened them; 501 without the `mcp` extra | reader |

@@ -101,6 +101,16 @@ def _parser() -> argparse.ArgumentParser:
     sp.add_argument("a")
     sp.add_argument("b")
 
+    sp = add("lineage", cmd.lineage, "what a table or column is built from (declared/parsed)")
+    sp.add_argument("ref", help="table or column (schema.table[.column])")
+    sp.add_argument(
+        "--downstream", action="store_true", help="what reads it, instead of what it reads"
+    )
+    sp.add_argument("--depth", type=int, default=2, help="hops to follow, 1..5 (default 2)")
+    sp.add_argument(
+        "--level", choices=("table", "column"), default=None, help="default: the ref's own"
+    )
+
     sp = add("refresh", cmd.refresh, "recrawl, re-measure, classify changes (exit code = report)")
     sp.add_argument("--label", default=None, help="snapshot label")
 

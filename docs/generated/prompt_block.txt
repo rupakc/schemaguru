@@ -5,12 +5,14 @@ You can inspect the data warehouse with these tools:
 - find_join_path: Measured join routes between two tables with join keys and a SQL snippet, or the reason there is none. Never invent a join this tool does not return.
 - column_values: Observed and declared values of one column, as the value policy allows them.
 - explain_term: What a business term or metric means and which tables it maps to.
+- lineage: Which tables and columns a table or column is built from (upstream) or feeds (downstream), from dbt manifests, view definitions and overlays. Declared or parsed, never measured; not a join path.
 How to use them:
 - Call schema_context with the user's question before writing SQL; use only the tables, columns and joins it shows, and heed every ⚠ line.
 - Use search_tables when a table you need is not in the view, then describe_table for its full block.
 - Join only along routes find_join_path returns; a refusal means there is no safe route. Never guess a join key or a table name: a bare name that matches several tables comes back as an error listing the candidates.
 - Use column_values before filtering on a coded column; values may be masked by policy.
 - Use explain_term for business terms and metrics.
+- Use `lineage` to see what a table or column is built from or feeds; it is declared or parsed, never measured, and never a join path.
 
 Legend:
   ⚠ a hazard: measured, declared by a person, or drafted (then marked (draft)).

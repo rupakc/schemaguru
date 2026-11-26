@@ -355,9 +355,14 @@ def test_ambiguous_bare_name_is_not_resolved_to_either_table(
     p = tmp_path / "amb.json"
     p.write_text(json.dumps(m), encoding="utf-8")
     facts = import_dbt(p, lstore, parser_pool=pool)
-    for f in facts:
-        if f.kind.name == "COLUMN_LINEAGE" and f.subject.canonical() == "shop.revenue.net_revenue":
-            assert not any(i.endswith("items.qty") for i in f.value["inputs"])
+    target = [
+        f
+        for f in facts
+        if f.kind.name == "COLUMN_LINEAGE" and f.subject.canonical() == "shop.revenue.net_revenue"
+    ]
+    assert target, "the target column's COLUMN_LINEAGE fact must exist (else this is vacuous)"
+    for f in target:
+        assert not any(i.endswith("items.qty") for i in f.value["inputs"])
 
 
 # ----- a failing lineage step leaves the 0.1.0 facts to import_dbt, nothing to apply_dbt --------

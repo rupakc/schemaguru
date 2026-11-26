@@ -14,6 +14,7 @@ from schemaguru.diagnostics import Diagnostic
 from schemaguru.errors import SchemaGuruError
 from schemaguru.graph.search import PathResult, Refusal
 from schemaguru.guru import Guru
+from schemaguru.knowledge.lineage import LineageResult
 from schemaguru.model import Fact, FactKind, JoinRef, ObjectRef, Provenance, Status
 from schemaguru.refresh import RefreshReport
 from schemaguru.render import ContextView
@@ -48,5 +49,6 @@ __all__ = [  # noqa: RUF022
     "pii",
     "overlays",
     "guard",
+    "LineageResult",
     "__version__",
 ]

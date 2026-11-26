@@ -58,7 +58,7 @@ These work before or after the command name.
 
 | Option | Meaning |
 |---|---|
-| `--url URL` | warehouse URL; else `$SCHEMAGURU_URL`. Commands that only read the store (`context`, `search`, `path`, `report`, `review`, `accept`) work without it once a store exists |
+| `--url URL` | warehouse URL; else `$SCHEMAGURU_URL`. Commands that only read the store (`context`, `search`, `path`, `lineage`, `report`, `review`, `accept`) work without it once a store exists |
 | `--store PATH` | store file (default `Config.store_path`, else `.schemaguru/default.db`), or a `postgres://` DSN for the shared [[Postgres store|Store]] (extra `postgres-store`) |
 | `--config FILE` | a `schemaguru.config.yaml`; without it, `SCHEMAGURU_*` environment variables are read ([[Configuration]]) |
 | `--format text\|json\|markdown` | output format; with `json`, stdout is parseable and diagnostics go to stderr |
@@ -80,6 +80,7 @@ URLs are never printed in full: messages show only `scheme://host[:port]`.
 | `context "QUESTION" [--budget-tokens N] [--profile P]` | print the view an agent reads | 0 |
 | `search QUERY [-k N]` | ranked tables | 0 |
 | `path A B` | join routes between two tables | 0; **1 when refused** |
+| `lineage REF [--downstream] [--depth N] [--level table\|column]` | what a table or column is built from (or, with `--downstream`, feeds): declared or parsed, never measured, never a join path; `--format json` prints the `lineage` tool payload | 0; 2 for an unknown or ambiguous ref or a depth outside 1..5 |
 | `refresh [--label L]` | recrawl, re-measure, classify changes ([[Refresh-and-Drift]]) | the report's: 0, 1 or 3 |
 | `report` | summarise the store: tables, facts, spend, feedback | 0 |
 | `lint [PATHS...]` | load overlays on a copy of the store and report problems | 0; 1 on any finding |

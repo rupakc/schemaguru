@@ -656,6 +656,20 @@ def path(args: argparse.Namespace, io: IO) -> int:
     return 1 if res.get("refusal") else 0
 
 
+def lineage(args: argparse.Namespace, io: IO) -> int:
+    arguments: dict[str, Any] = {
+        "ref": args.ref,
+        "direction": "downstream" if args.downstream else "upstream",
+        "depth": args.depth,
+    }
+    if args.level is not None:
+        arguments["level"] = args.level
+    with _guru(args, "lineage", crawl=None) as guru:
+        res = _tool(guru, "lineage", arguments)
+    io.emit(res, [str(res["text"])], title=f"Lineage of {args.ref}")
+    return 0
+
+
 # ----- refresh, report, lint -----------------------------------------------------------------
 
 

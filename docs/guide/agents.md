@@ -19,6 +19,7 @@ through the same value policy.
 | `column_values` | observed and declared values of a column, as the value policy allows |
 | `check_fact` | runs a FactLang claim on the warehouse, under the measurement budget |
 | `explain_term` | a glossary term or metric and the tables it maps to |
+| `lineage` | what a table or column is built from (upstream) or feeds (downstream), from dbt manifests, view definitions and overlays; declared or parsed, never measured, never a join path. `nodes`, `edges` (each with `source` and `transform`), `cycles`, and `truncated` at 200 nodes |
 
 ```python
 import schemaguru as sg

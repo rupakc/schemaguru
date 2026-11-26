@@ -26,12 +26,14 @@ You can inspect the data warehouse with these tools:
 - find_join_path: Measured join routes between two tables with join keys and a SQL snippet, or the reason there is none. Never invent a join this tool does not return.
 - column_values: Observed and declared values of one column, as the value policy allows them.
 - explain_term: What a business term or metric means and which tables it maps to.
+- lineage: Which tables and columns a table or column is built from (upstream) or feeds (downstream), from dbt manifests, view definitions and overlays. Declared or parsed, never measured; not a join path.
 How to use them:
 - Call schema_context with the user's question before writing SQL; use only the tables, columns and joins it shows, and heed every ⚠ line.
 - Use search_tables when a table you need is not in the view, then describe_table for its full block.
 - Join only along routes find_join_path returns; a refusal means there is no safe route. Never guess a join key or a table name: a bare name that matches several tables comes back as an error listing the candidates.
 - Use column_values before filtering on a coded column; values may be masked by policy.
 - Use explain_term for business terms and metrics.
+- Use `lineage` to see what a table or column is built from or feeds; it is declared or parsed, never measured, and never a join path.
 
 Legend:
   ⚠ a hazard: measured, declared by a person, or drafted (then marked (draft)).
@@ -63,6 +65,7 @@ result["text"]                  # always present
 | `column_values` | `column` (`table.column`) | observed and declared values, as the value policy allows |
 | `check_fact` | FactLang's claim argument | a FactLang verdict; **spends**, see below |
 | `explain_term` | `term` | glossary or metric definition and its tables |
+| `lineage` | `ref` (table or column), `direction` (`upstream` default, or `downstream`), `depth` (1..5, default 2), `level` (`table` or `column`, default the ref's own) | what it is built from or feeds: `nodes`, `edges` (each with `source` and `transform`), `cycles`, `truncated` at 200 nodes. Declared or parsed, never measured, never a join path; downstream needs a store with the lineage index (`SG705` otherwise) |
 
 Real results on the shop fixture (2026-11-24, stand-in measurement backend):
 

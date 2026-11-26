@@ -18,6 +18,7 @@ SPEC_TOOLS = [
     "column_values",
     "check_fact",
     "explain_term",
+    "lineage",
 ]
 
 _TYPES = {"object", "string", "integer", "number", "boolean", "array"}
@@ -98,3 +99,4 @@ def test_string_arguments_are_capped(shop_guru: Guru, seam_check: Any) -> None:
     assert caps["schema_context"]["question"] == MAX_TEXT == 20_000
     assert caps["explain_term"]["term"] == 20_000
     assert caps["check_fact"]["claims"] == 20_000
+    assert caps["lineage"]["ref"] == MAX_NAME == 512

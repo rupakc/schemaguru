@@ -20,6 +20,7 @@ schemaguru --store postgresql://sg@db/knowledge --url "$WAREHOUSE_URL" serve --p
 | `GET /search?q=&k=` | `search_tables` | reader |
 | `GET /tables/{ref}` | `describe_table` | reader |
 | `GET /paths?from=&to=` | `find_join_path` | reader |
+| `GET /lineage?ref=&direction=&depth=&level=` | `lineage` | reader |
 | `GET /facts?subject=&kind=` | stored facts of one subject, masked by the tool surface's value policy | reader |
 | `POST /refresh` | `Guru.refresh` (JSON `label`), one at a time | admin |
 | `/mcp` | MCP over streamable HTTP (the same tools and `schema://tables/{ref}` resources as `schemaguru mcp`; JSON responses, stateful sessions); `501` (`SG812`) without the `mcp` extra | reader |

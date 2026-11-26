@@ -63,6 +63,7 @@ EXPORTS = [
     "pii",
     "overlays",
     "guard",
+    "LineageResult",
     "__version__",
 ]
 

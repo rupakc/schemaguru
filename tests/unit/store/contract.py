@@ -640,3 +640,24 @@ def test_lineage_facts_under_tables(store: Any) -> None:
     got = store.lineage_facts_under([_VIEW])
     assert [f.id for f in got] == sorted([table.id, gone.id, quoted.id])
     assert store.lineage_facts_under([]) == []
+
+
+def test_lineage_column_edges_stay_column_level(store: Any) -> None:
+    """A COLUMN_LINEAGE fact is a column-level edge: found at ``level="column"`` in both
+    directions, never at ``level="table"``."""
+    from schemaguru.model.lineage import LineageEdge, column_lineage_value
+
+    target = ObjectRef(None, "shop", "v", "total")
+    value = column_lineage_value(["shop.orders.amount"], "aggregate")
+    fact = Fact.make(
+        FactKind.COLUMN_LINEAGE, target, value, Provenance.CATALOG, Status.UNVERIFIED,
+        source="view_definition",
+    )  # fmt: skip
+    store.put_facts([fact])
+    edge = LineageEdge("shop.orders.amount", "shop.v.total", "column", fact.id)
+    assert store.lineage_edges(["shop.orders.amount"], direction="downstream", level="column") == [
+        edge
+    ]
+    assert store.lineage_edges(["shop.v.total"], direction="upstream", level="column") == [edge]
+    assert store.lineage_edges(["shop.orders.amount"], direction="downstream", level="table") == []
+    assert store.lineage_edges(["shop.orders"], direction="downstream", level="table") == []

@@ -28,7 +28,7 @@ pip install schemaguru            # core: FactLang + PyYAML
 pip install 'schemaguru[duckdb]'  # plus a warehouse driver (one extra per warehouse)
 ```
 
-Python 3.10 to 3.13 (the Postgres store needs PostgreSQL 11 or later). Every warehouse driver, LLM provider and agent framework is an optional
+Python 3.10 to 3.13. Every warehouse driver, LLM provider and agent framework is an optional
 extra:
 
 | Extra | Adds | Extra | Adds |
@@ -42,7 +42,7 @@ extra:
 | `clickhouse` | clickhouse-connect | `openai-agents` | OpenAI Agents SDK tools |
 | `mssql` | pyodbc (SQL Server, Synapse) | `embeddings` | numpy (embedding retriever) |
 | `oracle` | oracledb | `tiktoken` | tiktoken token counter |
-| `trino` | trino | `postgres-store` | Postgres knowledge store (teams, server; PostgreSQL 11+) |
+| `trino` | trino | `postgres-store` | Postgres knowledge store (teams, server) |
 | `mysql` | PyMySQL (MySQL, MariaDB) | `all` | everything above |
 
 ## Quickstart

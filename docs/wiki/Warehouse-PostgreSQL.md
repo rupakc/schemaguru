@@ -41,6 +41,8 @@ and constraints. They are cheap even on catalogs with many thousands of relation
 - Unique indexes that back no constraint (`CREATE UNIQUE INDEX`) are reported as `unique`
   constraints. Partial, expression and invalid indexes are not: they guarantee nothing about
   the whole column list.
+  Reading them needs PostgreSQL 11 or later (the key columns come from `indnkeyatts`); on an older
+  server the reader skips unique indexes with an `SG102` warning and keeps primary, unique-constraint and foreign keys.
 - Column defaults as expressions (`pg_get_expr`); view column nullability is unknown.
 
 ## Quirks

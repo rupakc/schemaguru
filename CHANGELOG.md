@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.2.0] - UNRELEASED
+## [0.2.0] - 2026-11-26
 
 ### Added
 - **Lineage** ([guide](docs/guide/lineage.md)): two fact kinds, `LINEAGE` (table) and
@@ -32,7 +32,7 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 - Requires FactLang 0.1.4 (`factlang>=0.1.4,<0.2`); Databricks inline timestamps are accepted
   (FactLang now spells them with an explicit UTC zone).
-- The Postgres store requires PostgreSQL 11 or later.
+- The Postgres warehouse reader reads unique-index key columns with `indnkeyatts` (PostgreSQL 11 or later); on an older server it skips unique indexes with an `SG102` warning and keeps primary and foreign keys.
 - Bottlenecks the scale run found were fixed (crawl, join index, search, path search); see the
   Scale page for what moved.
 
@@ -66,7 +66,7 @@ One line per area of the 0.2.0 hardening ledger
   zone-explicit forms.
 
 ### Known limits
-- **`guru.context` is slow at 500,000 tables: p95 28.6 s (p50 9.3 s) against the 200 ms target,
+- **`guru.context` is slow at 500,000 tables (`context_p95_ms`): p95 28.6 s (p50 9.3 s) against the 200 ms target,
   which is not met.** 87% of a call is the join-path search's exact lower bound; meeting the target
   needs an architecture change (precomputed distance bounds, or a hazard scan that does not search
   every candidate pair). At 2,000 tables p95 is 119 ms and at 20,000 tables 1.5 s. Join-path search

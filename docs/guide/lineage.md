@@ -159,7 +159,7 @@ never SQL text.
 ## Limits
 
 * A definition over **1,000,000 characters** is skipped before parsing (`SG211 too_large`).
-* Parsing runs in a reused worker process (started with `spawn` on every OS) with a hard
+* Parsing runs in a reused worker process (a fresh `python -m schemaguru.lineage.worker` process, like the spawn start method, on every OS) with a hard
   **5 s** cap per request; a definition takes two requests (extract its tables, then the lineage),
   so the cap is per request, not per definition. A timeout kills the worker, replaces it and
   gives that definition `SG211 timeout` and no lineage; a worker that dies is `SG211

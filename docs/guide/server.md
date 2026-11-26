@@ -48,7 +48,7 @@ serve(guru, host="0.0.0.0", port=8080, tokens={"a-long-admin-token-123": "admin"
 
 ## Sharing a store
 
-`--store postgres://…` (extra `postgres-store`; PostgreSQL 11 or later) opens a `PostgresStore`: the same schema as
+`--store postgres://…` (extra `postgres-store`) opens a `PostgresStore`: the same schema as
 the SQLite store, with weighted `tsvector` full-text search. Several replicas can share it;
 refresh holds a Postgres advisory lock (`pg_try_advisory_lock`), so only one replica
 refreshes at a time and the others get `409`. With a SQLite store a process lock does the

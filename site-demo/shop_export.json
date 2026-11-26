@@ -1455,7 +1455,7 @@
  ],
  "schema_dump": "CREATE TABLE shop.accounts (\n  account_id INTEGER,\n  name VARCHAR\n);\nCREATE TABLE shop.all_null_t (\n  id INTEGER,\n  c INTEGER\n);\nCREATE TABLE shop.anon_enum_t (\n  id INTEGER,\n  kind VARCHAR\n);\nCREATE TABLE shop.broken_child (\n  child_id INTEGER,\n  parent_id INTEGER\n);\nCREATE TABLE shop.customers (\n  customer_id INTEGER,\n  email VARCHAR,\n  phone VARCHAR,\n  segment VARCHAR\n);\nCREATE TABLE shop.empty_t (\n  id INTEGER,\n  v VARCHAR\n);\nCREATE TABLE shop.events (\n  event_id INTEGER,\n  session_id VARCHAR,\n  account_id INTEGER,\n  kind VARCHAR\n);\nCREATE TABLE shop.order_items (\n  order_id INTEGER,\n  line_no INTEGER,\n  product_id INTEGER\n);\nCREATE TABLE shop.orders (\n  order_id INTEGER,\n  customer_id INTEGER,\n  account_id INTEGER,\n  status VARCHAR,\n  created_at VARCHAR,\n  deleted BOOLEAN\n);\nCREATE TABLE shop.payments (\n  payment_id INTEGER,\n  order_id INTEGER,\n  amount INTEGER\n);\nCREATE TABLE shop.products (\n  product_id INTEGER,\n  name VARCHAR\n);\nCREATE TABLE shop.ref_child (\n  child_id INTEGER,\n  parent_id INTEGER\n);\nCREATE TABLE shop.ref_parent (\n  id INTEGER\n);\nCREATE TABLE shop.sessions (\n  session_id VARCHAR,\n  started_at VARCHAR\n);\n",
  "schema_dump_tokens": 287,
- "schemaguru_version": "0.1.1",
+ "schemaguru_version": "0.2.0",
  "tables": [
   {
    "block": "[shop.accounts]\n  100 rows (measured 2026-11-24)\n  Columns:\n    account_id  INTEGER  PK (unique, measured 2026-11-24); ← shop.events.account_id (coverage 60%, measured 2026-11-24), ← shop.orders.account_id (coverage 40%, measured 2026-11-24); distinct 100 (measured 2026-11-24)\n    name        VARCHAR  distinct 100 (measured 2026-11-24)\n  Provenance: measured 2026-11-24",

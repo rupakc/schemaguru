@@ -128,7 +128,7 @@ def test_exports_exact() -> None:
     for name in EXPORTS:
         assert getattr(sg, name) is not None, name
     assert sg.Guru is Guru
-    assert sg.__version__ == "0.1.1"
+    assert sg.__version__ == "0.2.0"
 
 
 def test_three_line_quickstart(

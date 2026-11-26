@@ -106,7 +106,7 @@ processes can share one store:
   Agents and HTTP clients see only a fixed message, never the store's host, database or driver
   text.
 
-It needs **PostgreSQL 11 or later** (it uses `starts_with` and reads a unique index's key columns). It is tested against a real PostgreSQL 16 server in the CI integration job, and both stores pass
+It has no minimum PostgreSQL version of its own (the PostgreSQL 11 requirement belongs to the warehouse reader's unique-index read, not to this store). It is tested against a real PostgreSQL 16 server in the CI integration job, and both stores pass
 one shared contract suite
 ([`tests/unit/store/contract.py`](https://github.com/rupakc/schemaguru/blob/main/tests/unit/store/contract.py)).
 

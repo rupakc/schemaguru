@@ -119,7 +119,7 @@ pip install 'schemaguru[duckdb]'  # plus a warehouse driver (one extra per wareh
 | `clickhouse` | clickhouse-connect | `openai-agents` | OpenAI Agents SDK tools |
 | `mssql` | pyodbc (SQL Server, Synapse) | `embeddings` | numpy (embedding retriever) |
 | `oracle` | oracledb | `tiktoken` | tiktoken token counter |
-| `trino` | trino | `postgres-store` | Postgres knowledge store (PostgreSQL 11+) |
+| `trino` | trino | `postgres-store` | Postgres knowledge store |
 | `mysql` | PyMySQL (MySQL, MariaDB) | `all` | everything above |
 
 The `lineage` extra (`pip install 'schemaguru[lineage]'`, sqlglot) is what reads lineage out of view

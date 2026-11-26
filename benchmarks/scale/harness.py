@@ -19,6 +19,7 @@ import platform
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -121,12 +122,40 @@ def crawl_phase(shape: ScaleShape, db: Path) -> dict[str, Any]:
     return out
 
 
+def _sysctl_brand() -> str:
+    out = subprocess.run(
+        ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True, check=True
+    )
+    return out.stdout
+
+
+def _cpu_model(
+    *,
+    system: str | None = None,
+    cpuinfo: Path = Path("/proc/cpuinfo"),
+    sysctl: Callable[[], str] = _sysctl_brand,
+) -> str:
+    """The CPU model ("Apple M2 Pro", "AMD EPYC 7763 ..."), else the architecture."""
+    system = platform.system() if system is None else system
+    model = ""
+    with contextlib.suppress(OSError, subprocess.SubprocessError, ValueError):
+        if system == "Darwin":
+            model = sysctl().strip()
+        elif system == "Linux":
+            for line in cpuinfo.read_text().splitlines():
+                key, _, value = line.partition(":")
+                if key.strip() == "model name":
+                    model = value.strip()
+                    break
+    return model or platform.processor() or platform.machine()
+
+
 def _environment(runner_class: str) -> dict[str, Any]:
     ram = 0
     with contextlib.suppress(ValueError, OSError, AttributeError):
         ram = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
     return {
-        "cpu": platform.processor() or platform.machine(),
+        "cpu": _cpu_model(),
         "cores": os.cpu_count() or 0,
         "ram_bytes": int(ram),
         "python": platform.python_version(),

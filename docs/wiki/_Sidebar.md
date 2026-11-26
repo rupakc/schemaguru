@@ -28,6 +28,7 @@
 - [[Configuration]]
 - [[Diagnostics]]
 - [[Scale and Cost|Scale-and-Cost]]
+- [[Scale]]
 - [[Security]]
 - [[FAQ]]
 - [[Glossary]]

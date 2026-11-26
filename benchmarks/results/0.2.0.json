@@ -1,0 +1,65 @@
+{
+  "version": "0.2.0",
+  "shape": {
+    "tables": 500000,
+    "columns_per_table": 50,
+    "tables_per_schema": 5000,
+    "view_share": 0.1,
+    "fks_per_table": 2,
+    "comment_share": 0.5,
+    "max_lineage_depth": 6,
+    "seed": 20261125
+  },
+  "size": {
+    "tables": 500000,
+    "columns": 25000000,
+    "views": 50000
+  },
+  "environment": {
+    "cpu": "Apple M2 Pro",
+    "cores": 10,
+    "ram_bytes": 34359738368,
+    "python": "3.12.2",
+    "os": "macOS-27.0.1-arm64-arm-64bit",
+    "runner_class": "local-apple-m2-pro-32g"
+  },
+  "metrics": {
+    "crawl_full_s": 566.4182120840997,
+    "crawl_peak_rss_bytes": 65716224,
+    "parser_peak_rss_bytes": 56082432,
+    "crawl_incremental_s": 35.61359224980697,
+    "incremental_ratio": 0.06287508326889601,
+    "lineage_parse_s": 123.83405645797029,
+    "graph_build_s": 129.31879533315077,
+    "context_p50_ms": 9327.737665735185,
+    "context_p95_ms": 28575.587584171444,
+    "path_p95_ms": 1222.2115830518305,
+    "lineage_upstream_p95_ms": 0.9716670028865337,
+    "lineage_downstream_p95_ms": 1.1655418202280998,
+    "store_bytes": 9480368128
+  },
+  "known_limits": [
+    "join facts are synthetic (hash-derived rates, source benchmark:synthetic), not measured",
+    "a view's declared columns are not derived from its definition",
+    "context runs against a store with no column-level facts beyond the crawl",
+    "context p95 28,576 ms (p50 9,328 ms) at 500,000 tables misses the 200 ms target. Profiled at this size, 87% of a context call is the join-path search's exact A* lower bound: a reverse Dijkstra over every table within the 6-hop limit of the target(s), about 1 s each, ~18 per question (graph expansion's multi-seed searches 62% of the time, the hazard scan over every candidate pair 34%). In the synthetic catalog one join component holds ~450,000 tables, so that 6-hop ball is a large share of the catalog. Within the architecture the bound now stops at the hop limit and context reads only the joins in scope (2,000 tables: p95 259 -> 119 ms; 20,000 tables: p50 3.9 -> 1.0 s, p95 5.3 -> 1.5 s); meeting the target needs an architecture change (precomputed distance bounds such as landmarks, or a hazard scan that does not search every candidate pair), reported for the release notes",
+    "join-path search p95 1,222 ms at 500,000 tables (no fixed target; regression-gated): the same per-target lower bound, plus the fewest-hops walk that words a NO_ROUTE explanation"
+  ],
+  "nightly": {
+    "tables": 500000,
+    "reason": "Projected onto ubuntu-latest (4 vCPU, 16 GiB RAM, ~14 GB free disk, 350-minute budget) from this run, with 30% headroom: disk, store 9.48 GB on disk -> 12.3 GB of ~14 GB (the tightest axis); memory, peak RSS 5.1 GB of the query process (the crawl's 63 MiB) -> 6.7 GB of 16 GiB; time, 54.6 min wall for the whole harness here, assumed 2x slower on a runner core (the work is single-threaded) -> 109 min, 142 min with headroom, of 350. All three fit, so the nightly runs the full 500,000 tables. Projected, not measured: the first workflow_dispatch run confirms it."
+  },
+  "checks": {
+    "tables_written": 500000,
+    "errors": 0,
+    "views_parsed": 50000,
+    "incremental_tables_written": 5000,
+    "incremental_changed": 5000,
+    "n_questions": 200,
+    "context_nonempty": 200,
+    "n_paths": 200,
+    "path_nonempty": 200,
+    "n_lineage": 200,
+    "lineage_nonempty": 200
+  }
+}

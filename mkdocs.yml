@@ -105,6 +105,7 @@ nav:
       - Server mode: guide/server.md
       - Configuration: guide/configuration.md
       - Cost and scale: guide/cost-and-scale.md
+      - Scale: guide/scale.md
       - Security: guide/security.md
   - Extending:
       - Overview: extending/index.md

@@ -57,3 +57,7 @@ Measured on the developer's machine — hardware-dependent, synthetic data:
 
 The search benchmark uses a deliberately dense vocabulary (one word matches about a third of
 all tables), a worst case. Run them on your own hardware before relying on a number.
+
+The full-size run (500,000 tables, 25,000,000 columns: crawl, incremental crawl, `context`,
+join paths and lineage), its targets, the nightly regression workflow and the known limits are
+on the [Scale](scale.md) page.

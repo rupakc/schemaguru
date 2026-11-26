@@ -41,10 +41,10 @@ benchmark result:
 | `benchmarks/bench_expand.py` (graph expansion, `seed_k=8`, 50,000 edges, ~20,000 tables) | graph build 4.5 s; expansion median 618 ms, first call 1,056 ms |
 | `tests/benchmark/test_search_latency.py` (lexical search over a 50,000-table synthetic catalog) | p95 under 200 ms (asserted; runs with the unit suite) |
 
-The 500,000-table versions (crawl and search, the design targets: ≥ 500,000 tables / 25 million
-columns, search p95 < 200 ms) run in a nightly job, not per pull request. The crawl's memory is
-bounded by page size and the number of schemas, not by table count, which is why the peak above
-stays flat as the catalog grows.
+The full-size 500,000-table / 25,000,000-column run (crawl, incremental crawl, `context`, join
+paths and lineage), its targets with pass or miss, the nightly regression workflow and the known
+limits are on the [[Scale]] page. The crawl's memory is bounded by page size and the number of
+schemas, not by table count, which is why the peak above stays flat as the catalog grows.
 
 ## The knobs that matter at scale
 
@@ -75,6 +75,7 @@ stays flat as the catalog grows.
 
 ## See also
 
+- [[Scale]] - the published 500,000-table results and how to reproduce them
 - [[Measurement]] - budgets in detail
 - [[Sampling]] - large-table measurement
 - [[Catalog-and-Crawl]] - crawl mechanics

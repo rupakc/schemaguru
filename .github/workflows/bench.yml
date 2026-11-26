@@ -1,0 +1,60 @@
+name: Scale benchmark
+
+# Nightly and on demand only: never on push or pull request, and not a required check
+# (0.2.0 spec 6.2). The nightly size and the reason for it are recorded in
+# benchmarks/results/0.2.0.json ("nightly") and on the Scale docs page.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      tables:
+        description: "Synthetic catalog size (tables; 50 columns each)"
+        required: false
+        default: "500000"
+
+concurrency:
+  group: bench
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      # a scheduled run has no inputs: it uses the same nightly size as the dispatch default
+      TABLES: ${{ github.event.inputs.tables || '500000' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - name: Run the harness
+        run: >-
+          python3 -m benchmarks.scale.harness --tables "$TABLES" --out bench.json
+          --runner-class github-ubuntu-latest
+      - name: Compare with the hard targets and the committed baseline
+        # exit 2 = no committed baseline for github-ubuntu-latest at this size: the hard targets
+        # were still checked, only the 25% regression gate did not run. That passes with a
+        # visible warning until the baseline is committed; 1 (a miss or a regression) and
+        # 3 (a malformed result) fail the job.
+        run: |
+          set +e
+          python3 -m benchmarks.scale.compare bench.json --baseline-dir benchmarks/results
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::warning title=Regression gate inactive::no committed baseline for github-ubuntu-latest at $TABLES tables; hard targets checked, regressions not"
+            exit 0
+          fi
+          exit "$code"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-${{ github.run_id }}
+          path: bench.json
+          if-no-files-found: warn

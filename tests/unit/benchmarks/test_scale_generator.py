@@ -180,3 +180,21 @@ def test_harness_full_samples(tmp_path: Path) -> None:
     result = run(ScaleShape(tables=2_000, columns_per_table=8), tmp_path, runner_class="test")
     check_result(result, 2_000, 8)
     assert result["checks"]["n_questions"] == 200  # type: ignore[index]
+
+
+def test_environment_names_the_cpu_model_not_the_architecture(tmp_path: Path) -> None:
+    """``environment.cpu`` is the CPU model (spec 6.2), read from ``/proc/cpuinfo`` on Linux and
+    ``sysctl`` on macOS; ``platform.processor()`` alone says only "arm" or "x86_64"."""
+    from benchmarks.scale.harness import _cpu_model
+
+    info = tmp_path / "cpuinfo"
+    info.write_text("processor\t: 0\nmodel name\t: AMD EPYC 7763 64-Core Processor\n")
+    assert _cpu_model(system="Linux", cpuinfo=info) == "AMD EPYC 7763 64-Core Processor"
+    assert _cpu_model(system="Darwin", sysctl=lambda: "Apple M2 Pro\n") == "Apple M2 Pro"
+
+    def broken() -> str:
+        raise OSError("no sysctl")
+
+    fallback = _cpu_model(system="Darwin", sysctl=broken)
+    assert fallback  # the architecture, when nothing names the model
+    assert _cpu_model(system="Linux", cpuinfo=tmp_path / "missing") == fallback

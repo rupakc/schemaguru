@@ -46,6 +46,7 @@ REQUIRED = frozenset(
         "Configuration",
         "Diagnostics",
         "Scale-and-Cost",
+        "Scale",
         "Security",
         "FAQ",
         "Glossary",

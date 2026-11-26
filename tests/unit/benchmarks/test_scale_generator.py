@@ -117,20 +117,66 @@ def test_questions_and_pairs() -> None:
     assert table_ref(0, s).schema
 
 
+KEYS = {
+    "crawl_full_s", "crawl_peak_rss_bytes", "parser_peak_rss_bytes", "crawl_incremental_s",
+    "incremental_ratio", "lineage_parse_s", "graph_build_s", "context_p50_ms",
+    "context_p95_ms", "path_p95_ms", "lineage_upstream_p95_ms", "lineage_downstream_p95_ms",
+    "store_bytes",
+}  # fmt: skip
+
+
+def check_result(result: dict[str, object], tables: int, columns: int) -> None:
+    assert set(result) == {
+        "version", "shape", "size", "environment", "metrics", "known_limits", "nightly", "checks",
+    }  # fmt: skip
+    size = result["size"]
+    assert isinstance(size, dict)
+    assert size == {"tables": tables, "columns": tables * columns, "views": tables // 10}
+    metrics = result["metrics"]
+    assert isinstance(metrics, dict) and set(metrics) == KEYS
+    assert all(isinstance(v, int | float) for v in metrics.values())
+    c = result["checks"]
+    assert isinstance(c, dict)
+    assert c["tables_written"] == tables and c["errors"] == 0
+    assert c["incremental_tables_written"] == c["incremental_changed"] > 0
+    assert c["views_parsed"] == size["views"]
+    assert c["context_nonempty"] == c["n_questions"] > 0
+    assert c["path_nonempty"] == c["n_paths"] > 0
+    assert c["lineage_nonempty"] == c["n_lineage"] > 0
+    json.dumps(result)
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="peak RSS needs the resource module")
 def test_harness_small_run(tmp_path: Path) -> None:
-    result = run(ScaleShape(tables=2_000, columns_per_table=8), tmp_path, runner_class="test")
-    assert set(result) == {
-        "version", "shape", "size", "environment", "metrics", "known_limits", "nightly",
-    }  # fmt: skip
-    assert result["size"] == {"tables": 2_000, "columns": 16_000, "views": 200}
-    keys = {
-        "crawl_full_s", "crawl_peak_rss_bytes", "parser_peak_rss_bytes", "crawl_incremental_s",
-        "incremental_ratio", "lineage_parse_s", "graph_build_s", "context_p50_ms",
-        "context_p95_ms", "path_p95_ms", "lineage_upstream_p95_ms", "lineage_downstream_p95_ms",
-        "store_bytes",
-    }  # fmt: skip
-    assert set(result["metrics"]) == keys
-    assert all(isinstance(v, int | float) for v in result["metrics"].values())
+    """Smoke run: 10 samples each, so its p95 values are smoke values, not benchmark ones."""
+    result = run(
+        ScaleShape(tables=500, columns_per_table=8),
+        tmp_path,
+        runner_class="test",
+        n_questions=10,
+        n_paths=10,
+        n_lineage=10,
+    )
+    check_result(result, 500, 8)
     assert result["environment"]["runner_class"] == "test"
-    json.dumps(result)
+
+
+def test_run_fails_when_no_lineage_refs(tmp_path: Path) -> None:
+    # view_share so small that no view exists: lineage samples would be empty, not 0.0 ms
+    with pytest.raises(RuntimeError, match="lineage"):
+        run(
+            ScaleShape(tables=50, columns_per_table=6, view_share=0.001),
+            tmp_path,
+            runner_class="test",
+            n_questions=2,
+            n_paths=2,
+            n_lineage=2,
+        )
+
+
+@pytest.mark.benchmark
+@pytest.mark.skipif(sys.platform == "win32", reason="peak RSS needs the resource module")
+def test_harness_full_samples(tmp_path: Path) -> None:
+    result = run(ScaleShape(tables=2_000, columns_per_table=8), tmp_path, runner_class="test")
+    check_result(result, 2_000, 8)
+    assert result["checks"]["n_questions"] == 200  # type: ignore[index]

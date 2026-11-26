@@ -1,10 +1,14 @@
-"""Compare a scale-benchmark result with the hard targets and with committed baselines."""
+"""Compare a scale-benchmark result with the hard targets and with committed baselines.
+
+CLI exit codes: 0 pass; 1 problems; 2 no matching baseline (regression gate inactive, a
+WARNING on stderr); 3 malformed result."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import statistics
+import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -21,14 +25,37 @@ REGRESSION_GATED = ("crawl_full_s", "path_p95_ms", "graph_build_s", "lineage_par
 TOLERANCE = 0.25
 
 
+EXIT_PROBLEMS = 1
+EXIT_GATE_INACTIVE = 2  # no problems, but no matching baseline: the regression gate did not run
+EXIT_MALFORMED = 3  # the result is not a scale-benchmark result
+RSS_METRICS = ("crawl_peak_rss_bytes",)  # None only where there is no `resource` (Windows)
+
+
+class MalformedResult(ValueError):
+    """The result JSON lacks a section this comparator needs."""
+
+
+def _need(result: Mapping[str, Any], *path: str) -> Any:
+    node: Any = result
+    for key in path:
+        if not isinstance(node, Mapping) or key not in node:
+            raise MalformedResult(f"result has no {'.'.join(path)!r}")
+        node = node[key]
+    return node
+
+
 def _same_class(result: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
-    same_class = (
-        b.get("environment", {}).get("runner_class") == result["environment"]["runner_class"]
+    cls = _need(result, "environment", "runner_class")
+    tables = _need(result, "size", "tables")
+    return bool(
+        b.get("environment", {}).get("runner_class") == cls
+        and b.get("size", {}).get("tables") == tables
     )
-    return bool(same_class and b.get("size", {}).get("tables") == result["size"]["tables"])
 
 
 def _matching(result: Mapping[str, Any], baselines: Sequence[Mapping[str, Any]]) -> list[Any]:
+    _need(result, "environment", "runner_class")
+    _need(result, "size", "tables")
     return [b for b in baselines if _same_class(result, b)]
 
 
@@ -40,15 +67,21 @@ def compare_notes(result: Mapping[str, Any], baselines: Sequence[Mapping[str, An
 
 
 def compare(result: Mapping[str, Any], baselines: Sequence[Mapping[str, Any]]) -> list[str]:
-    """The problems: a missed hard target, or a gated metric more than 25% above the best
-    matching-baseline median. A metric that is ``None`` (no RSS on Windows) is skipped."""
+    """The problems: a missed or absent hard target, or a gated metric more than 25% above the
+    matching-baseline median. Only a ``None`` peak RSS (no ``resource`` module) is excused."""
     problems: list[str] = []
-    metrics = result["metrics"]
-    for name, bound in HARD_TARGETS.items():
-        value = metrics.get(name)
-        if value is not None and value > bound:
-            problems.append(f"{name} = {value:.4g} exceeds the hard target {bound:.4g}")
+    metrics = _need(result, "metrics")
     matching = _matching(result, baselines)
+    for name, bound in HARD_TARGETS.items():
+        if name not in metrics:
+            problems.append(f"{name} is missing from the result")
+            continue
+        value = metrics[name]
+        if value is None:
+            if name not in RSS_METRICS:
+                problems.append(f"{name} is missing from the result (null)")
+        elif value > bound:
+            problems.append(f"{name} = {value:.4g} exceeds the hard target {bound:.4g}")
     for name in REGRESSION_GATED:
         value = metrics.get(name)
         seen = [b["metrics"][name] for b in matching if b["metrics"].get(name) is not None]
@@ -74,12 +107,19 @@ def main(argv: list[str] | None = None) -> int:
         for p in sorted(a.baseline_dir.glob("*.json"))
         if p.resolve() != a.result.resolve()
     ]
-    for note in compare_notes(result, baselines):
-        print(f"note: {note}")
-    problems = compare(result, baselines)
+    try:
+        notes = compare_notes(result, baselines)
+        problems = compare(result, baselines)
+    except MalformedResult as e:
+        print(f"ERROR: malformed result: {e}", file=sys.stderr)
+        return EXIT_MALFORMED
+    for note in notes:
+        print(f"WARNING: {note}", file=sys.stderr)
     for p in problems:
         print(f"FAIL: {p}")
-    return 1 if problems else 0
+    if problems:
+        return EXIT_PROBLEMS
+    return EXIT_GATE_INACTIVE if notes else 0
 
 
 if __name__ == "__main__":

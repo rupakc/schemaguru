@@ -34,6 +34,7 @@ from benchmarks.scale.generator import (
 from benchmarks.scale.questions import QUESTIONS, lineage_refs, path_pairs
 
 VERSION = "0.2.0"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 KNOWN_LIMITS = [
     "join facts are synthetic (hash-derived rates, source benchmark:synthetic), not measured",
     "a view's declared columns are not derived from its definition",
@@ -66,10 +67,28 @@ def percentile(samples: list[float], q: float) -> float:
     return ordered[max(0, math.ceil(q * len(ordered)) - 1)]
 
 
-def _timed(fn: Any, *args: Any) -> float:
-    t0 = time.perf_counter()
-    fn(*args)
-    return (time.perf_counter() - t0) * 1000.0
+def _sample(fn: Any, calls: list[tuple[Any, ...]], ok: Any) -> tuple[list[float], int]:
+    """Time ``fn`` per call (ms); also count the calls whose result ``ok`` accepts."""
+    times: list[float] = []
+    good = 0
+    for args in calls:
+        t0 = time.perf_counter()
+        out = fn(*args)
+        times.append((time.perf_counter() - t0) * 1000.0)
+        good += bool(ok(out))
+    return times, good
+
+
+def _ctx_ok(view: Any) -> bool:
+    return bool(getattr(view, "tables", ()))
+
+
+def _path_ok(result: Any) -> bool:
+    return bool(getattr(result, "paths", ()))
+
+
+def _lineage_ok(result: Any) -> bool:
+    return bool(getattr(result, "nodes", ()) or getattr(result, "edges", ()))
 
 
 def crawl_phase(shape: ScaleShape, db: Path) -> dict[str, Any]:
@@ -120,7 +139,15 @@ def _store_bytes(db: Path) -> int:
     return sum(p.stat().st_size for p in db.parent.glob(db.name + "*") if p.is_file())
 
 
-def run(shape: ScaleShape, workdir: Path, *, runner_class: str) -> dict[str, Any]:
+def run(
+    shape: ScaleShape,
+    workdir: Path,
+    *,
+    runner_class: str,
+    n_questions: int = 200,
+    n_paths: int = 200,
+    n_lineage: int = 200,
+) -> dict[str, Any]:
     from schemaguru import Guru
     from schemaguru.store.sqlite import SQLiteStore
 
@@ -132,7 +159,10 @@ def run(shape: ScaleShape, workdir: Path, *, runner_class: str) -> dict[str, Any
     proc = subprocess.run(
         [sys.executable, "-m", "benchmarks.scale.harness", "--phase", "crawl",
          "--shape-json", shape_json, "--db", str(db)],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, check=False, cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(
+            p for p in (str(REPO_ROOT), os.environ.get("PYTHONPATH")) if p
+        )},
     )  # fmt: skip
     if proc.returncode != 0:
         raise RuntimeError(f"crawl phase failed ({proc.returncode}): {proc.stderr[-2000:]}")
@@ -153,11 +183,19 @@ def run(shape: ScaleShape, workdir: Path, *, runner_class: str) -> dict[str, Any
             t0 = time.perf_counter()
             guru._current_graph()
             graph_build_s = time.perf_counter() - t0
-            ctx = [_timed(guru.context, q) for q in QUESTIONS]
-            paths = [_timed(guru.find_path, a, b) for a, b in path_pairs(shape)]
-            refs = lineage_refs(shape)
-            up = [_timed(guru.lineage, r, "upstream", 2) for r in refs]
-            down = [_timed(guru.lineage, r, "downstream", 2) for r in refs]
+            pairs = path_pairs(shape, n_paths)
+            refs = lineage_refs(shape, n_lineage)
+            if not pairs:
+                raise RuntimeError("no join-path pairs in this shape: path_p95_ms would be empty")
+            if not refs:
+                raise RuntimeError("no lineage refs in this shape: lineage p95 would be empty")
+            questions = QUESTIONS[:n_questions]
+            ctx, nonempty_ctx = _sample(guru.context, [(q,) for q in questions], _ctx_ok)
+            paths, nonempty_path = _sample(guru.find_path, list(pairs), _path_ok)
+            up, nonempty_up = _sample(guru.lineage, [(r, "upstream", 2) for r in refs], _lineage_ok)
+            down, nonempty_down = _sample(
+                guru.lineage, [(r, "downstream", 2) for r in refs], _lineage_ok
+            )
         finally:
             guru.close()
     finally:
@@ -175,9 +213,9 @@ def run(shape: ScaleShape, workdir: Path, *, runner_class: str) -> dict[str, Any
         "graph_build_s": graph_build_s,
         "context_p50_ms": percentile(ctx, 0.50),
         "context_p95_ms": percentile(ctx, 0.95),
-        "path_p95_ms": percentile(paths, 0.95) if paths else 0.0,
-        "lineage_upstream_p95_ms": percentile(up, 0.95) if up else 0.0,
-        "lineage_downstream_p95_ms": percentile(down, 0.95) if down else 0.0,
+        "path_p95_ms": percentile(paths, 0.95),
+        "lineage_upstream_p95_ms": percentile(up, 0.95),
+        "lineage_downstream_p95_ms": percentile(down, 0.95),
         "store_bytes": _store_bytes(db),
     }
     return {
@@ -192,6 +230,19 @@ def run(shape: ScaleShape, workdir: Path, *, runner_class: str) -> dict[str, Any
         "metrics": metrics,
         "known_limits": KNOWN_LIMITS,
         "nightly": None,
+        "checks": {
+            "tables_written": crawled["tables_written"],
+            "errors": crawled["errors"],
+            "views_parsed": crawled["views_parsed"],
+            "incremental_tables_written": crawled["incremental_tables_written"],
+            "incremental_changed": crawled["incremental_changed"],
+            "n_questions": len(questions),
+            "context_nonempty": nonempty_ctx,
+            "n_paths": len(pairs),
+            "path_nonempty": nonempty_path,
+            "n_lineage": len(refs),
+            "lineage_nonempty": min(nonempty_up, nonempty_down),
+        },
     }
 
 

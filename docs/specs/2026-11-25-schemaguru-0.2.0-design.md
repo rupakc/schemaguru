@@ -111,7 +111,7 @@ Two new built-in `FactKind`s, registered like the others (base §21):
   `dbt:manifest:<uid>`.
 - `transform` classification of one output column's expression **[call]**: a bare
   column reference (optionally aliased) → `copy`; only `CAST`/`::`/`TRY_CAST` around a
-  bare column → `cast`; an aggregate function anywhere in the expression → `aggregate`;
+  bare column → `cast`; an aggregate function anywhere in the expression, other than as a window function's own function under `OVER` → `aggregate` (amended 2026-11-26: a windowed `SUM(x) OVER ()` does not collapse rows, so it is `window`; `SUM(SUM(x)) OVER ()` still contains a plain aggregate → `aggregate`);
   a window function (and no aggregate) → `window`; any other expression → `expression`;
   the parser could not attribute the column → `unknown` (inputs empty). Only projection
   lineage is recorded; columns used only in `WHERE`/`JOIN ON`/`GROUP BY` are not inputs.

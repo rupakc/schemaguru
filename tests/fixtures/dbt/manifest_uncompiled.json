@@ -1,0 +1,176 @@
+{
+ "metadata": {
+  "adapter_type": "postgres"
+ },
+ "nodes": {
+  "model.shop.orders": {
+   "resource_type": "model",
+   "name": "orders",
+   "database": "analytics",
+   "schema": "shop",
+   "description": "",
+   "columns": {},
+   "config": {
+    "materialized": "table"
+   },
+   "depends_on": {
+    "nodes": [
+     "model.shop.customers",
+     "source.shop.raw.payments",
+     "model.shop.eph",
+     "model.shop.ghost",
+     "test.shop.t1",
+     "metric.shop.m1"
+    ],
+    "macros": [
+     "macro.dbt.is_incremental"
+    ]
+   }
+  },
+  "model.shop.customers": {
+   "resource_type": "model",
+   "name": "customers",
+   "database": "analytics",
+   "schema": "shop",
+   "description": "",
+   "columns": {},
+   "config": {
+    "materialized": "table"
+   },
+   "depends_on": {
+    "nodes": [],
+    "macros": [
+     "macro.dbt.is_incremental"
+    ]
+   }
+  },
+  "model.shop.eph": {
+   "resource_type": "model",
+   "name": "eph",
+   "database": "analytics",
+   "schema": "shop",
+   "description": "",
+   "columns": {},
+   "config": {
+    "materialized": "ephemeral"
+   },
+   "depends_on": {
+    "nodes": [
+     "source.shop.raw.sessions",
+     "model.shop.eph2"
+    ],
+    "macros": [
+     "macro.dbt.is_incremental"
+    ]
+   }
+  },
+  "model.shop.eph2": {
+   "resource_type": "model",
+   "name": "eph2",
+   "database": "analytics",
+   "schema": "shop",
+   "description": "",
+   "columns": {},
+   "config": {
+    "materialized": "ephemeral"
+   },
+   "depends_on": {
+    "nodes": [
+     "model.shop.eph",
+     "source.shop.raw.events"
+    ],
+    "macros": [
+     "macro.dbt.is_incremental"
+    ]
+   }
+  },
+  "model.shop.ghost": {
+   "resource_type": "model",
+   "name": "ghost",
+   "database": "analytics",
+   "schema": "shop",
+   "description": "",
+   "columns": {},
+   "config": {
+    "materialized": "table"
+   },
+   "depends_on": {
+    "nodes": [],
+    "macros": [
+     "macro.dbt.is_incremental"
+    ]
+   }
+  },
+  "model.shop.revenue": {
+   "resource_type": "model",
+   "name": "revenue",
+   "database": "analytics",
+   "schema": "shop",
+   "description": "",
+   "columns": {},
+   "config": {
+    "materialized": "table"
+   },
+   "depends_on": {
+    "nodes": [
+     "model.shop.orders",
+     "source.shop.raw.refunds"
+    ],
+    "macros": [
+     "macro.dbt.is_incremental"
+    ]
+   }
+  },
+  "test.shop.t1": {
+   "resource_type": "test",
+   "depends_on": {
+    "nodes": [
+     "model.shop.orders"
+    ]
+   }
+  },
+  "metric.shop.m1": {
+   "resource_type": "metric",
+   "name": "m1",
+   "depends_on": {
+    "nodes": [
+     "model.shop.orders"
+    ]
+   }
+  }
+ },
+ "sources": {
+  "source.shop.raw.payments": {
+   "resource_type": "source",
+   "name": "payments",
+   "identifier": "payments",
+   "database": "analytics",
+   "schema": "shop",
+   "description": ""
+  },
+  "source.shop.raw.sessions": {
+   "resource_type": "source",
+   "name": "sessions",
+   "identifier": "sessions",
+   "database": "analytics",
+   "schema": "shop",
+   "description": ""
+  },
+  "source.shop.raw.events": {
+   "resource_type": "source",
+   "name": "events",
+   "identifier": "events",
+   "database": "analytics",
+   "schema": "shop",
+   "description": ""
+  },
+  "source.shop.raw.refunds": {
+   "resource_type": "source",
+   "name": "refunds",
+   "identifier": "refunds",
+   "database": "analytics",
+   "schema": "shop",
+   "description": ""
+  }
+ }
+}

@@ -28,7 +28,7 @@ from schemaguru.errors import SchemaGuruError
 from schemaguru.guru import Guru
 from schemaguru.measure import flbridge
 from schemaguru.model.facts import Fact, Provenance, Status
-from schemaguru.overlays.dbt import import_dbt as _import_dbt
+from schemaguru.overlays.dbt import apply_dbt
 from schemaguru.overlays.writer import export_drafts as _export_drafts
 from schemaguru.overlays.writer import unwritable_kinds
 from schemaguru.store.open import is_postgres_dsn
@@ -587,12 +587,18 @@ def export_drafts(args: argparse.Namespace, io: IO) -> int:
 def import_dbt(args: argparse.Namespace, io: IO) -> int:
     bag = DiagnosticBag()
     with _guru(args, "import-dbt") as guru:
-        facts = _import_dbt(args.manifest, guru.store, diagnostics=bag)
-        if facts:
-            guru.store.put_facts(facts)
+        facts = apply_dbt(args.manifest, guru.store, diagnostics=bag)
     kinds = Counter(f.kind.name for f in facts)
     lines = [f"imported {len(facts)} fact(s)"] + [f"  {k}: {n}" for k, n in sorted(kinds.items())]
-    io.emit({"imported": len(facts), "kinds": dict(kinds)}, lines, title="dbt import")
+    lineage = {k: kinds.get(k, 0) for k in ("LINEAGE", "COLUMN_LINEAGE")}
+    lines.append(
+        f"lineage: {lineage['LINEAGE']} table-level, {lineage['COLUMN_LINEAGE']} column-level"
+    )
+    io.emit(
+        {"imported": len(facts), "kinds": dict(kinds), "lineage": lineage},
+        lines,
+        title="dbt import",
+    )
     io.diagnostics(list(bag))
     return 2 if bag.errors() else 0
 

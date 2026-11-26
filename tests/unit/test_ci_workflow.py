@@ -88,3 +88,15 @@ def test_the_denylist_check_sees_a_job_that_passes_silently() -> None:
         '          if [ -z "$SCHEMAGURU_DENYLIST" ]; then exit 1; fi\n'
     )
     assert _fails_on_main_without_secret(loud)
+
+
+def test_no_extras_job() -> None:
+    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8")
+    job = _jobs(text)["no-extras"]
+    runs = [str(s.get("run", "")) for s in job["steps"]]
+    assert job["runs-on"] == "ubuntu-latest"
+    assert "pip install . pytest" in runs
+    assert "pytest tests/minimal -p no:cacheprovider" in runs
+    assert not any("[" in r for r in runs if r.startswith("pip install"))  # no extra, not even dev
+    py = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/setup-python@")]
+    assert py[0]["with"]["python-version"] == "3.12"

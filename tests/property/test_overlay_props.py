@@ -11,6 +11,8 @@ from schemaguru.model.structure import Column, Table
 from schemaguru.overlays import load_overlays
 from schemaguru.store.sqlite import SQLiteStore
 
+FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
+
 _KEYS = [
     "version",
     "tables",
@@ -125,6 +127,14 @@ _DBT_KEYS = [
     "test",
     "orders",
     "customers",
+    "compiled_code",
+    "metadata",
+    "adapter_type",
+    "config",
+    "materialized",
+    "identifier",
+    "ephemeral",
+    "postgres",
 ]
 _JSONISH = st.recursive(
     st.one_of(st.none(), st.booleans(), st.integers(), st.text(max_size=8)),
@@ -149,5 +159,38 @@ def test_import_dbt_never_raises(manifest: object) -> None:
         s = _store(tmp)
         try:
             import_dbt(tmp / "m.json", s, diagnostics=DiagnosticBag())
+        finally:
+            s.close()
+
+
+_LINEAGE_FIELDS = ["compiled_code", "depends_on", "config", "alias", "identifier", "schema", "name"]
+
+
+@settings(max_examples=120, deadline=None)
+@given(
+    st.sampled_from(_LINEAGE_FIELDS),
+    st.sampled_from(["model.shop.orders", "model.shop.revenue", "model.shop.eph"]),
+    _JSONISH,
+    _JSONISH,
+)
+def test_import_dbt_lineage_never_raises(field: str, uid: str, junk: object, meta: object) -> None:
+    """A real lineage manifest with one field of one node (and the metadata) replaced by junk:
+    ``apply_dbt`` reports, never raises, and never keeps junk lineage."""
+    import json
+
+    from schemaguru.diagnostics import DiagnosticBag
+    from schemaguru.overlays import apply_dbt
+
+    manifest = json.loads((FIXTURES / "dbt" / "manifest_lineage.json").read_text("utf-8"))
+    manifest["nodes"][uid][field] = junk
+    manifest["metadata"] = meta
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        (tmp / "m.json").write_text(json.dumps(manifest), encoding="utf-8")
+        s = _store(tmp)
+        try:
+            bag = DiagnosticBag()
+            facts = apply_dbt(tmp / "m.json", s, diagnostics=bag)
+            assert all(f.status.value == "UNVERIFIED" for f in facts if "LINEAGE" in f.kind.name)
         finally:
             s.close()

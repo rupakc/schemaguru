@@ -1002,3 +1002,14 @@ def test_redact_text_judges_every_embedded_url() -> None:
     msg = "failed: mysql://u:pa@ss@h/db and postgresql://a:b@db:5432/x?password=q (retry)"
     assert redact_text(msg) == "failed: mysql://*** and postgresql://db:5432 (retry)"
     assert redact_text("no url here") == "no url here"
+
+
+def test_guru_import_dbt(guru: Guru, tmp_path: Path) -> None:
+    manifest = Path(__file__).resolve().parents[1] / "fixtures" / "dbt" / "manifest.json"
+    assert not [d for d in guru.import_dbt(manifest) if d.severity.value == "ERROR"]
+    kinds = {f.kind.name for f in guru.store.iter_facts()}
+    assert {"DESCRIPTION", "JOIN", "VALUES"} <= kinds
+    bad = tmp_path / "bad.json"
+    bad.write_text("[]", encoding="utf-8")
+    assert [d.code for d in guru.import_dbt(bad)] == ["SG209"]
+    assert "SG209" in {d.code for d in guru.diagnostics}

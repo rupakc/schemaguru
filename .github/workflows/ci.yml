@@ -64,6 +64,20 @@ jobs:
           tests/unit/agent/test_mcp.py tests/unit/agent/test_adapters.py
           tests/unit/test_connectors.py tests/acceptance
 
+  # Only the base dependencies: no extra is installed, so the lineage parser (`sqlglot`) is
+  # absent and table-level lineage must still work.
+  no-extras:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install . pytest
+      - run: pytest tests/minimal -p no:cacheprovider
+
   integration:
     runs-on: ubuntu-latest
     env:

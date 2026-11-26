@@ -83,6 +83,7 @@ from schemaguru.model.chains import Chain, FilterStep
 from schemaguru.model.evidence import Evidence
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
 from schemaguru.model.refs import ObjectRef
+from schemaguru.overlays.dbt import apply_dbt
 from schemaguru.overlays.loader import load_overlays as _load_overlays
 from schemaguru.overlays.loader import retract_removed
 from schemaguru.overlays.schema import WaypointSpec
@@ -747,6 +748,19 @@ class Guru:
             out += lint_rules(self._waypoints, graph.edges)
             # a per_glob typo silently leaves its tables on the default mode (spec 11)
             out += lint_per_glob(self._config.sampling, (t.ref for t in self.store.iter_tables()))
+            for d in out:
+                self._note(d)
+        return out
+
+    def import_dbt(self, manifest_path: str | os.PathLike[str]) -> list[Diagnostic]:
+        """Import a dbt manifest (descriptions, tests, table and column lineage; spec 4.2) and
+        return this import's diagnostics. Lineage the new manifest no longer produces is
+        retracted. Never raises on data; an unreadable manifest (``SG209``) changes nothing."""
+        bag = DiagnosticBag()
+        with self._lock:
+            apply_dbt(manifest_path, self.store, diagnostics=bag)
+            self._invalidate()
+            out = list(bag)
             for d in out:
                 self._note(d)
         return out

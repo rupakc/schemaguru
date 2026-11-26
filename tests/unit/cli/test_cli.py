@@ -289,6 +289,16 @@ def test_import_dbt(run: Run, crawled: str) -> None:
     assert code == 2 and "SG209" in err
 
 
+def test_import_dbt_reports_lineage(run: Run, crawled: str) -> None:
+    manifest = str(Path(__file__).parents[2] / "fixtures" / "dbt" / "manifest_lineage.json")
+    code, out, err = run("import-dbt", manifest, "--store", crawled, "--format", "json")
+    assert code == 0, err
+    lineage = jloads(out)["lineage"]
+    assert lineage["LINEAGE"] > 0 and set(lineage) == {"LINEAGE", "COLUMN_LINEAGE"}
+    code, text, _ = run("import-dbt", manifest, "--store", crawled)
+    assert code == 0 and "table-level" in text and "column-level" in text
+
+
 # ----- reading ----------------------------------------------------------------------------------
 
 

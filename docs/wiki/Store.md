@@ -27,8 +27,8 @@ Properties:
   warns `SG706` (open it read-write once to rebuild it).
 - **Transactions** nest: an inner `transaction()` is a savepoint, so an exception that leaves it
   undoes only its own writes.
-- **Migrations** are numbered SQL files in `store/migrations/` (`0001_initial.sql`,
-  `0002_scope.sql`), applied on open. The store records its schema version; opening a store
+- **Migrations** are numbered SQL files in `store/migrations/` (`0001_initial.sql`
+  to `0004_join_version.sql`; Postgres has its own series in `migrations/pg/`), applied on open. The store records its schema version; opening a store
   written by a newer SchemaGuru with an older one is refused with `SG702`, so an old library can
   never silently corrupt a newer file.
 

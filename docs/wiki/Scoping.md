@@ -102,8 +102,9 @@ with `search_tables` and `describe_table` ([[Agent-Integration]]).
 ## Scale
 
 Search runs inside the store's FTS index, never as a Python scan over all tables. The scale
-sanity test searches a 50,000-table synthetic catalog with a p95 under 200 ms; a nightly
-benchmark does the same at 500,000 tables. Graph expansion on a 50,000-edge graph took a median
+sanity test searches a 50,000-table synthetic catalog with a p95 under 200 ms. The nightly
+scale benchmark measures the whole `context` call at 500,000 tables, and currently misses its
+200 ms p95 target (28.6 s, dominated by join-path search; see [[Scale]]). Graph expansion on a 50,000-edge graph took a median
 of about 0.6 s per call in a local run. See [[Scale-and-Cost]].
 
 ## See also

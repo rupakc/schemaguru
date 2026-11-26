@@ -661,3 +661,27 @@ def test_lineage_column_edges_stay_column_level(store: Any) -> None:
     assert store.lineage_edges(["shop.v.total"], direction="upstream", level="column") == [edge]
     assert store.lineage_edges(["shop.orders.amount"], direction="downstream", level="table") == []
     assert store.lineage_edges(["shop.orders"], direction="downstream", level="table") == []
+
+
+def test_join_version_counts_inserted_joins_only(store: Any) -> None:
+    """``join_version`` moves when a JOIN fact is inserted (a subject an index may lack), not
+    when one is re-measured in place, deleted, or another kind is written."""
+    j = JoinRef((ObjectRef(None, "shop", "orders", "customer_id"),),
+                (ObjectRef(None, "shop", "customers", "id"),))  # fmt: skip
+
+    def join(rate: float) -> Fact:
+        return Fact.make(FactKind.JOIN, j, {"match_rate": rate}, Provenance.MEASURED,
+                         Status.OBSERVED, method="exact")  # fmt: skip
+
+    v0 = store.join_version()
+    store.put_facts([_rows(tref("orders"), 3)])
+    assert store.join_version() == v0
+    store.put_facts([join(0.5)])
+    v1 = store.join_version()
+    assert v1 > v0
+    store.put_facts([join(0.9)])  # same id: an upsert keeps the subject
+    assert store.join_version() == v1
+    store.delete_facts([join(0.9).id])
+    assert store.join_version() == v1
+    store.put_facts([join(0.9)])  # inserted again
+    assert store.join_version() > v1

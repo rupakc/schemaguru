@@ -107,7 +107,7 @@ def test_v2_store_migrates_to_3(tmp_path: Path) -> None:
     con.close()
     with SQLiteStore(p) as s:
         versions = [r[0] for r in s._q("SELECT version FROM schema_version ORDER BY version")]
-        assert versions == [1, 2, 3]
+        assert versions == list(range(1, schema_sql.LATEST_VERSION + 1))
         edges = s.lineage_edges(["shop.orders"], direction="downstream", level="table")
         assert [(e.downstream_key, e.fact_id) for e in edges] == [("shop.v", row[0])]
 

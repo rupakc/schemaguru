@@ -397,7 +397,7 @@ def test_pg_v1_store_migrates(pg_schema: tuple[str, str], monkeypatch: pytest.Mo
             )
             before = [f.to_dict() for f in old.iter_facts()]
     with PostgresStore(dsn, schema=schema) as s:
-        assert s.schema_version() == 2
+        assert s.schema_version() == schema_sql.LATEST_PG_VERSION
         assert [f.to_dict() for f in s.iter_facts()] == before
         assert s.lineage_edges(["shop.orders"], direction="downstream", level="table") == [
             LineageEdge("shop.orders", "shop.v", "table", lin.id)

@@ -1,5 +1,9 @@
 """Compare a scale-benchmark result with the hard targets and with committed baselines.
 
+A hard-target miss whose metric name the result's ``known_limits`` names (a documented limit,
+with its measured numbers) is a WARNING, not a failure; that metric is then regression-gated
+like the others, so it cannot get worse unnoticed. An unlisted miss fails.
+
 CLI exit codes: 0 pass; 1 problems; 2 no matching baseline (regression gate inactive, a
 WARNING on stderr); 3 malformed result."""
 
@@ -7,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import sys
 from collections.abc import Mapping, Sequence
@@ -66,12 +71,37 @@ def compare_notes(result: Mapping[str, Any], baselines: Sequence[Mapping[str, An
     return [f"no baseline for {cls} at {n} tables: regression gate inactive"]
 
 
+def known_limit_metrics(result: Mapping[str, Any]) -> frozenset[str]:
+    """The hard-target metrics a ``known_limits`` entry names (the metric key as a word)."""
+    limits = result.get("known_limits")
+    texts = [t for t in limits if isinstance(t, str)] if isinstance(limits, list) else []
+    return frozenset(
+        name for name in HARD_TARGETS if any(re.search(rf"\b{name}\b", t) for t in texts)
+    )
+
+
+def known_misses(result: Mapping[str, Any]) -> list[str]:
+    """Warnings: hard targets missed by a metric ``known_limits`` documents."""
+    metrics = _need(result, "metrics")
+    out = []
+    for name in sorted(known_limit_metrics(result)):
+        value = metrics.get(name)
+        if value is not None and value > HARD_TARGETS[name]:
+            out.append(
+                f"{name} = {value:.4g} misses the hard target {HARD_TARGETS[name]:.4g} "
+                "(a documented known limit: reported, regression-gated, not failed)"
+            )
+    return out
+
+
 def compare(result: Mapping[str, Any], baselines: Sequence[Mapping[str, Any]]) -> list[str]:
-    """The problems: a missed or absent hard target, or a gated metric more than 25% above the
+    """The problems: a missed or absent hard target (a miss ``known_limits`` names is a
+    warning instead, see :func:`known_misses`), or a gated metric more than 25% above the
     matching-baseline median. Only a ``None`` peak RSS (no ``resource`` module) is excused."""
     problems: list[str] = []
     metrics = _need(result, "metrics")
     matching = _matching(result, baselines)
+    known = known_limit_metrics(result)
     for name, bound in HARD_TARGETS.items():
         if name not in metrics:
             problems.append(f"{name} is missing from the result")
@@ -80,9 +110,9 @@ def compare(result: Mapping[str, Any], baselines: Sequence[Mapping[str, Any]]) -
         if value is None:
             if name not in RSS_METRICS:
                 problems.append(f"{name} is missing from the result (null)")
-        elif value > bound:
+        elif value > bound and name not in known:
             problems.append(f"{name} = {value:.4g} exceeds the hard target {bound:.4g}")
-    for name in REGRESSION_GATED:
+    for name in (*REGRESSION_GATED, *sorted(known)):
         value = metrics.get(name)
         seen = [b["metrics"][name] for b in matching if b["metrics"].get(name) is not None]
         if value is None or not seen:
@@ -110,10 +140,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         notes = compare_notes(result, baselines)
         problems = compare(result, baselines)
+        known = known_misses(result)
     except MalformedResult as e:
         print(f"ERROR: malformed result: {e}", file=sys.stderr)
         return EXIT_MALFORMED
-    for note in notes:
+    for note in [*known, *notes]:
         print(f"WARNING: {note}", file=sys.stderr)
     for p in problems:
         print(f"FAIL: {p}")

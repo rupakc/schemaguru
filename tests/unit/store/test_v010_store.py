@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from schemaguru.model.facts import Fact
+from schemaguru.store import schema_sql
 from schemaguru.store.sqlite import SQLiteStore
 from tests.golden.golden import VIEWS
 from tests.golden.shop_knowledge import QUESTIONS
@@ -75,7 +76,7 @@ def test_v010_golden_views_unchanged(v010_store: SQLiteStore, profile: str, qi: 
 def test_v010_migrates_facts_and_views_unchanged(tmp_path: Path) -> None:
     with open_v010(tmp_path) as store:
         versions = [r[0] for r in store._q("SELECT version FROM schema_version ORDER BY version")]
-        assert versions == [1, 2, 3]
+        assert versions == list(range(1, schema_sql.LATEST_VERSION + 1))
         stored = sorted((f.to_dict() for f in store.iter_facts()), key=lambda d: str(d["id"]))
         assert stored == _v010_facts()
         assert store._q("SELECT COUNT(*) FROM lineage_edges") == [(0,)]

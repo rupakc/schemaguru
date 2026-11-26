@@ -101,26 +101,35 @@ def _random_graph(n: int, m: int, seed: int) -> tuple[Graph, list[str]]:
     return Graph.build(edges, Hubs.from_edges(edges, set(), CFG)), names
 
 
-@pytest.mark.parametrize("seed", [1, 2, 3])
+@pytest.mark.parametrize("seed", [1, 2])
+@pytest.mark.parametrize("hop_limit", [1, 2, 4, 6])
+@pytest.mark.parametrize("rule", [False, True], ids=["no-rule", "waypoint"])
 def test_bounded_search_returns_exactly_the_unbounded_result(
-    monkeypatch: pytest.MonkeyPatch, seed: int
+    monkeypatch: pytest.MonkeyPatch, seed: int, hop_limit: int, rule: bool
 ) -> None:
     """Every route, cost, refusal and explanation equals the search with the bound computed
-    over the whole component (ties included: the pruned states can never finish a route)."""
-    cfg = GraphConfig(hop_limit=3, k_paths=3)
+    over the whole component (ties included: the pruned states can never finish a route),
+    for several hop limits, with and without a waypoint rule (whose route may pass through
+    the destination and come back)."""
+    from tests.unit.graph.test_search_fix2 import Via
+
+    cfg = GraphConfig(hop_limit=hop_limit, k_paths=3)
     rng = random.Random(seed)
     g, names = _random_graph(400, 900, seed)
-    pairs = [tuple(rng.sample(names, 2)) for _ in range(60)]
+    pairs = [tuple(rng.sample(names, 2)) for _ in range(40)]
+    auto = Via(T(names[7])) if rule else None
 
     def run(graph: Graph) -> list[Any]:
         out: list[Any] = []
         for a, b in pairs:
-            r = find_paths(graph, T(a), T(b), cfg=cfg)
+            r = find_paths(graph, T(a), T(b), cfg=cfg, automaton=auto)
             out.append(
                 (r.refusal, r.explanation, [(p.hops, p.cost, p.provisional) for p in r.paths])
             )
-        for a in names[:20]:
-            best = best_paths_from(graph, T(a), [T(b) for b in names[20:60]], cfg=cfg)
+        for a in names[:15]:
+            best = best_paths_from(
+                graph, T(a), [T(b) for b in names[20:50]], cfg=cfg, automaton=auto
+            )
             out.append(sorted((k.canonical(), v) for k, v in best.items()))
         return out
 

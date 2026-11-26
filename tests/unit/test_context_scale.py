@@ -106,3 +106,70 @@ def test_a_tampered_join_fact_is_still_detected(tmp_path: Path) -> None:
     finally:
         guru.close()
         store.close()
+
+
+def _new_join(child: Any, parent: Any) -> Fact:
+    from schemaguru.model.facts import Provenance, Status
+    from schemaguru.model.joins import JOIN_VALUE_KEYS, JoinRef
+    from schemaguru.model.kinds import FactKind
+    from schemaguru.model.refs import ObjectRef
+
+    join = JoinRef(
+        (ObjectRef(child.catalog, child.schema, child.table, "updated_3"),),
+        (ObjectRef(parent.catalog, parent.schema, parent.table, "id"),),
+    )
+    value: dict[str, Any] = {key: None for key in JOIN_VALUE_KEYS}
+    value.update(match_rate=0.99, coverage=0.5, matched=99, left_non_null=100, verdict="OK")
+    return Fact.make(
+        FactKind.JOIN, join, value, Provenance.MEASURED, Status.OBSERVED, method="exact"
+    )
+
+
+def test_a_join_written_by_another_process_reaches_the_view(tmp_path: Path) -> None:
+    """The per-table JOIN index must not hide a join measured after it was built: here by a
+    second store object on the same file (another process, a worker), which never tells this
+    ``Guru``. Before the index every renderer read every JOIN fact, so it was always shown."""
+    from benchmarks.scale.generator import table_ref
+
+    shape = replace(ScaleShape(), tables=300, columns_per_table=4, tables_per_schema=100)
+    store = _store(tmp_path / "w.db", 300)
+    guru = Guru(store=store)
+    child, parent = table_ref(57, shape), table_ref(203, shape)
+    try:
+        assert parent.table not in str(guru.context(child.table))  # graph and index built
+        with SQLiteStore(tmp_path / "w.db") as other:
+            other.put_facts([_new_join(child, parent)])
+        view = str(guru.context(f"{child.table} updated"))
+        assert f"{parent.schema}.{parent.table}.id" in view
+    finally:
+        guru.close()
+        store.close()
+
+
+def test_a_join_the_background_drainer_measures_reaches_the_view(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The in-process path: a background drain that writes a JOIN invalidates this ``Guru``
+    (its scheduler's ``on_write``), and the store's JOIN counter moves too."""
+    from benchmarks.scale.generator import table_ref
+
+    from schemaguru.config import Config
+    from schemaguru.measure.scheduler import BackgroundDrainer, MeasureReport, Scheduler
+
+    shape = replace(ScaleShape(), tables=300, columns_per_table=4, tables_per_schema=100)
+    store = _store(tmp_path / "d.db", 300)
+    guru = Guru(store=store, config=Config(measure_on_demand="background"))
+    child, parent = table_ref(57, shape), table_ref(203, shape)
+
+    def measured(self: Scheduler, *args: Any, **kwargs: Any) -> MeasureReport:
+        self.store.put_facts([_new_join(child, parent)])
+        return MeasureReport()
+
+    try:
+        assert parent.table not in str(guru.context(child.table))
+        monkeypatch.setattr(Scheduler, "run", measured)
+        BackgroundDrainer(guru._scheduler).run_once()  # what the drainer thread runs
+        assert f"{parent.schema}.{parent.table}.id" in str(guru.context(f"{child.table} updated"))
+    finally:
+        guru.close()
+        store.close()

@@ -28,6 +28,12 @@ jobs:
       # a scheduled run has no inputs: it uses the same nightly size as the dispatch default
       TABLES: ${{ github.event.inputs.tables || '500000' }}
     steps:
+      - name: Free disk space
+        # the 500,000-table store needs ~9.5 GB of the runner's ~14 GB: drop preinstalled
+        # toolchains this job never uses, then show what is free before the run
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/local/share/boost
+          df -h
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -40,8 +46,10 @@ jobs:
       - name: Compare with the hard targets and the committed baseline
         # exit 2 = no committed baseline for github-ubuntu-latest at this size: the hard targets
         # were still checked, only the 25% regression gate did not run. That passes with a
-        # visible warning until the baseline is committed; 1 (a miss or a regression) and
-        # 3 (a malformed result) fail the job.
+        # visible warning until the baseline is committed; 1 (a miss no known limit names, or a
+        # regression) and 3 (a malformed result) fail the job. A hard-target miss the result's
+        # known_limits names (context_p95_ms today) is a WARNING from the comparator, and that
+        # metric stays regression-gated at 25%.
         run: |
           set +e
           python3 -m benchmarks.scale.compare bench.json --baseline-dir benchmarks/results

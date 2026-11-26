@@ -60,7 +60,8 @@ guru.close()
 
 Search runs inside the store (the FTS index), never as a Python scan over every table: on a
 synthetic 500,000-table store the search p95 was about 167 ms on the developer's machine
-(hardware-dependent). If the local SQLite lacks FTS5, search falls back to a slower `LIKE`
+(hardware-dependent); the whole `context` call at that size is far slower (p95 28.6 s, a
+documented known limit, see [Scale](scale.md)). If the local SQLite lacks FTS5, search falls back to a slower `LIKE`
 scan with a warning (`SG701`). The join graph is built from the store's join facts and
 cached until the knowledge changes.
 

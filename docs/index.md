@@ -97,7 +97,9 @@ says which verdicts changed, judged relative to the previous snapshot.
 Measured on the developer's machine (hardware-dependent): lexical table search over a
 synthetic 500,000-table store had a p95 of about 167 ms (`tests/benchmark/`, a worst-case
 vocabulary where one word matches a third of all tables); graph expansion over 50,000 joins
-took a median of about 0.48 s (`benchmarks/bench_expand.py`).
+took a median of about 0.48 s (`benchmarks/bench_expand.py`). The whole `context` call at
+500,000 tables is much slower (p95 28.6 s, a documented known limit): see
+[Scale](guide/scale.md).
 
 ## Install
 

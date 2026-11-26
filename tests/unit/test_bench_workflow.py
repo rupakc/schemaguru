@@ -68,3 +68,15 @@ def test_default_size_is_the_recorded_nightly_size() -> None:
     nightly = json.loads(RESULT.read_text())["nightly"]
     assert nightly["tables"] == default and nightly["reason"]
     assert default in (500_000, 250_000, 100_000)
+
+
+def test_disk_is_freed_and_shown_before_the_run() -> None:
+    """The 500k store needs ~9.5 GB of the runner's ~14 GB: unused toolchains are removed and the
+    free space is printed before the harness runs."""
+    steps = _doc()["jobs"]["bench"]["steps"]
+    runs = [str(s.get("run", "")) for s in steps]
+    harness = next(i for i, r in enumerate(runs) if "benchmarks.scale.harness" in r)
+    before = "\n".join(runs[:harness])
+    for path in ("/usr/share/dotnet", "/opt/ghc", "/usr/local/lib/android"):
+        assert path in before
+    assert "df -h" in before

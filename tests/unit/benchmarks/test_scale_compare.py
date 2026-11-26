@@ -96,3 +96,43 @@ def test_cli_exit_codes(tmp_path: Any, capsys: pytest.CaptureFixture[str]) -> No
     assert main([str(res), "--baseline-dir", str(base)]) == 1
     _write(res, {"metrics": {}})
     assert main([str(res), "--baseline-dir", str(base)]) == EXIT_MALFORMED
+
+
+def test_a_miss_named_in_known_limits_warns_and_does_not_fail(capsys: Any) -> None:
+    """Controller ruling: a hard-target miss whose metric a known_limits entry names is a
+    WARNING (exit 0 unless something else fails); an unlisted miss still fails."""
+    from benchmarks.scale.compare import known_misses
+
+    r = result(context_p95_ms=28_000.0)
+    r["known_limits"] = ["context_p95_ms: 28 s at 500k; needs an architecture change"]
+    assert compare(r, []) == []
+    (warning,) = known_misses(r)
+    assert "context_p95_ms" in warning and "known limit" in warning
+    # an unlisted miss still fails, even next to a listed one
+    r2 = result(context_p95_ms=28_000.0, incremental_ratio=0.2)
+    r2["known_limits"] = list(r["known_limits"])
+    problems = compare(r2, [])
+    assert len(problems) == 1 and "incremental_ratio" in problems[0]
+    # a limit that only mentions the words, not the metric key, does not excuse it
+    r3 = result(context_p95_ms=28_000.0)
+    r3["known_limits"] = ["context p95 is slow"]
+    assert any("context_p95_ms" in p for p in compare(r3, []))
+
+
+def test_a_known_miss_stays_regression_gated() -> None:
+    r = result(context_p95_ms=28_000.0)
+    r["known_limits"] = ["context_p95_ms: documented"]
+    base = result(context_p95_ms=20_000.0)
+    problems = compare(r, [base])
+    assert len(problems) == 1 and "context_p95_ms" in problems[0] and "regressed" in problems[0]
+    assert compare(r, [result(context_p95_ms=25_000.0)]) == []  # within 25%
+
+
+def test_cli_known_miss_exits_0_with_a_warning(tmp_path: Any, capsys: Any) -> None:
+    r = result(context_p95_ms=28_000.0)
+    r["known_limits"] = ["context_p95_ms: documented"]
+    _write(tmp_path / "r.json", r)
+    (tmp_path / "base").mkdir()
+    _write(tmp_path / "base" / "b.json", result(context_p95_ms=27_000.0))
+    assert main([str(tmp_path / "r.json"), "--baseline-dir", str(tmp_path / "base")]) == 0
+    assert "WARNING: context_p95_ms" in capsys.readouterr().err

@@ -782,7 +782,13 @@ class Guru:
     def _current_graph(self, sink: list[Diagnostic] | None = None) -> Graph:
         """The join graph for the current knowledge (caller holds ``self._lock``)."""
         now = require_aware(self._now())
-        key = (self._generation, self.store.latest_snapshot(), now.date(), self._config.graph)
+        key = (
+            self._generation,
+            self.store.latest_snapshot(),
+            self._join_version(),
+            now.date(),
+            self._config.graph,
+        )
         if self._graph is not None and self._graph_key == key:
             return self._graph
         cfg = self._config
@@ -804,6 +810,13 @@ class Guru:
         self._join_subjects = join_subjects_by_table(facts)
         self._graph, self._graph_key = graph, key
         return graph
+
+    def _join_version(self) -> int | None:
+        """The store's JOIN-insert counter (O(1); any process's writes), or ``None`` for a store
+        without one. Part of the graph's and the view cache's keys, so a join measured by
+        another process (a worker, a second replica) is never hidden by the per-table index."""
+        read = getattr(self.store, "join_version", None)
+        return None if read is None else int(read())
 
     def _rules(self, src: ObjectRef, dst: ObjectRef) -> Automaton | None:
         if not self._rule_specs:
@@ -883,7 +896,9 @@ class Guru:
             waivers=self._waivers,
             dialect=self.dialect,
             rules=self._rules,
-            join_subjects=self._join_subjects,
+            # a store without a JOIN counter cannot say when the index is stale: read every
+            # join per renderer, as before the index
+            join_subjects=self._join_subjects if self._join_version() is not None else None,
         )
 
     def context(
@@ -908,6 +923,7 @@ class Guru:
             key = (
                 self._generation,
                 self.store.latest_snapshot(),
+                self._join_version(),
                 stable_hash(question),
                 stable_hash(repr(cfg)),
                 profile,

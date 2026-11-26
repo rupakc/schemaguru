@@ -995,6 +995,12 @@ class PostgresStore:
         rows = self._q("SELECT id FROM snapshots ORDER BY seq DESC LIMIT 1")
         return str(rows[0][0]) if rows else None
 
+    def join_version(self) -> int:
+        """How many JOIN facts were ever inserted (any process): an O(1) read that changes
+        whenever a JOIN subject not seen before may have appeared."""
+        rows = self._q("SELECT last_value, is_called FROM join_facts_version")
+        return int(rows[0][0]) if rows and rows[0][1] else 0
+
     # ----- state, ledger, queue, feedback ------------------------------------------------
 
     def crawl_state_get(self, key: str) -> Mapping[str, object] | None:

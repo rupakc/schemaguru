@@ -4,8 +4,9 @@ Breadth-first over EFFECTIVE lineage (:func:`~schemaguru.model.lineage.resolve_l
 at most two store calls per depth. Upstream reads the frontier's own ``LINEAGE`` /
 ``COLUMN_LINEAGE`` facts, so any :class:`~schemaguru.store.protocol.Store` serves it; downstream
 needs the store's lineage index (``SG705`` without one). A node is expanded at most once; an
-edge back to an ancestor is reported as a cycle, never followed; the walk stops at
-``max_nodes``. Lineage is declared or parsed, never measured, and never a join path.
+edge into a node that reaches back to its source (an ancestor or a sibling) is reported as a
+cycle, never followed; the walk stops at ``max_nodes``. Lineage is declared or parsed, never
+measured, and never a join path.
 """
 
 from __future__ import annotations
@@ -138,15 +139,22 @@ def _downstream(
     return hops, set()
 
 
-def _path_to(parents: dict[str, str | None], node: str, ancestor: str) -> tuple[str, ...] | None:
-    """The discovery chain ``ancestor -> ... -> node``, or None when ``ancestor`` is not on it."""
-    chain = [node]
-    cur: str | None = node
-    while cur is not None and cur != ancestor:
-        cur = parents.get(cur)
-        if cur is not None:
-            chain.append(cur)
-    return tuple(reversed(chain)) if cur == ancestor else None
+def _path(walk: dict[str, list[str]], start: str, goal: str) -> tuple[str, ...] | None:
+    """The shortest path ``start -> ... -> goal`` over the walk's edges so far (breadth-first,
+    so bounded by the node cap), or None when ``goal`` is not reachable."""
+    prev: dict[str, str | None] = {start: None}
+    queue = [start]
+    for cur in queue:
+        if cur == goal:
+            chain = [cur]
+            while (p := prev[chain[-1]]) is not None:
+                chain.append(p)
+            return tuple(reversed(chain))
+        for nxt in walk.get(cur, ()):
+            if nxt not in prev:
+                prev[nxt] = cur
+                queue.append(nxt)
+    return None
 
 
 def traverse(
@@ -173,7 +181,7 @@ def traverse(
     step = _upstream if direction == "upstream" else _downstream
 
     nodes: dict[str, LineageNode] = {start: LineageNode(start, lvl, 0, True)}
-    parents: dict[str, str | None] = {start: None}
+    walk: dict[str, list[str]] = {}  # the edges followed so far, in the walk's direction
     edges: list[LineageEdgeView] = []
     cycles: list[tuple[str, ...]] = []
     truncated = False
@@ -193,13 +201,15 @@ def traverse(
                         break
                     leaf = to in unresolved
                     nodes[to] = LineageNode(to, lvl, d, not leaf)
-                    parents[to] = at
                     if not leaf:
                         nxt.append(to)
                 else:
-                    cycle = _path_to(parents, at, to)
+                    # an edge into a node already seen closes a cycle when that node reaches
+                    # back to ``at`` (an ancestor, or a sibling that feeds it)
+                    cycle = _path(walk, to, at)
                     if cycle is not None:
                         cycles.append((*cycle, to))
+                walk.setdefault(at, []).append(to)
                 up, down = (to, at) if direction == "upstream" else (at, to)
                 edges.append(LineageEdgeView(up, down, tuple(sorted(sources)), transform))
             if truncated:

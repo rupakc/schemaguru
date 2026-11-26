@@ -233,3 +233,23 @@ def test_deterministic_order(tmp_path: Path) -> None:
         s.close()
     assert out[0] == out[1]
     assert out[0].to_dict() == out[1].to_dict()
+
+
+def test_sibling_cycle_reported_both_directions(store: SQLiteStore) -> None:
+    """Siblings at the same depth that feed each other are a cycle even though neither is on
+    the other's discovery chain (R <- B, R <- C, B <- C, C <- B; and the mirror downstream)."""
+    store.put_facts(
+        [
+            lin("shop.r", ["shop.b", "shop.c"]),
+            lin("shop.b", ["shop.c", "shop.x"]),
+            lin("shop.c", ["shop.b", "shop.x"]),
+        ]
+    )
+    up = traverse(store, ObjectRef(None, "shop", "r"), depth=5)
+    assert up.cycles == (("shop.b", "shop.c", "shop.b"),)
+    assert "cycle: shop.b -> shop.c -> shop.b" in lineage_text(up)
+    down = traverse(store, ObjectRef(None, "shop", "x"), direction="downstream", depth=5)
+    assert down.cycles == (("shop.b", "shop.c", "shop.b"),)
+    # the control: without the sibling links there is no cycle
+    store.put_facts([lin("shop.q", ["shop.r"])])
+    assert traverse(store, ObjectRef(None, "shop", "q"), depth=1).cycles == ()

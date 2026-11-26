@@ -466,8 +466,13 @@ def _lineage(guru: ToolHost, args: dict[str, Any]) -> dict[str, Any]:
             raise
         code = "SG705" if str(e).startswith("SG705") else "SG803"
         raise ToolError(code, f"lineage: {e}") from None
-    tables = [ObjectRef.parse(n.ref, has_column=n.level == "column").table_ref()
-              for n in r.nodes if n.in_catalog]  # fmt: skip
+    # a name outside the catalog belongs to no configured table: then every configured mode
+    # counts (as for an unknown table), never only the modes of its in-catalog neighbours
+    tables = (
+        [ObjectRef.parse(n.ref, has_column=n.level == "column").table_ref() for n in r.nodes]
+        if all(n.in_catalog for n in r.nodes)
+        else []
+    )
     return _result({"text": lineage_text(r), **r.to_dict()}, outbound_mode(guru, tables))
 
 

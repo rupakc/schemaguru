@@ -128,3 +128,45 @@ def test_adapters_and_mcp_expose_lineage(shop_guru: Guru, no_seam_check: Any) ->
     tools, called = asyncio.run(session())
     assert [t.name for t in tools.tools][-1] == "lineage"
     assert not called.is_error and called.structured_content["ref"] == "shop.payments"
+
+
+def test_out_of_catalog_name_is_swept_even_when_tables_are_raw(
+    tmp_path: Any, shop_duckdb: Any, no_seam_check: Any
+) -> None:
+    """A name lineage could not resolve belongs to no configured table: the result is swept as
+    for an unknown table (every configured mode), never under the raw mode of its neighbours."""
+    from schemaguru.config import Config, SamplingConfig
+    from tests.unit.agent.conftest import make_shop_guru
+
+    email = "maria.garcia@example.com"
+    sampling = SamplingConfig(llm_values="masked", per_glob={"shop.*": "raw"})
+    g = make_shop_guru(tmp_path, shop_duckdb[0], config=Config(sampling=sampling))
+    try:
+        payments = ObjectRef(None, "shop", "payments")
+        g.store.put_facts(
+            [
+                Fact.make(
+                    FactKind.LINEAGE, payments, table_lineage_value(["shop.orders"], [email]),
+                    Provenance.CATALOG, Status.UNVERIFIED, source="view_definition",
+                )
+            ]
+        )  # fmt: skip
+        out = g.handle_tool_call("lineage", {"ref": "shop.payments"})
+        assert "error" not in out, out
+        assert len(out["nodes"]) == 3  # the leaf is there, swept
+        assert email not in json.dumps(out)
+        assert email not in out["text"] and all(n["ref"] != email for n in out["nodes"])
+        # the control: an in-catalog-only result keeps the raw mode of its tables
+        g.store.put_facts(
+            [
+                Fact.make(
+                    FactKind.LINEAGE, ObjectRef(None, "shop", "orders"),
+                    table_lineage_value(["shop.customers"]), Provenance.CATALOG,
+                    Status.UNVERIFIED, source="view_definition",
+                )
+            ]
+        )  # fmt: skip
+        raw = g.handle_tool_call("lineage", {"ref": "shop.orders", "depth": 1})
+        assert raw["edges"][0]["upstream"] == "shop.customers"
+    finally:
+        g.close()

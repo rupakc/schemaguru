@@ -88,13 +88,26 @@ def _best(fn: Callable[[str], object], arg: str) -> float:
     return best
 
 
-def _assert_scales_linearly(fn: Callable[[str], object], text: str, label: object) -> None:
-    """Assert fn scales linearly from the 12.5k to the 50k input (a ratio, so it holds on a slow
-    or loaded runner; the absolute ceiling is the ``benchmark`` test below)."""
+def _scaling_round(fn: Callable[[str], object], text: str) -> tuple[float, float, float]:
     t_small = _best(fn, text[:SMALL_N])
     t_large = _best(fn, text)
-    ratio = t_large / max(t_small, NOISE_FLOOR_S)
-    assert ratio < MAX_SCALING_RATIO, (label, t_small, t_large, round(ratio, 2))
+    return t_small, t_large, t_large / max(t_small, NOISE_FLOOR_S)
+
+
+def _assert_scales_linearly(fn: Callable[[str], object], text: str, label: object) -> None:
+    """Assert fn scales linearly from the 12.5k to the 50k input (a ratio, so it holds on a slow
+    or loaded runner; the absolute ceiling is the ``benchmark`` test below).
+
+    A round that passes ends the check. A round that fails is repeated twice more, small and
+    large interleaved, and the MEDIAN ratio is judged against the unchanged MAX_SCALING_RATIO:
+    a macOS runner measured a linear detector (2.0x per doubling on a quiet machine, 4.0x per
+    4x) at 8.67x in one round because a sustained slowdown overlapped only the large run. A
+    quadratic function is 16x in every round, so it still fails."""
+    rounds = [_scaling_round(fn, text)]
+    if rounds[0][2] >= MAX_SCALING_RATIO:
+        rounds += [_scaling_round(fn, text) for _ in range(2)]
+    ratio = sorted(r[2] for r in rounds)[len(rounds) // 2]
+    assert ratio < MAX_SCALING_RATIO, (label, rounds, round(ratio, 2))
 
 
 def test_negative_control_scaling_check_catches_quadratic() -> None:

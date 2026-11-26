@@ -9,7 +9,8 @@ unless ``same_catalog_only=False``:
 
 1. a column ``x_id`` / ``xId`` / ``x_fk`` -> a table named ``x`` or ``xs`` (any schema) with a
    single-column primary key, else an ``id`` column, of a compatible type family;
-2. a column whose name equals another table's single-column primary key in the same schema.
+2. a column whose name equals another table's single-column primary key in the same schema
+   (never a bare ``id``: every table keyed ``id`` would pair with every other).
 
 Compatible families: equal, or both numeric (``integer``/``decimal``/``float``). A string key
 against a numeric one is a candidate measured with ``cast_to="string"`` (the agent must cast
@@ -202,8 +203,9 @@ def _heuristics(
                     key = _key_column(store, target)
                     if key is not None:
                         add(_join(c, key))
-        for pk in pk_by_name.get(name, []):
-            add(_join(c, pk))
+        if name.lower() != "id":  # two bare ``id`` keys share a name, not a meaning
+            for pk in pk_by_name.get(name, []):
+                add(_join(c, pk))
         out += found
     return out
 

@@ -113,6 +113,8 @@ class SnowflakeReader:
         return iter((self._db(None),))
 
     def list_schemas(self, catalog: str | None, *, page_token: str | None) -> Page[Schema]:
+        if page_token is not None:  # one page holds every schema: a later page is empty
+            return Page([], None)
         db = self._db(catalog)
         rows = self._run(
             "SELECT schema_name, comment FROM "

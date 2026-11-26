@@ -25,7 +25,9 @@ guru.close()
   (`timeout_s`, default 60). Each page is written before the next is read, so memory is
   bounded by the page size, not the warehouse.
 * **Resumable.** Progress is checkpointed after every page; an interrupted crawl continues
-  from its checkpoint.
+  from its checkpoint. Schemas listed before the checkpoint are skipped unless the store has
+  never seen them (created since the interruption); a checkpoint saved under a different
+  include/exclude scope is discarded and the crawl starts from the top.
 * **Incremental.** When the reader can list "changed since" (`last_altered`), a later crawl
   re-reads only changed tables, plus a name-only listing per schema to detect drops. A
   change of the include/exclude scope makes the next crawl a full one.

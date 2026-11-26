@@ -634,3 +634,71 @@ def test_keyhash_row_sample_of_top_values_scales_counts_and_is_not_approximate()
     assert est["non_null"]["method"] == "scaled" and est["non_null"]["value"] == 5410
     assert est["distinct"]["method"] == "sample_lower_bound"
     assert v.value["sampled_rows"] == 600 and v.value["fraction"] == "0.1"
+
+
+# --- 0.2.0 hardening (A3.7, A3.11) --------------------------------------------------------------
+
+
+def test_distinct_precedence_order_independent() -> None:
+    from schemaguru.measure.convert import resolve_distinct
+
+    exact_profile = _facts(
+        ProfileColumns(ORD, ("order_id",)),
+        {
+            "row_count": 10_000,
+            "columns": {"order_id": {"non_null": 10_000, "distinct_keys": 10_000}},
+        },
+    )
+    sampled_profile = _facts(
+        ProfileColumns(ORD, ("order_id",), sample=SYS),
+        {"row_count": 100, "sampled_rows": 100,
+         "columns": {"order_id": {"non_null": 100, "distinct_keys": 100}}},
+    )  # fmt: skip
+    keyhash = _facts(
+        Uniqueness(ORD, ("order_id",), sample=KEYHASH_PK),
+        {"row_count": 500, "non_null": 500, "distinct_keys": 500, "max_rows_per_key": 1,
+         "duplicate_keys": 0, "sampled_rows": 500},
+    )  # fmt: skip
+
+    def distinct(facts: list[Fact]) -> list[Fact]:
+        return [f for f in resolve_distinct(facts) if f.kind.name == "DISTINCT"]
+
+    # an exact profile count beats the keyhash estimate, in either batch order
+    for batch in (exact_profile + keyhash, keyhash + exact_profile):
+        (won,) = distinct(batch)
+        assert won.status is Status.OBSERVED and won.method == "exact"
+        assert won.value["distinct_keys"] == 10_000
+        # nothing else is dropped: the PRIMARY_KEY and profile facts all survive
+        others = {f.id for f in batch if f.kind.name != "DISTINCT"}
+        assert others <= {f.id for f in resolve_distinct(batch)}
+    # among samples, the keyhash (scaled, unbiased) estimate beats a row sample's lower bound;
+    # the two share one fact id, so the store would otherwise keep whichever came last
+    (a,) = [f for f in sampled_profile if f.kind.name == "DISTINCT"]
+    (b,) = [f for f in keyhash if f.kind.name == "DISTINCT"]
+    assert a.id == b.id
+    for batch in (sampled_profile + keyhash, keyhash + sampled_profile):
+        (won,) = distinct(batch)
+        assert won.value["estimate"]["method"] == "scaled" and won.value["distinct_keys"] == 10_000
+    # negative control: one DISTINCT per column is left as it is
+    assert resolve_distinct(exact_profile) == exact_profile
+
+
+def test_sampled_cardinality_not_one_to_one() -> None:
+    def card(ml: int, mr: int, sample: SampleChoice | None) -> dict[str, Any]:
+        p = {"distinct_left": 100, "matched": 98, "distinct_right": 120, "left_non_null": 1000,
+             "matched_left_rows": 990, "max_left_per_key": ml, "max_right_per_key": mr,
+             "sampled_left_rows": 1000, "sampled_right_rows": 120}  # fmt: skip
+        return dict(_by(_facts(KeyOverlapReq(JOIN, sample=sample), p), "JOIN").value)
+
+    for sample in (KEY, SYS):
+        one = card(1, 1, sample)
+        assert one["cardinality"] is None and one["cardinality_reason"] == "sampled"
+        # a sampled max of 1 is a lower bound: the right side may repeat keys it did not keep
+        assert card(30, 1, sample)["cardinality"] is None
+        assert card(1, 30, sample)["cardinality"] is None
+        # duplicates seen in a sample are real: both sides repeat keys
+        many = card(3, 3, sample)
+        assert many["cardinality"] == "N:M" and "cardinality_reason" not in many
+    # negative control: an exact measurement still says 1:1
+    exact = card(1, 1, None)
+    assert exact["cardinality"] == "1:1" and "cardinality_reason" not in exact

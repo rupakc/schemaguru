@@ -9,9 +9,10 @@ from pathlib import Path
 import pytest
 
 from schemaguru.catalog.crawl import crawl
+from schemaguru.catalog.protocol import Page, ReaderCapabilities
 from schemaguru.config import CrawlConfig
 from schemaguru.model.refs import ObjectRef
-from schemaguru.model.structure import Column, Constraint, Table
+from schemaguru.model.structure import Column, Constraint, Schema, Table
 from schemaguru.store.sqlite import SQLiteStore
 from tests.unit.catalog.fake_reader import BASE, FakeReader
 
@@ -375,3 +376,84 @@ def test_guru_crawl_applies_budget_crawl_bytes(tmp_path: Path) -> None:
     report = g.crawl()
     assert [d.code for d in report.errors] == ["SG110"]
     g.close()
+
+
+# --- 0.2.0 hardening (A3.1-A3.3): resume edge cases and the temp dir ----------------------------
+
+
+def test_resume_with_changed_scope_restarts(store: SQLiteStore) -> None:
+    """A cursor saved under another include/exclude scope is discarded: schemas before it may
+    hold tables the old scope never read."""
+    reader = FakeReader(30, tables_per_schema=10, page_size=5)
+    narrow = CrawlConfig(page_size=5, exclude=("s0000.t000000[5-9]",))
+    reader.interrupt_at_call = 4  # second page of s0001
+    with pytest.raises(KeyboardInterrupt):
+        crawl(reader, store, config=narrow, now=lambda: NOW)
+    assert len(live(store)) == 10  # s0000's five in scope + s0001's first page
+    reader.table_calls.clear()
+    report = crawl(reader, store, config=CrawlConfig(page_size=5), now=lambda: NOW)
+    assert reader.table_calls[0] == {"schema": "s0000", "token": None, "changed_since": None}
+    assert len(live(store)) == 30 and not report.errors
+    assert store.table(ObjectRef(None, "s0000", "t0000007")) is not None
+
+
+class _LateSchemaReader(FakeReader):
+    """Lists only the schemas not in ``hidden`` (a schema created between two runs)."""
+
+    def __init__(self, *a: object, **k: object) -> None:
+        super().__init__(*a, **k)  # type: ignore[arg-type]
+        self.hidden: set[str] = set()
+
+    def list_schemas(self, catalog: str | None, *, page_token: str | None) -> Page[Schema]:
+        page = super().list_schemas(catalog, page_token=page_token)
+        return Page([s for s in page.items if s.name not in self.hidden], page.next_token)
+
+
+def test_resume_crawls_schema_created_before_cursor(store: SQLiteStore) -> None:
+    reader = _LateSchemaReader(40, tables_per_schema=10, page_size=5)
+    reader.hidden = {"s0000"}
+    reader.interrupt_at_call = 4  # second page of s0002 (s0001 is done)
+    with pytest.raises(KeyboardInterrupt):
+        crawl(reader, store, config=CrawlConfig(page_size=5), now=lambda: NOW)
+    assert {t.ref.schema for t in store.iter_tables()} == {"s0001", "s0002"}
+    reader.hidden = set()  # s0000 now exists; it sorts before the cursor (s0002)
+    reader.table_calls.clear()
+    report = crawl(reader, store, config=CrawlConfig(page_size=5), now=lambda: NOW)
+    assert not report.errors and len(live(store)) == 40
+    assert {t.ref.schema for t in store.iter_tables()} == {"s0000", "s0001", "s0002", "s0003"}
+    listed = [(c["schema"], c["token"]) for c in reader.table_calls]
+    assert ("s0001", None) not in listed  # a stored schema before the cursor is still skipped
+    assert ("s0002", "5") in listed  # the cursor's schema resumes at its saved page
+    # negative control: a later resume with every schema stored skips them as before
+    reader.table_calls.clear()
+    reader.interrupt_at_call = 6  # second page of s0002 again
+    with pytest.raises(KeyboardInterrupt):
+        crawl(reader, store, config=CrawlConfig(page_size=5), now=lambda: NOW)
+    reader.table_calls.clear()
+    crawl(reader, store, config=CrawlConfig(page_size=5), now=lambda: NOW)
+    assert reader.table_calls[0] == {"schema": "s0002", "token": "5", "changed_since": None}
+
+
+def test_crawl_removes_temp_dir(store: SQLiteStore, tmp_path: Path,
+                                monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    import tempfile
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    crawl(FakeReader(20, tables_per_schema=10), store, config=CrawlConfig(), now=lambda: NOW)
+    assert list(scratch.iterdir()) == []  # after success
+
+    reader = FakeReader(20, tables_per_schema=10)
+    reader.interrupt_at_call = 1
+    with pytest.raises(KeyboardInterrupt):
+        crawl(reader, store, config=CrawlConfig(), now=lambda: NOW)
+    assert list(scratch.iterdir()) == []  # after an interrupt
+
+    class Broken(FakeReader):
+        def capabilities(self) -> ReaderCapabilities:
+            raise RuntimeError("no capabilities")
+
+    with pytest.raises(RuntimeError):
+        crawl(Broken(10), store, config=CrawlConfig(), now=lambda: NOW)
+    assert list(scratch.iterdir()) == []  # after an exception before the walk

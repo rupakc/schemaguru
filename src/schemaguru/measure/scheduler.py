@@ -29,7 +29,7 @@ from schemaguru.diagnostics import Diagnostic, Severity
 from schemaguru.measure.backend import CostEstimate, MeasureBackend, MeasureResult
 from schemaguru.measure.budget import BudgetGuard
 from schemaguru.measure.candidates import join_candidates
-from schemaguru.measure.convert import to_facts
+from schemaguru.measure.convert import resolve_distinct, to_facts
 from schemaguru.measure.requests import (
     Freshness,
     KeyOverlapReq,
@@ -122,6 +122,12 @@ def cap_sampled_distinct(facts: list[Fact], rows: int | None) -> list[Fact]:
     return out
 
 
+def _add_note(exc: BaseException, note: str) -> None:
+    add = getattr(exc, "add_note", None)  # Python 3.11+
+    if callable(add):
+        add(note)
+
+
 def _diag(code: str, message: str, location: str | None = None) -> Diagnostic:
     return Diagnostic(code, Severity.ERROR, message, location)
 
@@ -204,8 +210,9 @@ class Scheduler:
         ``guard`` shares one byte budget across runs (the background drainer); by default each
         run gets a fresh ``Budget``. ``config`` overrides the scheduler's config for this run only
         (e.g. exact measurement), under the same lock, so overrides never run alongside other
-        runs. On the total budget, and on any unexpected exception, the tables not yet measured
-        are pushed back onto the queue (then the exception propagates).
+        runs. On the total budget the tables not yet measured are pushed onto the queue; on any
+        unexpected exception the ones this run popped from the queue are pushed back, then the
+        exception propagates (a failing push is added to it as a note, never replacing it).
         """
         with self._lock:
             if config is None:
@@ -249,6 +256,14 @@ class Scheduler:
             for t in left:
                 self.store.queue_push(t, reasons.get(t, why), 0.0)
 
+        def requeue_popped(left: Sequence[ObjectRef], exc: BaseException) -> None:
+            """After a crash, put back only what this run took from the queue (an explicit ref
+            was never queued); a failing push never hides ``exc`` (it is added as a note)."""
+            try:
+                requeue([t for t in left if t in reasons], "interrupted")
+            except Exception as push_error:
+                _add_note(exc, f"re-queueing the unmeasured tables also failed: {push_error!r}")
+
         try:
             for i, ref in enumerate(targets):
                 try:
@@ -264,8 +279,8 @@ class Scheduler:
                     )
                     requeue(report.over_budget, "over_budget")
                     break
-                except BaseException:
-                    requeue(targets[i:], "interrupted")  # nothing popped is ever lost
+                except BaseException as exc:
+                    requeue_popped(targets[i:], exc)  # nothing popped is ever lost
                     raise
         finally:
             report.bytes = guard.lifetime_spent_bytes - spent0
@@ -392,7 +407,8 @@ class Scheduler:
                     r.error if r.error.location else replace(r.error, location=_where(r.request))
                 )
             out += self._facts_for(r, observed_at, snapshot)
-        return out
+        # a profile and a key-hash uniqueness probe may both count a column's distinct values
+        return resolve_distinct(out)
 
     def _facts_for(self, r: MeasureResult, observed_at: datetime, snapshot: str) -> list[Fact]:
         req = r.request

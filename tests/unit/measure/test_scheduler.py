@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -516,3 +517,92 @@ def test_row_estimate_charges_but_never_refuses_a_large_table(
     shop_store.upsert_tables([replace(orders, row_count=10_000_000, bytes=1_600_000_000)])
     refused = Scheduler(shop_store, FakeBackend(conn, cost=lambda r: None), cfg).run([ORD])
     assert any(e.code == "SG301" for e in refused.errors)
+
+
+# --- 0.2.0 hardening (A3.5, A3.6, A3.8) ---------------------------------------------------------
+
+
+class _FailingPuts:
+    """Delegates to the store; ``put_facts`` call number ``fail_at`` raises; ``queue_push``
+    raises when ``push_fails``."""
+
+    def __init__(self, inner: SQLiteStore, fail_at: int, push_fails: bool = False) -> None:
+        self.inner, self.calls, self.fail_at, self.push_fails = inner, 0, fail_at, push_fails
+
+    def put_facts(self, facts: Any) -> None:
+        self.calls += 1
+        if self.calls == self.fail_at:
+            raise OSError("disk full")
+        self.inner.put_facts(facts)
+
+    def queue_push(self, table: ObjectRef, reason: str, priority: float) -> None:
+        if self.push_fails:
+            raise RuntimeError("queue is read-only")
+        self.inner.queue_push(table, reason, priority)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+
+def test_explicit_crash_requeues_only_queued(shop_store: SQLiteStore, conn: Any) -> None:
+    shop_store.queue_push(CUS, "first_touch", 1.0)  # queued before; an explicit run leaves it
+    s = Scheduler(_FailingPuts(shop_store, 2), FakeBackend(conn), Config())  # type: ignore[arg-type]
+    with pytest.raises(OSError):
+        s.run([PRD, CUS, ORD])
+    left = sorted(shop_store.queue_pop(100), key=lambda x: x[0].canonical())
+    assert left == [(CUS, "first_touch")]  # ORD was never queued: not pushed by the crash
+    # negative control: a drain still puts back every popped table it did not write
+    for t in (PRD, CUS, ORD):
+        shop_store.queue_push(t, "first_touch", 1.0)
+    s = Scheduler(_FailingPuts(shop_store, 1), FakeBackend(conn), Config())  # type: ignore[arg-type]
+    with pytest.raises(OSError):
+        s.run([ORD], drain_queue=True)  # ORD is explicit AND was queued: popped, so it goes back
+    back = dict(shop_store.queue_pop(100))
+    assert back == {ORD: "first_touch", PRD: "first_touch", CUS: "first_touch"}
+
+
+def test_queue_push_failure_keeps_original(shop_store: SQLiteStore, conn: Any) -> None:
+    for t in (PRD, CUS, ORD):
+        shop_store.queue_push(t, "first_touch", 1.0)
+    store = _FailingPuts(shop_store, 2, push_fails=True)
+    s = Scheduler(store, FakeBackend(conn), Config())  # type: ignore[arg-type]
+    with pytest.raises(OSError, match="disk full") as info:
+        s.run(drain_queue=True)
+    notes = getattr(info.value, "__notes__", [])
+    if sys.version_info >= (3, 11):
+        assert any("queue is read-only" in n for n in notes), notes
+
+
+def test_backoff_resets_after_success(shop_store: SQLiteStore, conn: Any) -> None:
+    """The drain loop doubles its wait after a failure or SG302 and returns to the base
+    interval after the next clean drain."""
+    cfg = Config(measure_on_demand="background")
+    d = BackgroundDrainer(Scheduler(shop_store, FakeBackend(conn), cfg), interval_s=1.0)
+    outcomes: list[str] = ["raise", "sg302", "ok", "raise", "ok"]
+
+    def fake_run(**_: Any) -> Any:
+        from schemaguru.diagnostics import Diagnostic, Severity
+        from schemaguru.measure.scheduler import MeasureReport
+
+        what = outcomes.pop(0)
+        if what == "raise":
+            raise RuntimeError("warehouse down")
+        report = MeasureReport()
+        if what == "sg302":
+            report.errors.append(Diagnostic("SG302", Severity.ERROR, "total budget exhausted"))
+        return report
+
+    waits: list[float] = []
+
+    class Clock:
+        def is_set(self) -> bool:
+            return not outcomes
+
+        def wait(self, timeout: float) -> bool:
+            waits.append(timeout)
+            return False
+
+    d.scheduler.run = fake_run  # type: ignore[method-assign]
+    d._stop = Clock()  # type: ignore[assignment]
+    d._loop()
+    assert waits == [2.0, 4.0, 1.0, 2.0, 1.0]

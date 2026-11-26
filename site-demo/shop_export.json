@@ -4,32 +4,6 @@
   {
    "attribution": false,
    "cardinality": "1:1",
-   "coverage": 0.1,
-   "estimated": false,
-   "fan_in": 1.0,
-   "from": "shop.all_null_t.id",
-   "left_table": "shop.all_null_t",
-   "match_rate": 1.0,
-   "right_table": "shop.ref_parent",
-   "to": "shop.ref_parent.id",
-   "verdict": "OK"
-  },
-  {
-   "attribution": false,
-   "cardinality": "1:1",
-   "coverage": 1.0,
-   "estimated": false,
-   "fan_in": 1.0,
-   "from": "shop.anon_enum_t.id",
-   "left_table": "shop.anon_enum_t",
-   "match_rate": 0.1,
-   "right_table": "shop.ref_parent",
-   "to": "shop.ref_parent.id",
-   "verdict": "WEAK"
-  },
-  {
-   "attribution": false,
-   "cardinality": "1:1",
    "coverage": 0.333333,
    "estimated": false,
    "fan_in": 1.0,
@@ -159,15 +133,15 @@
    0.0
   ],
   "shop.all_null_t": [
-   0.1667,
-   1.0
+   0.4167,
+   0.9
   ],
   "shop.anon_enum_t": [
-   0.3333,
-   1.0
+   0.5833,
+   0.9
   ],
   "shop.broken_child": [
-   0.6111,
+   0.1111,
    1.0
   ],
   "shop.customers": [
@@ -175,7 +149,7 @@
    0.0
   ],
   "shop.empty_t": [
-   0.9167,
+   0.75,
    0.9
   ],
   "shop.events": [
@@ -199,12 +173,12 @@
    0.0
   ],
   "shop.ref_child": [
-   0.7222,
+   0.2222,
    1.0
   ],
   "shop.ref_parent": [
-   0.25,
-   0.8
+   0.9167,
+   0.9
   ],
   "shop.sessions": [
    0.8,
@@ -223,14 +197,14 @@
  "note": "The shop fixture warehouse (tests/fixtures/shop): crawled, measured exactly and overlaid with the spec 14.1 example YAML. Texts are SchemaGuru's own rendered output; values pass the masked value policy.",
  "paths": {
   "shop.accounts|shop.all_null_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.accounts and shop.all_null_t"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.accounts|shop.anon_enum_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.accounts and shop.anon_enum_t"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.accounts|shop.broken_child": {
    "refusal": "NO_ROUTE",
@@ -313,9 +287,9 @@
    "text": "no chain of usable joins connects shop.accounts and shop.ref_child"
   },
   "shop.accounts|shop.ref_parent": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.accounts and shop.ref_parent"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.accounts|shop.sessions": {
    "refusal": null,
@@ -329,156 +303,134 @@
    "text": "  shop.accounts → shop.events → shop.sessions · support 60%\n    events.account_id = accounts.account_id (N:1)\n    events.session_id = sessions.session_id (N:1)"
   },
   "shop.all_null_t|shop.accounts": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.all_null_t and shop.accounts"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.all_null_t|shop.anon_enum_t": {
-   "refusal": null,
-   "tables": [
-    [
-     "shop.all_null_t",
-     "shop.ref_parent",
-     "shop.anon_enum_t"
-    ]
-   ],
-   "text": "  shop.all_null_t → shop.ref_parent → shop.anon_enum_t · support 100%\n    all_null_t.id = ref_parent.id (1:1)\n    anon_enum_t.id = ref_parent.id (1:1)"
+   "refusal": "NO_EVIDENCE",
+   "tables": [],
+   "text": "no usable measured join touches shop.all_null_t, shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.all_null_t|shop.broken_child": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.all_null_t and shop.broken_child"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.all_null_t|shop.customers": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.all_null_t and shop.customers"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.all_null_t|shop.empty_t": {
    "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no usable measured join touches shop.empty_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
+   "text": "no usable measured join touches shop.all_null_t, shop.empty_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.all_null_t|shop.events": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.all_null_t and shop.events"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.all_null_t|shop.order_items": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.all_null_t and shop.order_items"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.all_null_t|shop.orders": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.all_null_t and shop.orders"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.all_null_t|shop.payments": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.all_null_t and shop.payments"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.all_null_t|shop.products": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.all_null_t and shop.products"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.all_null_t|shop.ref_child": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.all_null_t and shop.ref_child"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.all_null_t|shop.ref_parent": {
-   "refusal": null,
-   "tables": [
-    [
-     "shop.all_null_t",
-     "shop.ref_parent"
-    ]
-   ],
-   "text": "  shop.all_null_t → shop.ref_parent · support 100%\n    all_null_t.id = ref_parent.id (1:1)"
+   "refusal": "NO_EVIDENCE",
+   "tables": [],
+   "text": "no usable measured join touches shop.all_null_t, shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.all_null_t|shop.sessions": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.all_null_t and shop.sessions"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.anon_enum_t|shop.accounts": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.anon_enum_t and shop.accounts"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.anon_enum_t|shop.all_null_t": {
-   "refusal": null,
-   "tables": [
-    [
-     "shop.anon_enum_t",
-     "shop.ref_parent",
-     "shop.all_null_t"
-    ]
-   ],
-   "text": "  shop.anon_enum_t → shop.ref_parent → shop.all_null_t · support 10%\n    anon_enum_t.id = ref_parent.id (1:1)\n    all_null_t.id = ref_parent.id (1:1)"
+   "refusal": "NO_EVIDENCE",
+   "tables": [],
+   "text": "no usable measured join touches shop.anon_enum_t, shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.anon_enum_t|shop.broken_child": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.anon_enum_t and shop.broken_child"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.anon_enum_t|shop.customers": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.anon_enum_t and shop.customers"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.anon_enum_t|shop.empty_t": {
    "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no usable measured join touches shop.empty_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
+   "text": "no usable measured join touches shop.anon_enum_t, shop.empty_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.anon_enum_t|shop.events": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.anon_enum_t and shop.events"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.anon_enum_t|shop.order_items": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.anon_enum_t and shop.order_items"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.anon_enum_t|shop.orders": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.anon_enum_t and shop.orders"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.anon_enum_t|shop.payments": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.anon_enum_t and shop.payments"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.anon_enum_t|shop.products": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.anon_enum_t and shop.products"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.anon_enum_t|shop.ref_child": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.anon_enum_t and shop.ref_child"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.anon_enum_t|shop.ref_parent": {
-   "refusal": null,
-   "tables": [
-    [
-     "shop.anon_enum_t",
-     "shop.ref_parent"
-    ]
-   ],
-   "text": "  shop.anon_enum_t → shop.ref_parent · support 10%\n    anon_enum_t.id = ref_parent.id (1:1)"
+   "refusal": "NO_EVIDENCE",
+   "tables": [],
+   "text": "no usable measured join touches shop.anon_enum_t, shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.anon_enum_t|shop.sessions": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.anon_enum_t and shop.sessions"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.broken_child|shop.accounts": {
    "refusal": "NO_ROUTE",
@@ -486,14 +438,14 @@
    "text": "no chain of usable joins connects shop.broken_child and shop.accounts"
   },
   "shop.broken_child|shop.all_null_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.broken_child and shop.all_null_t"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.broken_child|shop.anon_enum_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.broken_child and shop.anon_enum_t"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.broken_child|shop.customers": {
    "refusal": "NO_ROUTE",
@@ -545,9 +497,9 @@
    "text": "  shop.broken_child → shop.ref_child · support 100%\n    broken_child.child_id = ref_child.child_id (1:1)\n  shop.broken_child → shop.ref_child · support 100%\n    ref_child.child_id = broken_child.child_id (1:1)"
   },
   "shop.broken_child|shop.ref_parent": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.broken_child and shop.ref_parent"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.broken_child|shop.sessions": {
    "refusal": "NO_ROUTE",
@@ -566,14 +518,14 @@
    "text": "  shop.customers → shop.orders → shop.accounts · support 100%\n    orders.customer_id = customers.customer_id (N:1)\n    orders.account_id = accounts.account_id (N:1)"
   },
   "shop.customers|shop.all_null_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.customers and shop.all_null_t"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.customers|shop.anon_enum_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.customers and shop.anon_enum_t"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.customers|shop.broken_child": {
    "refusal": "NO_ROUTE",
@@ -640,9 +592,9 @@
    "text": "no chain of usable joins connects shop.customers and shop.ref_child"
   },
   "shop.customers|shop.ref_parent": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.customers and shop.ref_parent"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.customers|shop.sessions": {
    "refusal": "HUB_PIVOT",
@@ -657,12 +609,12 @@
   "shop.empty_t|shop.all_null_t": {
    "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no usable measured join touches shop.empty_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
+   "text": "no usable measured join touches shop.empty_t, shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.empty_t|shop.anon_enum_t": {
    "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no usable measured join touches shop.empty_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
+   "text": "no usable measured join touches shop.empty_t, shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.empty_t|shop.broken_child": {
    "refusal": "NO_EVIDENCE",
@@ -707,7 +659,7 @@
   "shop.empty_t|shop.ref_parent": {
    "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no usable measured join touches shop.empty_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
+   "text": "no usable measured join touches shop.empty_t, shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.empty_t|shop.sessions": {
    "refusal": "NO_EVIDENCE",
@@ -725,14 +677,14 @@
    "text": "  shop.events → shop.accounts · support 100%\n    events.account_id = accounts.account_id (N:1)"
   },
   "shop.events|shop.all_null_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.events and shop.all_null_t"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.events|shop.anon_enum_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.events and shop.anon_enum_t"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.events|shop.broken_child": {
    "refusal": "NO_ROUTE",
@@ -775,9 +727,9 @@
    "text": "no chain of usable joins connects shop.events and shop.ref_child"
   },
   "shop.events|shop.ref_parent": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.events and shop.ref_parent"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.events|shop.sessions": {
    "refusal": null,
@@ -801,14 +753,14 @@
    "text": "  shop.order_items → shop.orders → shop.accounts · support 100%\n    order_items.order_id = orders.order_id (N:1)\n    orders.account_id = accounts.account_id (N:1)"
   },
   "shop.order_items|shop.all_null_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.order_items and shop.all_null_t"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.order_items|shop.anon_enum_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.order_items and shop.anon_enum_t"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.order_items|shop.broken_child": {
    "refusal": "NO_ROUTE",
@@ -873,9 +825,9 @@
    "text": "no chain of usable joins connects shop.order_items and shop.ref_child"
   },
   "shop.order_items|shop.ref_parent": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.order_items and shop.ref_parent"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.order_items|shop.sessions": {
    "refusal": "HUB_PIVOT",
@@ -893,14 +845,14 @@
    "text": "  shop.orders → shop.accounts · support 100%\n    orders.account_id = accounts.account_id (N:1)"
   },
   "shop.orders|shop.all_null_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.orders and shop.all_null_t"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.orders|shop.anon_enum_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.orders and shop.anon_enum_t"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.orders|shop.broken_child": {
    "refusal": "NO_ROUTE",
@@ -964,9 +916,9 @@
    "text": "no chain of usable joins connects shop.orders and shop.ref_child"
   },
   "shop.orders|shop.ref_parent": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.orders and shop.ref_parent"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.orders|shop.sessions": {
    "refusal": "HUB_PIVOT",
@@ -985,14 +937,14 @@
    "text": "  shop.payments → shop.orders → shop.accounts · support 100%\n    payments.order_id = orders.order_id (1:1)\n    orders.account_id = accounts.account_id (N:1)"
   },
   "shop.payments|shop.all_null_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.payments and shop.all_null_t"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.payments|shop.anon_enum_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.payments and shop.anon_enum_t"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.payments|shop.broken_child": {
    "refusal": "NO_ROUTE",
@@ -1059,9 +1011,9 @@
    "text": "no chain of usable joins connects shop.payments and shop.ref_child"
   },
   "shop.payments|shop.ref_parent": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.payments and shop.ref_parent"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.payments|shop.sessions": {
    "refusal": "HUB_PIVOT",
@@ -1081,14 +1033,14 @@
    "text": "  shop.products → shop.order_items → shop.orders → shop.accounts · support 100%\n    order_items.product_id = products.product_id (N:1)\n    order_items.order_id = orders.order_id (N:1)\n    orders.account_id = accounts.account_id (N:1)"
   },
   "shop.products|shop.all_null_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.products and shop.all_null_t"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.products|shop.anon_enum_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.products and shop.anon_enum_t"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.products|shop.broken_child": {
    "refusal": "NO_ROUTE",
@@ -1156,9 +1108,9 @@
    "text": "no chain of usable joins connects shop.products and shop.ref_child"
   },
   "shop.products|shop.ref_parent": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.products and shop.ref_parent"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.products|shop.sessions": {
    "refusal": "HUB_PIVOT",
@@ -1171,14 +1123,14 @@
    "text": "no chain of usable joins connects shop.ref_child and shop.accounts"
   },
   "shop.ref_child|shop.all_null_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.ref_child and shop.all_null_t"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_child|shop.anon_enum_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.ref_child and shop.anon_enum_t"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_child|shop.broken_child": {
    "refusal": null,
@@ -1230,9 +1182,9 @@
    "text": "no chain of usable joins connects shop.ref_child and shop.products"
   },
   "shop.ref_child|shop.ref_parent": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.ref_child and shop.ref_parent"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_child|shop.sessions": {
    "refusal": "NO_ROUTE",
@@ -1240,79 +1192,69 @@
    "text": "no chain of usable joins connects shop.ref_child and shop.sessions"
   },
   "shop.ref_parent|shop.accounts": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.ref_parent and shop.accounts"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_parent|shop.all_null_t": {
-   "refusal": null,
-   "tables": [
-    [
-     "shop.ref_parent",
-     "shop.all_null_t"
-    ]
-   ],
-   "text": "  shop.ref_parent → shop.all_null_t · support 10%\n    all_null_t.id = ref_parent.id (1:1)"
+   "refusal": "NO_EVIDENCE",
+   "tables": [],
+   "text": "no usable measured join touches shop.ref_parent, shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_parent|shop.anon_enum_t": {
-   "refusal": null,
-   "tables": [
-    [
-     "shop.ref_parent",
-     "shop.anon_enum_t"
-    ]
-   ],
-   "text": "  shop.ref_parent → shop.anon_enum_t · support 100%\n    anon_enum_t.id = ref_parent.id (1:1)"
+   "refusal": "NO_EVIDENCE",
+   "tables": [],
+   "text": "no usable measured join touches shop.ref_parent, shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_parent|shop.broken_child": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.ref_parent and shop.broken_child"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_parent|shop.customers": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.ref_parent and shop.customers"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_parent|shop.empty_t": {
    "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no usable measured join touches shop.empty_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
+   "text": "no usable measured join touches shop.ref_parent, shop.empty_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_parent|shop.events": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.ref_parent and shop.events"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_parent|shop.order_items": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.ref_parent and shop.order_items"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_parent|shop.orders": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.ref_parent and shop.orders"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_parent|shop.payments": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.ref_parent and shop.payments"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_parent|shop.products": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.ref_parent and shop.products"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_parent|shop.ref_child": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.ref_parent and shop.ref_child"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.ref_parent|shop.sessions": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.ref_parent and shop.sessions"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.sessions|shop.accounts": {
    "refusal": null,
@@ -1326,14 +1268,14 @@
    "text": "  shop.sessions → shop.events → shop.accounts · support 100%\n    events.session_id = sessions.session_id (N:1)\n    events.account_id = accounts.account_id (N:1)"
   },
   "shop.sessions|shop.all_null_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.sessions and shop.all_null_t"
+   "text": "no usable measured join touches shop.all_null_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.sessions|shop.anon_enum_t": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.sessions and shop.anon_enum_t"
+   "text": "no usable measured join touches shop.anon_enum_t (broken joins are refused; unmeasured candidates need include_unmeasured)"
   },
   "shop.sessions|shop.broken_child": {
    "refusal": "NO_ROUTE",
@@ -1386,9 +1328,9 @@
    "text": "no chain of usable joins connects shop.sessions and shop.ref_child"
   },
   "shop.sessions|shop.ref_parent": {
-   "refusal": "NO_ROUTE",
+   "refusal": "NO_EVIDENCE",
    "tables": [],
-   "text": "no chain of usable joins connects shop.sessions and shop.ref_parent"
+   "text": "no usable measured join touches shop.ref_parent (broken joins are refused; unmeasured candidates need include_unmeasured)"
   }
  },
  "questions": [
@@ -1531,7 +1473,7 @@
    "rows": 100
   },
   {
-   "block": "[shop.all_null_t]\n  ⚠ c: always NULL (dead column, measured 2026-11-24)\n  100 rows (measured 2026-11-24)\n  Columns:\n    id  INTEGER  → shop.ref_parent.id 1:1, match 100%, coverage 10% (measured 2026-11-24); distinct 100 (measured 2026-11-24)\n    c   INTEGER  distinct 0 (measured 2026-11-24)\n  Provenance: measured 2026-11-24",
+   "block": "[shop.all_null_t]\n  ⚠ c: always NULL (dead column, measured 2026-11-24)\n  100 rows (measured 2026-11-24)\n  Columns:\n    id  INTEGER  distinct 100 (measured 2026-11-24)\n    c   INTEGER  distinct 0 (measured 2026-11-24)\n  Provenance: measured 2026-11-24",
    "columns": [
     {
      "name": "id",
@@ -1546,7 +1488,7 @@
    "rows": 100
   },
   {
-   "block": "[shop.anon_enum_t]\n  ⚠ id → shop.ref_parent.id WEAK: match 10% (measured 2026-11-24) — expect unmatched rows\n  10,000 rows (measured 2026-11-24)\n  Columns:\n    id    INTEGER  → shop.ref_parent.id 1:1, match 10% (measured 2026-11-24); distinct 10,000 (measured 2026-11-24)\n    kind  VARCHAR  PII email; values: <email> (10,000) +4 more (measured 2026-11-24); distinct 5 (measured 2026-11-24)\n  Provenance: measured 2026-11-24",
+   "block": "[shop.anon_enum_t]\n  10,000 rows (measured 2026-11-24)\n  Columns:\n    id    INTEGER  distinct 10,000 (measured 2026-11-24)\n    kind  VARCHAR  PII email; values: <email> (10,000) +4 more (measured 2026-11-24); distinct 5 (measured 2026-11-24)\n  Provenance: measured 2026-11-24",
    "columns": [
     {
      "name": "id",
@@ -1599,7 +1541,7 @@
    "rows": 1000
   },
   {
-   "block": "[shop.empty_t]\n  0 rows (measured 2026-11-24)\n  Columns:\n    id  INTEGER  → shop.ref_parent.id (unmeasurable: no left keys)\n    v   VARCHAR\n  Provenance: measured 2026-11-24",
+   "block": "[shop.empty_t]\n  0 rows (measured 2026-11-24)\n  Columns:\n    id  INTEGER\n    v   VARCHAR\n  Provenance: measured 2026-11-24",
    "columns": [
     {
      "name": "id",
@@ -1736,7 +1678,7 @@
    "rows": 3000
   },
   {
-   "block": "[shop.ref_parent]\n  1,000 rows (measured 2026-11-24)\n  Columns:\n    id  INTEGER  PK (unique, measured 2026-11-24); ← shop.all_null_t.id (coverage 10%, measured 2026-11-24), ← shop.anon_enum_t.id (coverage 100%, measured 2026-11-24), ← shop.empty_t.id; distinct 1,000 (measured 2026-11-24)\n  Provenance: measured 2026-11-24",
+   "block": "[shop.ref_parent]\n  1,000 rows (measured 2026-11-24)\n  Columns:\n    id  INTEGER  PK (unique, measured 2026-11-24); distinct 1,000 (measured 2026-11-24)\n  Provenance: measured 2026-11-24",
    "columns": [
     {
      "name": "id",

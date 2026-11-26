@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -206,3 +207,74 @@ def test_deadline_starts_when_entered_and_only_overrides_seconds(store: SQLiteSt
         assert g.admit(_est(10, REQ2)) == "over_total"
     assert g.admit(_est(10, REQ2)) == "run"  # outside the block: no deadline (control)
     assert g.remaining_bytes() == 80  # the byte total is the shared one
+
+
+# --- 0.2.0 hardening (A3.9, A3.10) --------------------------------------------------------------
+
+
+def test_refill_with_inflight_never_overshoots(store: SQLiteStore) -> None:
+    """A probe admitted in one period and recorded in the next is spent in the next: the
+    refill leaves room for it, so a period never records more than ``max_bytes_total``."""
+    clock = Clock()
+    g = BudgetGuard(Budget(max_bytes_per_probe=None, max_bytes_total=1000, period_s=60.0), store,
+                    clock=clock)  # fmt: skip
+    slow = RowCount(ObjectRef(None, "shop", "slow"))
+    assert g.admit(_est(400, slow)) == "run"  # still running when the period turns over
+    clock.t = 61.0
+    assert g.remaining_bytes() == 600  # the in-flight charge is taken off the fresh total
+    admitted = [r for r in _reqs(3) if g.admit(_est(400, r)) == "run"]
+    assert len(admitted) == 1
+    g.record(_res(400, slow))
+    for r in admitted:
+        g.record(_res(400, r))
+    assert g.spent_bytes <= 1000 and g.spent_bytes == 800
+    # negative control: with nothing in flight the whole total is admitted again
+    clock.t = 122.0
+    assert g.remaining_bytes() == 1000
+
+
+def test_fused_probe_charged_once(shop_store: SQLiteStore, shop_duckdb: Any) -> None:
+    """FactLang 0.1.4 fuses plans on one table into one query and gives every member's
+    ``Measurement.evidence`` the whole query's ``bytes_processed`` (plus ``fused_with``). The
+    budget must charge that query once, not once per request it served."""
+    import dataclasses
+
+    from schemaguru.measure import flbridge
+    from schemaguru.measure.catalog_bridge import StoreCatalog
+    from schemaguru.measure.requests import ProfileColumns, Uniqueness
+
+    if "measure" not in flbridge.capabilities():
+        pytest.skip("factlang capability measure not yet available")
+    import factlang.connectors as flc
+
+    class Billed:
+        """FactLang's DuckDB connector, billing 1,000 bytes per query it runs."""
+
+        def __init__(self, inner: Any) -> None:
+            self.inner, self.runs = inner, 0
+            self.dialect, self.paramstyle = inner.dialect, inner.paramstyle
+
+        def execute(self, probe: Any, *, timeout_s: float | None) -> Any:
+            self.runs += 1
+            return dataclasses.replace(self.inner.execute(probe, timeout_s=timeout_s),
+                                       bytes_processed=1000)  # fmt: skip
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.inner, name)
+
+    conn = Billed(flc.DBAPIConnector(shop_duckdb[0], "duckdb"))
+    backend = flbridge.FactLangBackend(conn, catalog=StoreCatalog(shop_store))
+    orders = ObjectRef(None, "shop", "orders")
+    reqs = [RowCount(orders), ProfileColumns(orders, ("status", "deleted")),
+            Uniqueness(orders, ("order_id",))]  # fmt: skip
+    g = BudgetGuard(Budget(max_bytes_per_probe=None, max_bytes_total=None), shop_store)
+    for r in reqs:
+        assert g.admit(CostEstimate(r, None, "unknown")) == "run"
+    results = backend.measure(reqs)
+    assert all(r.error is None for r in results)
+    for res in results:
+        g.record(res)
+    plans = sum(len(flbridge.plans_for(r, flbridge._IR())) for r in reqs)
+    assert conn.runs < plans  # FactLang did fuse
+    assert g.spent_bytes == 1000 * conn.runs
+    assert shop_store.ledger_total("measure", "bytes", None) == 1000 * conn.runs

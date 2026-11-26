@@ -37,7 +37,8 @@ class BudgetGuard:
 
     The byte total spans every run that shares the guard (:meth:`new_run` resets only the probe
     count and the clock) and refills once per ``Budget.period_s`` (``None``: never), so a
-    background drainer spends at most ``max_bytes_total`` per period."""
+    background drainer spends at most ``max_bytes_total`` per period: a probe still in flight
+    when the period turns over is charged to the new one."""
 
     def __init__(
         self, budget: Budget, store: Store, *, clock: Callable[[], float] = time.monotonic
@@ -95,11 +96,8 @@ class BudgetGuard:
         if period is not None and now - self._period_start >= period:
             self._period_start = now
             self.spent_bytes = 0
-            # in-flight probes stay tracked for recording, but no longer count against the
-            # fresh period's total
-            self._reserved = {
-                r: [(None, est) for _, est in held] for r, held in self._reserved.items()
-            }
+            # in-flight probes keep their charges: they are recorded (spent) in the fresh period,
+            # so its allowance is the total minus what is still in flight
 
     def _charge_unknown(self) -> int | None:
         b = self._budget

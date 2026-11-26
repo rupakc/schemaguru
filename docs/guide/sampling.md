@@ -50,6 +50,9 @@ over budget (`SG301`).
 * Counts are scaled by 1/fraction and labelled; distinct counts and maxima from a sample are
   **lower bounds** (`distinct ≥ 377 (sampled 5%, lower bound)`).
 * Observed values are "seen in sample"; a rare value the sample missed is not claimed absent.
+* A sampled join's cardinality is `N:M` only when both sides repeat a key in the sample;
+  otherwise it is unknown (`cardinality: null`, `cardinality_reason: "sampled"`), since a
+  maximum of one row per key in a sample is only a lower bound.
 * The method string is `sampled:<keyhash|system|bernoulli>:<fraction>:<seed>`; the seed is
   fixed per table and snapshot, so re-runs reproduce.
 

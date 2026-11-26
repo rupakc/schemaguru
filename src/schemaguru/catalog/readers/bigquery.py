@@ -147,6 +147,8 @@ class BigQueryReader:
         return iter((self.project,)) if self.project else iter(())
 
     def list_schemas(self, catalog: str | None, *, page_token: str | None) -> Page[Schema]:
+        if page_token is not None:  # one page holds every schema: a later page is empty
+            return Page([], None)
         project = catalog or self.project
         where = "WHERE catalog_name = ? " if project else ""
         rows = self._run(

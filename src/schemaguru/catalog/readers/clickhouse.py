@@ -141,6 +141,8 @@ class ClickHouseReader:
         return iter(())
 
     def list_schemas(self, catalog: str | None, *, page_token: str | None) -> Page[Schema]:
+        if page_token is not None:  # one page holds every schema: a later page is empty
+            return Page([], None)
         rows = self._ex.run(
             "SELECT d.name AS name, d.comment AS comment, countIf(t.name != '') AS table_count "
             "FROM system.databases d LEFT JOIN system.tables t "

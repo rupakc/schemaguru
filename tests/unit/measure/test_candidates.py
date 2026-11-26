@@ -163,3 +163,25 @@ def test_float_keys_are_numeric(tmp_path: Path) -> None:
     j = JoinRef((ObjectRef(None, "m", "lines", "product_id"),),
                 (ObjectRef(None, "m", "products", "product_id"),))  # fmt: skip
     assert (j, "heuristic") in got  # integer vs float: no cast needed
+
+
+def test_no_id_to_id_candidate(tmp_path: Path) -> None:
+    """Rule 2 (same name as another table's single-column PK) never pairs two bare ``id``
+    columns: every table keyed ``id`` would otherwise be a candidate for every other."""
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA a")
+    conn.execute("CREATE TABLE a.users(id INTEGER PRIMARY KEY, name VARCHAR)")
+    conn.execute("CREATE TABLE a.teams(ID INTEGER PRIMARY KEY)")
+    conn.execute("CREATE TABLE a.plans(plan_code VARCHAR PRIMARY KEY)")
+    conn.execute(
+        "CREATE TABLE a.orders(id INTEGER PRIMARY KEY, plan_code VARCHAR, user_id INTEGER)"
+    )
+    with SQLiteStore(tmp_path / "i.db") as st:
+        crawl(DuckDBReader(DBAPIExecutor(conn)), st)
+        got = [j for j, _ in join_candidates(st, ObjectRef(None, "a", "orders"))]
+        users = [j for j, _ in join_candidates(st, ObjectRef(None, "a", "users"))]
+    conn.close()
+    assert not any((j.left[0].column or "").lower() == "id" for j in got + users), got + users
+    # negative controls: rule 2 on any other name, and rule 1 (user_id -> users.id), still hold
+    assert JoinRef((col("orders", "plan_code", "a"),), (col("plans", "plan_code", "a"),)) in got
+    assert JoinRef((col("orders", "user_id", "a"),), (col("users", "id", "a"),)) in got

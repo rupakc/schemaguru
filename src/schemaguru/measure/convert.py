@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -34,7 +34,7 @@ from schemaguru.measure.requests import (
     TopValues,
     Uniqueness,
 )
-from schemaguru.model.facts import Fact, Provenance, Status
+from schemaguru.model.facts import Fact, Provenance, Status, method_class
 from schemaguru.model.joins import JOIN_VALUE_KEYS, JoinRef, join_verdict
 from schemaguru.model.kinds import FactKind, KindSpec
 from schemaguru.model.refs import ObjectRef
@@ -428,9 +428,53 @@ def _apply_policy(
     return "masked", list(merged.values()), categories
 
 
-def _cardinality(ml: int | None, mr: int | None) -> str | None:
+def _distinct_rank(f: Fact) -> int:
+    """Lower wins: exact count, keyhash (scaled, unbiased) estimate, other sample, unusable."""
+    if f.status is Status.OBSERVED and method_class(f.method) == "exact":
+        return 0
+    if f.status is Status.ESTIMATED:
+        est = f.value.get("estimate")
+        return 1 if isinstance(est, Mapping) and est.get("method") == "scaled" else 2
+    return 3
+
+
+def resolve_distinct(facts: Sequence[Fact]) -> list[Fact]:
+    """One ``DISTINCT`` fact per column from one batch, whatever order the batch came in.
+
+    A column profile and a key-hash uniqueness probe can both measure a column's distinct count.
+    The exact count wins over any estimate, a key-hash estimate (whole keys kept: scaled without
+    bias) over a row sample's, and any number over an unmeasurable one. Ties go to the lower fact
+    id. Error facts and every other kind are kept as they are; the winner takes the place of the
+    column's first ``DISTINCT`` fact."""
+    best: dict[str, Fact] = {}
+    for f in facts:
+        if f.kind.name != "DISTINCT" or f.status is Status.ERROR:
+            continue
+        key = f.subject.canonical()
+        cur = best.get(key)
+        if cur is None or (_distinct_rank(f), f.id) < (_distinct_rank(cur), cur.id):
+            best[key] = f
+    out: list[Fact] = []
+    placed: set[str] = set()
+    for f in facts:
+        if f.kind.name != "DISTINCT" or f.status is Status.ERROR:
+            out.append(f)
+            continue
+        key = f.subject.canonical()
+        if key not in placed:
+            placed.add(key)
+            out.append(best[key])
+    return out
+
+
+def _cardinality(ml: int | None, mr: int | None, *, sampled: bool = False) -> str | None:
+    """``1:1``/``N:1``/``1:N``/``N:M`` from the largest rows per key on each side. Sampled, a
+    side's max of 1 proves nothing (keys outside the sample may repeat), so only ``N:M`` (a
+    repeat seen on both sides is real) is reported; otherwise ``None``."""
     if ml is None or mr is None:
         return None
+    if sampled:
+        return "N:M" if ml > 1 and mr > 1 else None
     many_left, many_right = ml > 1, mr > 1
     if many_left and many_right:
         return "N:M"
@@ -469,8 +513,16 @@ def _join(ctx: _Ctx, req: KeyOverlapReq, p: Mapping[str, Any]) -> Fact:
         max_left_per_key=raw["max_left_per_key"],
         max_right_per_key=raw["max_right_per_key"],
         matched_left_rows=mlr,
-        cardinality=_cardinality(raw["max_left_per_key"], raw["max_right_per_key"]),
+        cardinality=_cardinality(
+            raw["max_left_per_key"], raw["max_right_per_key"], sampled=ctx.sample is not None
+        ),
     )
+    if (
+        ctx.sample is not None
+        and value["cardinality"] is None
+        and None not in (raw["max_left_per_key"], raw["max_right_per_key"])
+    ):
+        value["cardinality_reason"] = "sampled"  # a sampled max of 1 is only a lower bound
     g = ctx.config.graph
     value["verdict"] = join_verdict(value["match_rate"], g.ok_threshold, g.weak_threshold)
     s = ctx.sample

@@ -11,6 +11,7 @@ import pytest
 
 from schemaguru.catalog import ReaderCapabilities, dialects, reader_for
 from schemaguru.catalog.executor import check_metadata_sql
+from schemaguru.catalog.protocol import Page
 from schemaguru.catalog.readers.bigquery import MIN_BILLED_BYTES, BigQueryReader
 from schemaguru.catalog.readers.databricks import DatabricksReader
 from schemaguru.catalog.readers.oracle import OracleReader
@@ -850,3 +851,14 @@ def test_incremental_capability_matches_list_tables() -> None:
 
     liar = Liar(Nothing())  # type: ignore[arg-type]
     assert liar.capabilities().incremental != _uses_changed_since(Liar)  # the check flags it
+
+
+@pytest.mark.parametrize("dialect", dialects())
+def test_list_schemas_respects_page_token(dialect: str) -> None:
+    """Every shipped reader lists schemas in one page: a page token can only ask for a page
+    past the last, which is empty and final (and costs no query)."""
+    fake = Fake()  # no rules: any query is an error
+    reader = reader_for(dialect, fake)  # type: ignore[arg-type]
+    assert reader.list_schemas("main", page_token="1") == Page([], None)
+    assert reader.list_schemas(None, page_token="") == Page([], None)
+    assert fake.calls == []

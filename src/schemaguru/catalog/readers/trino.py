@@ -50,6 +50,8 @@ class TrinoReader:
         return iter([n for n in names if n not in _SKIP_CATALOGS])
 
     def list_schemas(self, catalog: str | None, *, page_token: str | None) -> Page[Schema]:
+        if page_token is not None:  # one page holds every schema: a later page is empty
+            return Page([], None)
         if catalog is None:
             return Page([])
         rows = self._ex.run(

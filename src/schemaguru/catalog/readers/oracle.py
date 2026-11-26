@@ -87,6 +87,8 @@ class OracleReader:
         return iter(())
 
     def list_schemas(self, catalog: str | None, *, page_token: str | None) -> Page[Schema]:
+        if page_token is not None:  # one page holds every schema: a later page is empty
+            return Page([], None)
         rows = self._run(
             "SELECT u.username AS name, "
             "(SELECT COUNT(*) FROM all_tables t WHERE t.owner = u.username) "

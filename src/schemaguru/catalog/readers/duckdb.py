@@ -51,6 +51,8 @@ class DuckDBReader:
         return iter(())
 
     def list_schemas(self, catalog: str | None, *, page_token: str | None) -> Page[Schema]:
+        if page_token is not None:  # one page holds every schema: a later page is empty
+            return Page([], None)
         rows = self._ex.run(
             "SELECT schema_name, comment FROM duckdb_schemas() "
             "WHERE database_name = current_database() "

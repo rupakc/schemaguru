@@ -43,18 +43,18 @@ Audited against `main` at `710e21f` (Task 1). Tasks 2–8 turn the `open` rows i
 | A2.7 | fullwidth `；` / `－－` pass `check_predicate` | fixed | test tests/unit/draft/test_verify.py::test_fullwidth_separators_refused |
 | A2.8 | look-alike quotes via non-Unicode Windows ODBC (InlineConnector) | fixed | test tests/unit/catalog/test_executor.py::test_inline_refuses_quote_lookalikes |
 | A2.9 | a raising `tzinfo` surfaces as `RuntimeError`, not SG109 (fixed: it surfaces as `ExecutionError` `FL700 SG109`, like every other inline refusal, not `CatalogError`) | fixed | test tests/unit/catalog/test_executor.py::test_inline_raising_tzinfo_is_sg109 |
-| A3.1 | resume does not re-check the scope hash | open | Task 5 |
-| A3.2 | schemas created before the cursor are skipped on resume | open | Task 5 |
-| A3.3 | no temp-dir cleanup test | open | Task 5 |
-| A3.4 | `list_schemas` ignores `page_token` | open | Task 5 |
-| A3.5 | explicit-refs crash pushes non-queued tables | open | Task 5 |
-| A3.6 | a `queue_push` failure masks the original exception | open | Task 5 |
-| A3.7 | keyhash vs profile DISTINCT precedence decided by batch order | open | Task 5 |
-| A3.8 | back-off reset untested | open | Task 5 |
-| A3.9 | refill with in-flight probes overshoots (untested) | open | Task 5 |
-| A3.10 | fused bytes possibly charged N times | open | Task 5 |
-| A3.11 | sampled max-per-key cardinality may say 1:1 | open | Task 5 |
-| A3.12 | rule-2 id↔id candidate noise | open | Task 5 |
+| A3.1 | resume does not re-check the scope hash | fixed | test tests/unit/catalog/test_crawl.py::test_resume_with_changed_scope_restarts |
+| A3.2 | schemas created before the cursor are skipped on resume | fixed | test tests/unit/catalog/test_crawl.py::test_resume_crawls_schema_created_before_cursor |
+| A3.3 | no temp-dir cleanup test | fixed | test tests/unit/catalog/test_crawl.py::test_crawl_removes_temp_dir |
+| A3.4 | `list_schemas` ignores `page_token` | fixed | test tests/unit/catalog/test_readers_warehouse.py::test_list_schemas_respects_page_token |
+| A3.5 | explicit-refs crash pushes non-queued tables | fixed | test tests/unit/measure/test_scheduler.py::test_explicit_crash_requeues_only_queued |
+| A3.6 | a `queue_push` failure masks the original exception | fixed | test tests/unit/measure/test_scheduler.py::test_queue_push_failure_keeps_original |
+| A3.7 | keyhash vs profile DISTINCT precedence decided by batch order | fixed | test tests/unit/measure/test_convert.py::test_distinct_precedence_order_independent |
+| A3.8 | back-off reset untested | fixed | test tests/unit/measure/test_scheduler.py::test_backoff_resets_after_success |
+| A3.9 | refill with in-flight probes overshoots (untested) | fixed | test tests/unit/measure/test_budget.py::test_refill_with_inflight_never_overshoots |
+| A3.10 | fused bytes possibly charged N times | fixed | test tests/unit/measure/test_budget.py::test_fused_probe_charged_once |
+| A3.11 | sampled max-per-key cardinality may say 1:1 | fixed | test tests/unit/measure/test_convert.py::test_sampled_cardinality_not_one_to_one |
+| A3.12 | rule-2 id↔id candidate noise | fixed | test tests/unit/measure/test_candidates.py::test_no_id_to_id_candidate |
 | A3.13 | `flbridge` imports `factlang.semantics.refs` (not public API) | already fixed | commit 35e0c54 · test tests/architecture/test_layers.py::test_factlang_public_modules_only |
 | A4.1 | Postgres `NOT VALID` FKs reported enforced | open | Task 6 |
 | A4.2 | Postgres unique indexes not reported | open | Task 6 |

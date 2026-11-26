@@ -86,6 +86,8 @@ class DatabricksReader:
         return iter([r["catalog_name"] for r in rows])
 
     def list_schemas(self, catalog: str | None, *, page_token: str | None) -> Page[Schema]:
+        if page_token is not None:  # one page holds every schema: a later page is empty
+            return Page([], None)
         where = "" if catalog is None else "AND s.catalog_name = ? "
         rows = self._run(
             "SELECT s.catalog_name AS catalog_name, s.schema_name AS schema_name, "

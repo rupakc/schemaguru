@@ -54,6 +54,8 @@ class PostgresReader:
         return iter(())
 
     def list_schemas(self, catalog: str | None, *, page_token: str | None) -> Page[Schema]:
+        if page_token is not None:  # one page holds every schema: a later page is empty
+            return Page([], None)
         rows = self._ex.run(
             "SELECT n.nspname AS name, obj_description(n.oid, 'pg_namespace') AS comment, "
             "(SELECT count(*) FROM pg_class c WHERE c.relnamespace = n.oid "

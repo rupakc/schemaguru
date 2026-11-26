@@ -95,6 +95,10 @@ class _Seen:
             "CREATE TABLE s(cat TEXT, name TEXT, complete INTEGER, PRIMARY KEY(cat, name)) "
             "WITHOUT ROWID"
         )
+        # the schemas the store held when a resumed run started (filled only on resume)
+        self._c.execute(
+            "CREATE TABLE stored(cat TEXT, name TEXT, PRIMARY KEY(cat, name)) WITHOUT ROWID"
+        )
 
     def add_tables(self, hashes: Iterable[int]) -> None:
         self._c.execute("BEGIN")
@@ -118,6 +122,20 @@ class _Seen:
             "SELECT complete FROM s WHERE cat = ? AND name = ?", (_cat(catalog), name)
         ).fetchone()
         return None if row is None else int(row[0])
+
+    def add_stored(self, schemas: Iterable[Schema]) -> None:
+        self._c.execute("BEGIN")
+        self._c.executemany(
+            "INSERT OR IGNORE INTO stored VALUES (?, ?)",
+            ((_cat(s.catalog), s.name) for s in schemas),
+        )
+        self._c.execute("COMMIT")
+
+    def is_stored(self, catalog: str | None, name: str) -> bool:
+        row = self._c.execute(
+            "SELECT 1 FROM stored WHERE cat = ? AND name = ?", (_cat(catalog), name)
+        ).fetchone()
+        return row is not None
 
     def close(self) -> None:
         self._c.close()
@@ -157,7 +175,11 @@ class _Crawl:
         self._skipping = False
 
         state = store.crawl_state_get(STATE_KEY) if resume else None
-        if state is not None and state.get("status") == "running":
+        if (
+            state is not None
+            and state.get("status") == "running"
+            and state.get("scope") == self.scope  # a cursor from another scope is discarded
+        ):
             cur = state.get("cursor")
             self.cursor = dict(cur) if isinstance(cur, dict) else None
             self.changed_since = _parse_ts(state.get("changed_since"))
@@ -171,7 +193,11 @@ class _Crawl:
                 and last.get("scope") == self.scope  # a changed scope invalidates the baseline
             ):
                 self.changed_since = _parse_ts(last.get("started_at"))
+        # the cursor a resumed run skips to; ``self.cursor`` moves on as this run checkpoints
+        self.resume_at = self.cursor
         self._skipping = self.cursor is not None
+        if self._skipping:  # a schema listed before the cursor but never stored is crawled
+            seen.add_stored(store.iter_schemas())
         self._checkpoint()
 
     # -- bookkeeping -------------------------------------------------------------------------
@@ -225,10 +251,10 @@ class _Crawl:
             self._error("list_catalogs", e)
             self.catalogs_ok = False
         self.listed_catalogs = list(catalogs) if catalogs else [None]
-        cursor_catalog = self.cursor.get("catalog") if self.cursor else None
+        cursor_catalog = self.resume_at.get("catalog") if self.resume_at else None
         for catalog in self.listed_catalogs:
             if self._skipping and catalog != cursor_catalog:
-                self._crawl_catalog(catalog, pool, mark_only=True)
+                self._crawl_catalog(catalog, pool)  # before the cursor: skipped schema by schema
                 continue
             self._crawl_catalog(catalog, pool)
             if self._skipping:  # the cursor's schema is gone: redo this catalog from the top
@@ -240,9 +266,7 @@ class _Crawl:
                 self._crawl_catalog(catalog, pool)
         return self._withdraw() if self.catalogs_ok else 0
 
-    def _crawl_catalog(
-        self, catalog: str | None, pool: ThreadPoolExecutor, *, mark_only: bool = False
-    ) -> None:
+    def _crawl_catalog(self, catalog: str | None, pool: ThreadPoolExecutor) -> None:
         token: str | None = None
         while True:
             self._admit()
@@ -253,11 +277,7 @@ class _Crawl:
                 self._error(f"schemas of {catalog or 'default catalog'}", e)
                 return
             for schema in page.items:
-                if mark_only:
-                    if not self.filter.excludes_schema(schema.catalog, schema.name):
-                        self.seen.add_schema(schema.catalog, schema.name)
-                else:
-                    self._crawl_schema(schema, pool)
+                self._crawl_schema(schema, pool)
             token = page.next_token
             if token is None:
                 self.complete_catalogs.add(catalog)
@@ -269,13 +289,16 @@ class _Crawl:
         self.seen.add_schema(schema.catalog, schema.name)
         resume_token: str | None = None
         if self._skipping:
-            cur = self.cursor or {}
+            cur = self.resume_at or {}
             if (cur.get("catalog"), cur.get("schema")) != (schema.catalog, schema.name):
-                return  # listed before the cursor: done in the interrupted run
-            self._skipping = False
-            if cur.get("done"):
-                return
-            resume_token = cur.get("page_token")
+                if self.seen.is_stored(schema.catalog, schema.name):
+                    return  # listed before the cursor: done in the interrupted run
+                # listed before the cursor yet never stored: created since, crawl it whole
+            else:
+                self._skipping = False
+                if cur.get("done"):
+                    return
+                resume_token = cur.get("page_token")
         incremental = self.changed_since is not None
         self.store.upsert_schemas([schema])
         ok = self._walk(
@@ -418,14 +441,16 @@ def crawl(
     """Crawl ``reader`` into ``store``.
 
     ``resume`` continues an interrupted crawl from its checkpoint: schemas listed before the
-    saved cursor are skipped (readers must list schemas in a stable order; both shipped readers
-    sort by name), the in-progress one restarts at its saved page. ``incremental`` re-reads only
-    tables the reader reports as changed since the last crawl that finished without errors, plus a
-    name-only listing per schema that detects drops and restores tables the store lacks or holds
-    withdrawn; it is ignored when the include/exclude scope differs from that crawl's. A table is
-    withdrawn only when a complete listing of its schema (from the first page, this run) omits
-    it, or its schema/catalog is gone or now out of scope. If the reader has a ``page_size`` /
-    ``timeout_s`` attribute it is set from ``config``.
+    saved cursor are skipped (readers must list schemas in a stable order; the shipped readers
+    sort by name) unless the store holds no row for them (created since the interruption: crawled
+    whole), the in-progress one restarts at its saved page. A checkpoint saved under a different
+    include/exclude scope is discarded and the crawl starts from the top. ``incremental``
+    re-reads only tables the reader reports as changed since the last crawl that finished without
+    errors, plus a name-only listing per schema that detects drops and restores tables the
+    store lacks or holds withdrawn; it is ignored when the include/exclude scope differs from
+    that crawl's. A table is withdrawn only when a complete listing of its schema (from the first
+    page, this run) omits it, or its schema/catalog is gone or now out of scope. If the reader
+    has a ``page_size`` / ``timeout_s`` attribute it is set from ``config``.
 
     ``crawl_bytes`` (``Budget.crawl_bytes``) caps the metadata bytes the warehouse bills during
     this crawl, as the reader reports them (``reader.bytes_billed``; BigQuery). Before each

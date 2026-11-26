@@ -339,6 +339,42 @@ def _evidence(
     )
 
 
+def _charged_bytes(
+    plans: Sequence[Any], ms: Sequence[Any], spans: Sequence[tuple[int, int]]
+) -> dict[tuple[int, int], int | None]:
+    """The bytes each request (its span of ``plans``) is charged, each query counted once.
+
+    FactLang fuses plans into one query and gives every member's evidence that query's whole
+    ``bytes_processed`` plus the keys it was ``fused_with``; identical plans share one query
+    too. A query's bytes go to the first request it served (0 to the later ones); a query
+    whose bytes are unknown leaves every request it served unknown (charged by estimate)."""
+    canonical_key = _attr("factlang.ir", "canonical_key")
+
+    def key(i: int) -> str:
+        try:
+            return str(canonical_key(plans[i])) if callable(canonical_key) else f"#unkeyed-{i}"
+        except Exception:
+            return f"#unkeyed-{i}"
+
+    seen: set[frozenset[str]] = set()
+    out: dict[tuple[int, int], int | None] = {}
+    for a, b in spans:
+        total: int | None = 0
+        for i in range(a, b):
+            ev = getattr(ms[i], "evidence", None)
+            if ev is None:
+                continue
+            spent = getattr(ev, "bytes_processed", None)
+            query = frozenset({key(i), *(str(k) for k in getattr(ev, "fused_with", ()) or ())})
+            if spent is None:
+                total = None
+            elif query not in seen and total is not None:
+                total += int(spent)
+            seen.add(query)
+        out[(a, b)] = total
+    return out
+
+
 def _scrubbed(ev: Evidence, mode: Mode) -> Evidence:
     return dataclasses.replace(
         ev,
@@ -461,6 +497,7 @@ class FactLangBackend:
         except Exception as e:  # FactLang promises not to raise; isolate it if it does
             d = Diagnostic("SG303", Severity.ERROR, f"FactLang measure failed: {e}")
             return [o or MeasureResult(r, None, None, d) for o, r in zip(out, reqs, strict=True)]
+        charged = _charged_bytes(plans, ms, [s for n, s in enumerate(spans) if out[n] is None])
         for n, (r, (a, b)) in enumerate(zip(reqs, spans, strict=True)):
             if out[n] is not None:
                 continue
@@ -468,6 +505,8 @@ class FactLangBackend:
             err = next((m.error for m in mine if getattr(m, "error", None) is not None), None)
             evs = [getattr(m, "evidence", None) for m in mine]
             ev = _evidence(evs[0] if evs else None, evs, mode=evidence_mode(r, self._sampling))
+            if ev is not None:
+                ev = dataclasses.replace(ev, bytes_processed=charged.get((a, b)))
             if err is not None:
                 out[n] = MeasureResult(r, None, ev, _diagnostic(err))
             else:

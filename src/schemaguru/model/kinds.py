@@ -87,3 +87,14 @@ class FactKind:
     METRIC: ClassVar[KindSpec] = _k("METRIC", "global")
     NEVER_QUERY: ClassVar[KindSpec] = _k("NEVER_QUERY", "table")
     WAYPOINT_RULE: ClassVar[KindSpec] = _k("WAYPOINT_RULE", "global")
+    # Lineage (0.2.0 spec 4.1). ``ignore`` is identity so a human ignore entry and a replace entry
+    # with the same list never share an id; ``source`` is not (an overlay line number would move
+    # ids whenever lines above it move).
+    LINEAGE: ClassVar[KindSpec] = _k("LINEAGE", "table", identity=("upstream", "ignore"))
+    COLUMN_LINEAGE: ClassVar[KindSpec] = _k(
+        "COLUMN_LINEAGE", "column", identity=("inputs", "ignore")
+    )
+
+
+# Declared or parsed, never measured or verified (0.2.0 spec 4.1).
+LINEAGE_KINDS: frozenset[str] = frozenset({"LINEAGE", "COLUMN_LINEAGE"})

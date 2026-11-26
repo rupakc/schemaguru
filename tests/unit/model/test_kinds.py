@@ -21,6 +21,8 @@ SPEC_KINDS = [
     "METRIC",
     "NEVER_QUERY",
     "WAYPOINT_RULE",
+    "LINEAGE",
+    "COLUMN_LINEAGE",
 ]
 
 
@@ -42,6 +44,8 @@ def test_identity_fields() -> None:
     assert FactKind.FRESHNESS.identity_fields == ("column",)
     assert FactKind.VALUES.identity_fields == ("case_sensitive", "split")
     assert FactKind.DESCRIPTION.identity_fields is None
+    assert FactKind.LINEAGE.identity_fields == ("upstream", "ignore")
+    assert FactKind.COLUMN_LINEAGE.identity_fields == ("inputs", "ignore")
 
 
 def test_register_and_replace() -> None:

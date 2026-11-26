@@ -13,7 +13,7 @@ from schemaguru._util.hashing import stable_hash, stable_hash_int_keys
 from schemaguru._util.timeutil import parse_iso, require_aware
 from schemaguru.model.evidence import Evidence
 from schemaguru.model.joins import JoinRef, subject_key
-from schemaguru.model.kinds import KindSpec, get_kind
+from schemaguru.model.kinds import LINEAGE_KINDS, KindSpec, get_kind
 from schemaguru.model.refs import ObjectRef
 
 
@@ -35,6 +35,9 @@ class Status(Enum):
     ERROR = "ERROR"
     STALE = "STALE"
     WAIVED = "WAIVED"
+
+
+_LINEAGE_PROVENANCE = frozenset({Provenance.DECLARED, Provenance.CATALOG, Provenance.HUMAN})
 
 
 def _value_identity(kind: KindSpec, value: Mapping[str, Any]) -> dict[str, Any]:
@@ -105,6 +108,10 @@ class Fact:
     def __post_init__(self) -> None:
         if self.observed_at is not None:
             require_aware(self.observed_at)
+        if self.kind.name in LINEAGE_KINDS and (
+            self.status is not Status.UNVERIFIED or self.provenance not in _LINEAGE_PROVENANCE
+        ):
+            raise ValueError("lineage is declared or parsed, never measured or verified")
         if self.provenance is Provenance.MEASURED and self.method is None:
             raise ValueError("a MEASURED fact requires a method")
         if self.status is Status.ESTIMATED and not (self.method or "").startswith("sampled:"):

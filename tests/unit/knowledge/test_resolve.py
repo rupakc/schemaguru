@@ -582,3 +582,32 @@ def test_sampled_extra_seen_exactly() -> None:
         (msg,) = eff.contradictions
         # z: seen by the sample AND by the exact measurement -> not marked [sampled]
         assert msg == "declared values a - observed also: z (4 rows), q (1 rows) [sampled]"
+
+
+def test_resolver_never_promotes_lineage() -> None:
+    from schemaguru.model.lineage import column_lineage_value, table_lineage_value
+
+    col = ObjectRef(None, "analytics", "revenue_daily", "net_revenue")
+    tbl = ObjectRef(None, "analytics", "revenue_daily")
+    facts = [
+        Fact.make(
+            FactKind.LINEAGE, tbl, table_lineage_value(["shop.orders"]), prov,
+            Status.UNVERIFIED, source="dbt:manifest:model.x", observed_at=at,
+        )
+        for prov in (Provenance.DECLARED, Provenance.CATALOG, Provenance.HUMAN)
+        for at in (None, _ago(1), _ago(400))
+    ] + [
+        Fact.make(
+            FactKind.COLUMN_LINEAGE, col, column_lineage_value([f"shop.orders.{c}"], "copy"),
+            Provenance.CATALOG, Status.UNVERIFIED, source="view_definition", observed_at=at,
+        )
+        for c, at in (("a", _ago(0)), ("b", _ago(90)))
+    ]  # fmt: skip
+    waivers = [
+        Waiver("LINEAGE analytics.*", "w", date(2027, 1, 1)),
+        Waiver("COLUMN_LINEAGE analytics.*", "w", date(2027, 1, 1)),
+    ]
+    for ws in ((), waivers):
+        out = resolve(facts, now=NOW, ttl_days=14, waivers=ws)
+        statuses = {f.status for eff in out.values() for f in eff.all}
+        assert statuses == {Status.UNVERIFIED}

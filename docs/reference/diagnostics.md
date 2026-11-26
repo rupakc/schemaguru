@@ -23,6 +23,8 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG208 | overlay file is unreadable or an entry is malformed |
 | SG209 | dbt manifest is unreadable |
 | SG210 | a declared soft-delete filter does not match the catalog or the measured values; it is shown with a warning and never applied in SQL snippets |
+| SG211 | lineage could not be parsed for a definition; the reason is a fixed category (parse_error, too_large, timeout, unsupported_dialect, worker_died), never SQL text |
+| SG212 | column-level lineage needs the `lineage` extra (pip install 'schemaguru[lineage]'); emitted at most once per crawl or import |
 | SG301 | probe over the per-probe byte budget was not run (fact ERROR over_budget) |
 | SG302 | total measurement budget exhausted; the remaining tables stay queued |
 | SG303 | a measurement probe failed (fact ERROR for that subject only) |

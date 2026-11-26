@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +77,7 @@ def _unique(values: list[str]) -> list[str]:
 class _Importer:
     def __init__(self, manifest: dict[str, Any], store: Store, bag: DiagnosticBag) -> None:
         self.manifest = manifest
+        self.shas: dict[str, str] = {}
         self._lineage: dict[str, tuple[str, Fact]] = {}
         self.store = store
         self.bag = bag
@@ -268,6 +269,10 @@ class _Importer:
                     "table-level lineage was imported",
                 )
             )
+        for uid in targets:  # stdlib hashing: known with or without the extra
+            sql = self._sql(self.nodes[uid])
+            if sql is not None and self.table_of(uid) is not None:
+                self.shas[uid] = definition_sha256(sql)
         results = self._analyse(targets, pool)
         for uid in targets:
             table = self.table_of(uid)
@@ -396,17 +401,19 @@ def _import(
     store: Store,
     bag: DiagnosticBag,
     pool: ParserPool | None,
-) -> tuple[list[Fact], bool]:
-    """``(facts, ok)``; ``ok`` is False when the manifest could not be read or interpreted."""
+) -> tuple[list[Fact], bool, dict[str, str]]:
+    """``(facts, ok, shas)``; ``ok`` is False when the manifest could not be read or interpreted,
+    or its lineage step failed (the 0.1.0 facts are still returned then); ``shas`` is the
+    sha256 of each lineage target's ``compiled_code``."""
     path = Path(manifest_path)
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         bag.add(Diagnostic("SG209", Severity.ERROR, f"cannot read dbt manifest: {e}", str(path)))
-        return [], False
+        return [], False, {}
     if not isinstance(manifest, dict):
         bag.add(Diagnostic("SG209", Severity.ERROR, "dbt manifest is not a JSON object", str(path)))
-        return [], False
+        return [], False, {}
     try:
         imp = _Importer(manifest, store, bag)
         imp.descriptions()
@@ -415,7 +422,7 @@ def _import(
         bag.add(
             Diagnostic("SG209", Severity.ERROR, f"cannot interpret dbt manifest: {e}", str(path))
         )
-        return [], False
+        return [], False, {}
     try:
         imp.lineage(pool)
     except Exception as e:  # compiled_code is raw SQL: only the exception type is kept
@@ -427,8 +434,8 @@ def _import(
                 str(path),
             )
         )
-        return [], False
-    return imp.facts, True
+        return imp.facts, False, {}
+    return imp.facts, True, imp.shas
 
 
 def import_dbt(
@@ -454,14 +461,22 @@ def import_dbt(
     return _import(manifest_path, store, bag, parser_pool)[0]
 
 
-def retract_dbt_lineage(store: Store, loaded: Sequence[Fact], *, keep_columns: bool = False) -> int:
+def retract_dbt_lineage(
+    store: Store,
+    loaded: Sequence[Fact],
+    *,
+    keep_columns: bool = False,
+    shas: Mapping[str, str] | None = None,
+) -> int:
     """Remove the dbt lineage facts of earlier imports that ``loaded`` no longer contains.
 
     Candidates are only ``LINEAGE``/``COLUMN_LINEAGE`` facts whose source is a dbt manifest
     node: descriptions, tests, view lineage and human lineage are never touched. The first call
-    (no state yet) takes every stored such fact as a candidate. ``keep_columns`` leaves the
-    ``COLUMN_LINEAGE`` facts alone (an import that could not compute them). Returns how many
-    went.
+    (no state yet) takes every stored such fact as a candidate. ``keep_columns`` (an import that
+    could not compute column lineage) keeps an earlier ``COLUMN_LINEAGE`` fact only while its
+    node is still a lineage target in ``shas`` (node id -> sha256 of its ``compiled_code``) with
+    the sha recorded when the fact was made; anything else is retracted, never shown as current.
+    Returns how many went.
     """
     prefix = f"{SOURCE}:"
     state = store.crawl_state_get(DBT_LINEAGE_STATE)
@@ -475,13 +490,20 @@ def retract_dbt_lineage(store: Store, loaded: Sequence[Fact], *, keep_columns: b
             if f.kind.name in LINEAGE_KINDS and (f.source or "").startswith(prefix)
         }
     current = {f.id for f in loaded if f.kind.name in LINEAGE_KINDS}
+    now = dict(shas or {})
+    old = state.get("shas") if state is not None else None
+    before = {str(k): str(v) for k, v in old.items()} if isinstance(old, dict) else {}
     kept: set[str] = set()
     if keep_columns:
-        columns = {f.id for f in store.facts_for(None, ("COLUMN_LINEAGE",))}
-        kept = (previous - current) & columns
+        for f in store.facts_for(None, ("COLUMN_LINEAGE",)):
+            uid = (f.source or "")[len(prefix) :]
+            if f.id in previous - current and uid in now and before.get(uid) == now[uid]:
+                kept.add(f.id)
     stale = sorted(previous - current - kept)
     removed = store.delete_facts(stale) if stale else 0
-    store.crawl_state_set(DBT_LINEAGE_STATE, {"facts": sorted(current | kept)})
+    store.crawl_state_set(
+        DBT_LINEAGE_STATE, {"facts": sorted(current | kept), "shas": dict(sorted(now.items()))}
+    )
     return removed
 
 
@@ -495,11 +517,11 @@ def apply_dbt(
     """:func:`import_dbt`, then store its facts and retract the dbt lineage it no longer
     produces, in one transaction. An unreadable manifest (``SG209``) changes nothing."""
     bag = diagnostics if diagnostics is not None else DiagnosticBag()
-    facts, ok = _import(manifest_path, store, bag, parser_pool)
+    facts, ok, shas = _import(manifest_path, store, bag, parser_pool)
     if not ok:
         return []
     with store.transaction():
         if facts:
             store.put_facts(facts)
-        retract_dbt_lineage(store, facts, keep_columns=not lineage_available())
+        retract_dbt_lineage(store, facts, keep_columns=not lineage_available(), shas=shas)
     return facts

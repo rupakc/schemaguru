@@ -277,3 +277,108 @@ def test_never_raises_on_hostile_lineage_fields(lstore: SQLiteStore, tmp_path: P
     p = tmp_path / "h.json"
     p.write_text(json.dumps(m), encoding="utf-8")
     import_dbt(p, lstore, diagnostics=DiagnosticBag())
+
+
+# ----- without the extra: earlier column lineage is kept only while its definition is unchanged --
+
+
+def _columns(store: SQLiteStore) -> set[str]:
+    return _ids(store, ("COLUMN_LINEAGE",))
+
+
+def _reimport_without_sqlglot(
+    store: SQLiteStore, path: Path, monkeypatch: pytest.MonkeyPatch
+) -> DiagnosticBag:
+    import sys
+
+    monkeypatch.setitem(sys.modules, "sqlglot", None)
+    bag = DiagnosticBag()
+    apply_dbt(path, store, diagnostics=bag)
+    return bag
+
+
+def test_no_extra_keeps_unchanged_column_lineage(
+    lstore: SQLiteStore, pool: ParserPool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    apply_dbt(DBT / "manifest_lineage.json", lstore, parser_pool=pool)
+    cols = _columns(lstore)
+    assert cols
+    bag = _reimport_without_sqlglot(lstore, DBT / "manifest_lineage.json", monkeypatch)
+    assert _columns(lstore) == cols and "SG212" in _codes(bag)
+
+
+def test_no_extra_retracts_column_lineage_of_a_removed_model(
+    lstore: SQLiteStore, pool: ParserPool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    apply_dbt(DBT / "manifest_lineage.json", lstore, parser_pool=pool)
+    assert _columns(lstore)
+    _reimport_without_sqlglot(lstore, DBT / "manifest_lineage_v2.json", monkeypatch)
+    assert _columns(lstore) == set()
+
+
+def test_no_extra_retracts_column_lineage_of_a_changed_definition(
+    lstore: SQLiteStore, pool: ParserPool, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    apply_dbt(DBT / "manifest_lineage.json", lstore, parser_pool=pool)
+    assert _columns(lstore)
+    m = json.loads((DBT / "manifest_lineage.json").read_text("utf-8"))
+    m["nodes"]["model.shop.revenue"]["compiled_code"] += " -- changed"
+    p = tmp_path / "changed.json"
+    p.write_text(json.dumps(m), encoding="utf-8")
+    _reimport_without_sqlglot(lstore, p, monkeypatch)
+    assert _columns(lstore) == set()
+    assert "shop.revenue" in _lineage(list(lstore.facts_for(None, ("LINEAGE",))), "LINEAGE")
+
+
+# ----- a name that matches two tables is never guessed ------------------------------------------
+
+
+def test_ambiguous_bare_name_is_not_resolved_to_either_table(
+    lstore: SQLiteStore, pool: ParserPool, tmp_path: Path
+) -> None:
+    for schema in ("a", "b"):
+        ref = ObjectRef(None, schema, "items")
+        lstore.upsert_tables([Table(ref, "table")])
+        lstore.upsert_columns(
+            ref,
+            [Column(ObjectRef(None, schema, "items", "qty"), 1, "INT", "INT", True, None, None)],
+        )
+    m = json.loads((DBT / "manifest_lineage.json").read_text("utf-8"))
+    for schema in ("a", "b"):
+        m["nodes"][f"model.shop.items_{schema}"] = {
+            "resource_type": "model", "name": "items", "database": "analytics", "schema": schema,
+            "config": {}, "depends_on": {"nodes": []},
+        }  # fmt: skip
+    m["nodes"]["model.shop.revenue"]["compiled_code"] = (
+        "select i.qty as net_revenue from items as i"
+    )
+    p = tmp_path / "amb.json"
+    p.write_text(json.dumps(m), encoding="utf-8")
+    facts = import_dbt(p, lstore, parser_pool=pool)
+    for f in facts:
+        if f.kind.name == "COLUMN_LINEAGE" and f.subject.canonical() == "shop.revenue.net_revenue":
+            assert not any(i.endswith("items.qty") for i in f.value["inputs"])
+
+
+# ----- a failing lineage step leaves the 0.1.0 facts to import_dbt, nothing to apply_dbt --------
+
+
+def test_import_dbt_keeps_base_facts_when_lineage_raises(
+    lstore: SQLiteStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from schemaguru.overlays import dbt as mod
+
+    def boom(self: Any, pool: Any) -> None:
+        raise RuntimeError("select 'hunter2'")
+
+    monkeypatch.setattr(mod._Importer, "lineage", boom)
+    bag = DiagnosticBag()
+    facts = import_dbt(FIXTURES / "dbt" / "manifest.json", lstore, diagnostics=bag)
+    assert {f.kind.name for f in facts} >= {"DESCRIPTION", "JOIN", "VALUES"}
+    assert [d.code for d in bag] == ["SG209"] and "hunter2" not in bag_text(bag)
+    assert apply_dbt(FIXTURES / "dbt" / "manifest.json", lstore, diagnostics=DiagnosticBag()) == []
+    assert not lstore.facts_for(None, ("DESCRIPTION",))
+
+
+def bag_text(bag: DiagnosticBag) -> str:
+    return " ".join(d.message for d in bag)

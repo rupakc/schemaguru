@@ -150,5 +150,13 @@ def test_string_quote_dialect_table_matches_sqlglot() -> None:
     names = {*SQLGLOT_DIALECTS.values(), *DBT_ADAPTERS.values(), *DQ_IDENTIFIER_DIALECTS}
     for name in sorted(names):
         quotes = sqlglot.Dialect.get_or_raise(name).tokenizer_class._QUOTES
-        # an identifier-quote dialect must never treat "..." as a string
+        # an identifier-quote dialect must never treat "..." as a string. The tokenizer is a
+        # lower bound only: sqlite passes it but is excluded (see the sqlite test below)
         assert (name in DQ_IDENTIFIER_DIALECTS) == ('"' not in quotes), name
+
+
+def test_sqlite_blanks_double_quoted_strings() -> None:
+    """SQLite reads "..." as a string literal when no column has that name (a legacy
+    misfeature sqlglot's tokenizer does not model), so it is NOT an identifier-only dialect."""
+    out = definition_template('SELECT id FROM t WHERE n = "Maria Garcia"', "sqlite")
+    assert out == "SELECT id FROM t WHERE n = ?", out

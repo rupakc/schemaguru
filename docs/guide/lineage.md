@@ -157,7 +157,7 @@ The raw definition text exists in memory only while it is parsed. The store keep
 the **sha256** of the definition and the relation names it reads (to skip an unchanged view next
 time) and, as evidence, a
 **template with every literal replaced by a placeholder**. Where the dialect reads `"..."` as a
-string (BigQuery, Databricks/Spark, Hive, MySQL/MariaDB, T-SQL, and any dialect SchemaGuru does not
+string (BigQuery, Databricks/Spark, Hive, MySQL/MariaDB, T-SQL, SQLite, and any dialect SchemaGuru does not
 know) every `"..."` span is blanked too; only in ANSI-quoting dialects (Postgres, Snowflake, DuckDB,
 Trino, Redshift, Oracle, ClickHouse, ...) is a `"quoted identifier"` kept. No raw definition is persisted, logged,
 rendered, put in a diagnostic or sent to an LLM; a diagnostic names a fixed failure category,

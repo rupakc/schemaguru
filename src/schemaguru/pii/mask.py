@@ -109,11 +109,13 @@ def _shape_hit(text: str) -> bool:
 # dialects (sqlglot names) where ``"..."`` is ONLY a quoted identifier, never a string literal; a
 # test pins this against sqlglot's tokenizers. Every other dialect (BigQuery, Databricks/Spark,
 # Hive, MySQL/MariaDB, T-SQL with QUOTED_IDENTIFIER OFF, an unknown name) may read ``"..."`` as
-# a string, so a definition template blanks it there: fail closed.
+# a string, so a definition template blanks it there: fail closed. SQLite is deliberately NOT
+# listed although sqlglot's tokenizer treats its "..." as an identifier: SQLite itself accepts
+# "..." as a string literal when no column has that name (and keeps the text in sqlite_master).
 DQ_IDENTIFIER_DIALECTS = frozenset(
     {
         "athena", "clickhouse", "dune", "duckdb", "exasol", "materialize", "oracle", "postgres",
-        "presto", "redshift", "risingwave", "snowflake", "sqlite", "teradata", "trino",
+        "presto", "redshift", "risingwave", "snowflake", "teradata", "trino",
     }
 )  # fmt: skip
 

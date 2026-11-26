@@ -583,6 +583,22 @@ class SQLiteStore:
             )
         return [LineageEdge(up, down, level, fid) for down, up, fid in sorted(found)]
 
+    def lineage_facts_under(self, tables: Sequence[ObjectRef]) -> list[Fact]:
+        wanted = {t.table_ref() for t in tables}
+        kinds = sorted(LINEAGE_KINDS)
+        out: dict[str, Fact] = {}
+        for key in sorted(t.canonical() for t in wanted):
+            # a column key is the table key, a dot, then the column ("/" sorts right after ".")
+            for fid, data in self._q(
+                "SELECT id, data FROM facts WHERE (subject_key = ? OR "
+                f"(subject_key > ? AND subject_key < ?)) AND kind IN ({_marks(len(kinds))})",
+                (key, key + ".", key + "/", *kinds),
+            ):
+                fact = Fact.from_dict(json.loads(data))
+                if isinstance(fact.subject, ObjectRef) and fact.subject.table_ref() in wanted:
+                    out[fid] = fact
+        return [out[i] for i in sorted(out)]
+
     def lineage_state_get(self, refs: Sequence[ObjectRef]) -> dict[ObjectRef, str]:
         by_key: dict[str, list[ObjectRef]] = {}
         for r in refs:

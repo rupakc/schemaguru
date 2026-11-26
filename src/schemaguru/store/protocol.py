@@ -137,6 +137,11 @@ class LineageIndex(Protocol):
         Sorted by ``(downstream_key, upstream_key, fact_id)``."""
         ...
 
+    def lineage_facts_under(self, tables: Sequence[ObjectRef]) -> list[Fact]:
+        """The ``LINEAGE`` / ``COLUMN_LINEAGE`` facts whose subject is one of ``tables`` or a
+        column of one, whether or not that column is still stored. Sorted by id."""
+        ...
+
     def lineage_state_get(self, refs: Sequence[ObjectRef]) -> dict[ObjectRef, str]:
         """The stored view-definition sha256 of each ref that has one."""
         ...

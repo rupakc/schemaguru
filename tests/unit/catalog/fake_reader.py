@@ -152,6 +152,7 @@ class ViewFakeReader:
         self.interrupt_schema = interrupt_schema
         self.altered: dict[str, datetime] = {k: BASE for k in self.relations}
         self.definition_calls: list[list[str]] = []
+        self.withheld: set[str] = set()  # views whose definition the reader does not return
 
     @staticmethod
     def _ref(key: str) -> ObjectRef:
@@ -201,7 +202,11 @@ class ViewFakeReader:
         self.definition_calls.append(keys)
         if self.fail_definitions:
             raise RuntimeError("driver said: SELECT secret_column FROM vault WHERE pin = 1234")
-        return {t: self.views[k] for t, k in zip(tables, keys, strict=True) if k in self.views}
+        return {
+            t: self.views[k]
+            for t, k in zip(tables, keys, strict=True)
+            if k in self.views and k not in self.withheld
+        }
 
     def capabilities(self) -> ReaderCapabilities:
         return ReaderCapabilities(

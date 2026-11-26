@@ -187,12 +187,29 @@ class _Seen:
 
 
 def _view_lineage_facts(store: Store, views: Sequence[ObjectRef]) -> list[Fact]:
-    """The ``view_definition`` lineage facts of ``views`` and of their stored columns."""
-    subjects: list[ObjectRef] = []
-    for v in views:
-        subjects.append(v)
-        subjects.extend(c.ref for c in store.columns(v))
-    return [f for f in store.facts_for(subjects, LINEAGE_KINDS) if f.source == VIEW_SOURCE]
+    """The ``view_definition`` lineage facts of ``views`` and of every column under them,
+    including columns the view no longer has. A store without a lineage index is asked for the
+    stored columns only."""
+    index = lineage_index(store)
+    if index is not None:
+        facts = index.lineage_facts_under(views)
+    else:
+        subjects: list[ObjectRef] = []
+        for v in views:
+            subjects.append(v)
+            subjects.extend(c.ref for c in store.columns(v))
+        facts = store.facts_for(subjects, LINEAGE_KINDS)
+    return [f for f in facts if f.source == VIEW_SOURCE]
+
+
+def _unavailable_diagnostic(target: ObjectRef) -> Diagnostic:
+    """SG211 for a view whose definition the reader did not return (a fixed category)."""
+    return Diagnostic(
+        "SG211",
+        Severity.WARNING,
+        f"lineage could not be parsed for {target.canonical()}: definition_unavailable",
+        location=target.canonical(),
+    )
 
 
 def _retract_view_lineage(store: Store, views: Sequence[ObjectRef]) -> None:
@@ -264,6 +281,8 @@ class _Crawl:
                 self.changed_since = _parse_ts(last.get("started_at"))
         # the cursor a resumed run skips to; ``self.cursor`` moves on as this run checkpoints
         self.resume_at = self.cursor
+        # views written before the interruption are not re-listed: lineage offers every view
+        self.resumed = self.cursor is not None
         self._skipping = self.cursor is not None
         if self._skipping:  # a schema listed before the cursor but never stored is crawled
             seen.add_stored(store.iter_schemas())
@@ -525,8 +544,8 @@ class _Crawl:
             self.lineage_diagnostics.append(extra_missing_diagnostic())
             return
         index = lineage_index(self.store)
-        if index is not None:
-            self._add_views_without_state(index)
+        if index is not None or self.resumed:
+            self._add_stored_views(index, every=self.resumed)
         pool = parser_pool if parser_pool is not None else ParserPool()
         try:
             last = ""
@@ -540,12 +559,14 @@ class _Crawl:
             if parser_pool is None:
                 pool.close()
 
-    def _add_views_without_state(self, index: LineageIndex) -> None:
-        """One streaming pass over the store's live views in scope."""
+    def _add_stored_views(self, index: LineageIndex | None, *, every: bool) -> None:
+        """One streaming pass over the store's live views in scope: all of them after a resume
+        (an earlier run may have written a changed view whose old hash is still stored; the hash
+        check skips the unchanged ones), otherwise those without a definition hash."""
         chunk: list[ObjectRef] = []
 
         def flush() -> None:
-            have = index.lineage_state_get(chunk)
+            have = {} if every or index is None else index.lineage_state_get(chunk)
             self.seen.add_views(r.canonical() for r in chunk if r not in have)
             chunk.clear()
 
@@ -588,15 +609,21 @@ class _Crawl:
             for r in refs
             if r in texts and stored.get(r) != definition_sha256(texts[r])
         ]
+        # a view the reader returned no definition for: its old lineage is no longer known
+        missing = [r for r in refs if r not in texts]
         texts.clear()
-        if not items:
+        if not items and not missing:
             return
         try:
-            results = analyse_definitions(
-                items,
-                resolve=partial(resolve_relation_names, self.store),
-                pool=pool,
-                template=definition_template,
+            results = (
+                []
+                if not items
+                else analyse_definitions(
+                    items,
+                    resolve=partial(resolve_relation_names, self.store),
+                    pool=pool,
+                    template=definition_template,
+                )
             )
         except Exception:  # the pool broke its contract; its message is not kept either
             results = [
@@ -608,6 +635,9 @@ class _Crawl:
         observed = self.now()
         facts: list[Fact] = []
         state: dict[ObjectRef, str | None] = {}
+        for r in missing:
+            self.lineage_diagnostics.append(_unavailable_diagnostic(r))
+            state[r] = None
         for res in results:
             if res.parsed is None:  # retried next crawl; stale facts are retracted below
                 self.lineage_diagnostics.append(
@@ -629,7 +659,7 @@ class _Crawl:
             state[res.target] = res.sha256
             self.views_parsed += 1
         with self.store.transaction():  # replace: old view facts out, new in, hash recorded
-            old = _view_lineage_facts(self.store, [r.target for r in results])
+            old = _view_lineage_facts(self.store, [*missing, *(r.target for r in results)])
             if old:
                 self.store.delete_facts(sorted({f.id for f in old}))
             if facts:

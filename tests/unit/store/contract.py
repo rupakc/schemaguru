@@ -615,3 +615,28 @@ def test_lineage_state_roundtrip(store: Any) -> None:
     store.lineage_state_set({a: None, b: "3" * 64})
     assert store.lineage_state_get([a, b]) == {b: "3" * 64}
     assert store.lineage_state_get([]) == {}
+
+
+def test_lineage_facts_under_tables(store: Any) -> None:
+    """The lineage facts of a table and of every column under it, whether or not the column
+    is still stored; never those of another table that only shares the key prefix."""
+    from schemaguru.model.lineage import column_lineage_value
+
+    def col_lin(ref: ObjectRef) -> Fact:
+        value = column_lineage_value(["shop.orders.id"], "copy")
+        return Fact.make(
+            FactKind.COLUMN_LINEAGE, ref, value, Provenance.CATALOG, Status.UNVERIFIED,
+            source="view_definition",
+        )  # fmt: skip
+
+    table = _lin(["shop.orders"], Provenance.CATALOG, "view_definition")
+    gone = col_lin(ObjectRef(None, "shop", "v", "dropped"))
+    quoted = col_lin(ObjectRef(None, "shop", "v", "Odd Name"))
+    nested = _lin(["shop.orders"], Provenance.CATALOG, "view_definition",
+                  subject=ObjectRef("shop", "v", "x"))  # fmt: skip
+    sibling = col_lin(ObjectRef(None, "shop", "v2", "a"))
+    other = _desc(_VIEW, "not lineage")
+    store.put_facts([table, gone, quoted, nested, sibling, other])
+    got = store.lineage_facts_under([_VIEW])
+    assert [f.id for f in got] == sorted([table.id, gone.id, quoted.id])
+    assert store.lineage_facts_under([]) == []

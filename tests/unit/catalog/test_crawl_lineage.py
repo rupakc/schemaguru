@@ -265,3 +265,66 @@ def test_out_of_scope_upstream_is_unresolved(store: SQLiteStore) -> None:
     table = next(f for f in view_facts(store) if f.kind.name == "LINEAGE")
     assert table.value["upstream"] == []
     assert tuple(table.value["unresolved"]) == ("staging_raw.orders",)
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_resume_after_change_reparses(store: SQLiteStore, incremental: bool) -> None:
+    reader = shop(incremental=incremental)
+    reader.relations["tail.t"] = ["id"]
+    crawl(reader, store, now=lambda: NOW)
+    reader.views["shop.v_orders"] = (
+        "CREATE VIEW shop.v_orders AS SELECT id, email AS amount FROM shop.customers"
+    )
+    reader.altered["shop.v_orders"] = NOW + timedelta(hours=1)
+    reader.interrupt_schema = "tail"
+    with pytest.raises(KeyboardInterrupt):
+        crawl(reader, store, now=lambda: NOW + timedelta(days=1))
+    report = crawl(reader, store, now=lambda: NOW + timedelta(days=1))
+    assert report.views_parsed == 1
+    table = next(f for f in view_facts(store) if f.kind.name == "LINEAGE")
+    assert table.value["upstream"] == ["shop.customers"]
+    # a resumed crawl offers every view, but unchanged definitions are still not re-parsed
+    reader.interrupt_schema = "tail"
+    with pytest.raises(KeyboardInterrupt):
+        crawl(reader, store, now=lambda: NOW + timedelta(days=2))
+    assert crawl(reader, store, now=lambda: NOW + timedelta(days=2)).views_parsed == 0
+
+
+def test_dropped_view_column_retracts_its_lineage(store: SQLiteStore) -> None:
+    reader = shop()
+    crawl(reader, store, now=lambda: NOW)
+    amount = ObjectRef(None, "shop", "v_orders", "amount")
+    assert store.facts_for([amount], LINEAGE_KINDS)
+    reader.relations["shop.v_orders"] = ["id"]
+    reader.views["shop.v_orders"] = "CREATE VIEW shop.v_orders AS SELECT id FROM shop.orders"
+    crawl(reader, store, now=lambda: NOW + timedelta(days=1))
+    assert store.facts_for([amount], LINEAGE_KINDS) == []
+    assert store.lineage_edges(["shop.orders.amount"], direction="downstream", level="column") == []
+    assert store.lineage_edges(["shop.orders.id"], direction="downstream", level="column")
+
+
+def test_dropped_view_retracts_lineage_of_dropped_columns(store: SQLiteStore) -> None:
+    reader = shop()
+    crawl(reader, store, now=lambda: NOW)
+    reader.relations["shop.v_orders"] = ["id"]
+    reader.views["shop.v_orders"] = "CREATE VIEW shop.v_orders AS SELECT id FROM shop.orders"
+    crawl(reader, store, now=lambda: NOW + timedelta(days=1), lineage=False)  # columns only
+    assert store.facts_for([ObjectRef(None, "shop", "v_orders", "amount")], LINEAGE_KINDS)
+    del reader.relations["shop.v_orders"], reader.views["shop.v_orders"]
+    crawl(reader, store, now=lambda: NOW + timedelta(days=2))
+    assert store.lineage_facts_under([V]) == []
+
+
+def test_missing_definition_retracts_and_reports(store: SQLiteStore) -> None:
+    reader = shop()
+    crawl(reader, store, now=lambda: NOW)
+    assert view_facts(store)
+    reader.withheld.add("shop.v_orders")
+    report = crawl(reader, store, now=lambda: NOW + timedelta(days=1))
+    assert report.errors == []
+    assert [(d.code, d.location) for d in report.lineage_diagnostics] == [
+        ("SG211", "shop.v_orders")
+    ]
+    assert report.lineage_diagnostics[0].message.endswith(": definition_unavailable")
+    assert store.lineage_facts_under([V]) == []
+    assert store.lineage_state_get([V]) == {}

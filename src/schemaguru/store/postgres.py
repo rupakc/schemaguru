@@ -702,6 +702,23 @@ class PostgresStore:
         )
         return [LineageEdge(str(up), str(down), level, str(fid)) for down, up, fid in rows]
 
+    def lineage_facts_under(self, tables: Sequence[ObjectRef]) -> list[Fact]:
+        wanted = {t.table_ref() for t in tables}
+        if not wanted:
+            return []
+        keys = sorted(t.canonical() for t in wanted)
+        # starts_with compares bytes, so the prefix test does not depend on the collation
+        rows = self._q(
+            "SELECT data FROM facts WHERE kind = ANY(%s) AND (subject_key = ANY(%s) OR "
+            "EXISTS (SELECT 1 FROM unnest(%s::text[]) AS p(k) "
+            "WHERE starts_with(facts.subject_key, p.k || '.'))) ORDER BY id",
+            [sorted(LINEAGE_KINDS), keys, keys],
+        )
+        facts = [Fact.from_dict(json.loads(r[0])) for r in rows]
+        return [
+            f for f in facts if isinstance(f.subject, ObjectRef) and f.subject.table_ref() in wanted
+        ]
+
     def lineage_state_get(self, refs: Sequence[ObjectRef]) -> dict[ObjectRef, str]:
         by_key: dict[str, list[ObjectRef]] = {}
         for r in refs:

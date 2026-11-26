@@ -245,3 +245,14 @@ def test_non_lineage_facts_ignored() -> None:
 def test_round_trip() -> None:
     for f in (_tl(["shop.orders"], unresolved=("raw.x",)), _cl(["a.b.c"], "window")):
         assert Fact.from_dict(f.to_dict()) == f
+
+
+def test_bare_string_rejected() -> None:
+    with pytest.raises(TypeError, match="upstream"):
+        table_lineage_value("shop.orders")
+    with pytest.raises(TypeError, match="unresolved"):
+        table_lineage_value(["shop.orders"], "raw.x")
+    with pytest.raises(TypeError, match="inputs"):
+        column_lineage_value("shop.orders.amount", "copy")
+    with pytest.raises(TypeError, match="unresolved"):
+        column_lineage_value(["a.b.c"], "copy", b"raw.x")  # type: ignore[arg-type]

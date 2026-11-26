@@ -70,7 +70,9 @@ class LineageResolution:
     unmatched_ignores: tuple[Fact, ...]
 
 
-def _names(items: Iterable[str]) -> list[str]:
+def _names(items: Iterable[str], arg: str) -> list[str]:
+    if isinstance(items, (str, bytes)):  # a str is an Iterable[str]: one name, not its letters
+        raise TypeError(f"{arg} must be a list of names, not a bare {type(items).__name__}")
     out = sorted(set(items))
     if not all(isinstance(x, str) and x for x in out):
         raise ValueError("lineage names must be non-empty strings")
@@ -87,8 +89,8 @@ def table_lineage_value(
     if upstream is None and not ignore:
         raise ValueError("table lineage needs an upstream list unless it is an ignore")
     return {
-        "upstream": None if upstream is None else _names(upstream),
-        "unresolved": _names(unresolved),
+        "upstream": None if upstream is None else _names(upstream, "upstream"),
+        "unresolved": _names(unresolved, "unresolved"),
         "ignore": bool(ignore),
     }
 
@@ -107,9 +109,9 @@ def column_lineage_value(
     if not (transform in TRANSFORMS or (ignore and transform is None)):
         raise ValueError(f"transform must be one of {', '.join(TRANSFORMS)}: {transform!r}")
     return {
-        "inputs": None if inputs is None else _names(inputs),
+        "inputs": None if inputs is None else _names(inputs, "inputs"),
         "transform": transform,
-        "unresolved": _names(unresolved),
+        "unresolved": _names(unresolved, "unresolved"),
         "ignore": bool(ignore),
     }
 

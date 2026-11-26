@@ -19,6 +19,29 @@ ledger, the feedback queue and transactions. Every write is an idempotent upsert
 stable ids; every listing is in a stable order. Read the protocol's docstrings in
 `schemaguru/store/protocol.py` before implementing it.
 
+### The lineage index (optional)
+
+`schemaguru.store.LineageIndex` is a second, runtime-checkable protocol that both shipped stores
+implement; `lineage_index(store)` returns the store as one, or `None`. It answers lineage
+questions in the store, never by scanning facts in Python:
+
+* `lineage_edges(keys, direction=..., level=...)` — `"upstream"` returns the edges whose
+  `downstream_key` is in `keys`, `"downstream"` those whose `upstream_key` is; `level` is
+  `"table"` or `"column"`. Sorted by `(downstream_key, upstream_key, fact_id)`.
+* `lineage_state_get(refs)` / `lineage_state_set({ref: sha256 or None})` — the view-definition
+  hash each table's lineage was last parsed from (`None` deletes the row).
+
+The index holds *effective* lineage only (`schemaguru.model.lineage.resolve_lineage`: a human
+replacement or ignore wins over dbt and parsed views). Inside the same transaction as
+`put_facts` / `delete_facts`, the store recomputes every touched subject's edges from all of its
+`LINEAGE` / `COLUMN_LINEAGE` facts, so a rolled-back write leaves no edges behind. The shipped
+stores keep it in the `lineage_edges` table (SQLite migration 3, Postgres migration 2; a store
+written by 0.1.0 migrates on open and keeps its facts unchanged).
+
+A custom store need not implement it: everything else works, but downstream lineage is
+unavailable (`SG705`). A wrapper that delegates to a shipped store can expose it by
+delegating these three methods too.
+
 ## Plugging one in
 
 Any object implementing the protocol can be passed as `Guru(store=...)`; a `str` or path

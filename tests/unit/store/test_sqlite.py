@@ -7,10 +7,11 @@ from pathlib import Path
 import pytest
 
 from schemaguru.errors import SchemaGuruError
+from schemaguru.model.facts import Provenance
 from schemaguru.store import sqlite as sqlite_mod
 from schemaguru.store.sqlite import SQLiteStore
 from tests.unit.store.contract import *  # noqa: F403  (the contract tests run here)
-from tests.unit.store.contract import col, tbl, tref
+from tests.unit.store.contract import _lin, col, tbl, tref
 
 
 def test_fts5_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -186,3 +187,18 @@ def test_readonly_empty_index_warns(tmp_path: Path) -> None:
     SQLiteStore(q).close()
     with SQLiteStore(q, readonly=True) as r:
         assert [d.code for d in r.diagnostics] == []
+
+
+def test_downstream_query_uses_index(store: SQLiteStore) -> None:
+    """The downstream traversal is an index lookup, never a scan of the edge table."""
+    store.put_facts([_lin(["shop.orders"], Provenance.DECLARED, "dbt:manifest:x")])
+    seen: list[str] = []
+    store._conn.set_trace_callback(seen.append)
+    try:
+        edges = store.lineage_edges(["shop.orders"], direction="downstream", level="table")
+    finally:
+        store._conn.set_trace_callback(None)
+    assert [e.downstream_key for e in edges] == ["shop.v"]
+    (query,) = [q for q in seen if "lineage_edges" in q]
+    plan = " ".join(str(r[-1]) for r in store._q("EXPLAIN QUERY PLAN " + query))
+    assert "lineage_edges_upstream" in plan, plan

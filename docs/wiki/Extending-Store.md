@@ -30,6 +30,18 @@ The contracts that matter most (each one is relied on elsewhere):
   facts (snapshots keep their copies) and returns how many existed.
 - `search` must run in an index, not as a Python scan (it is on the agent's hot path).
 - Optional, for the embedding retriever: `embeddings_put`, `embeddings_get`, `embeddings_hashes`.
+- Optional, for lineage: the runtime-checkable `schemaguru.store.LineageIndex` protocol
+  (`lineage_index(store)` returns the store as one, or `None`):
+  - `lineage_edges(keys, direction="upstream" | "downstream", level="table" | "column")` —
+    `"upstream"` matches `downstream_key ∈ keys`, `"downstream"` matches `upstream_key ∈ keys`;
+    sorted by `(downstream_key, upstream_key, fact_id)`; must run in an index.
+  - `lineage_state_get(refs)` / `lineage_state_set({ref: sha256 or None})` — the view-definition
+    hash per table (`None` deletes).
+  - The index holds *effective* lineage only (`resolve_lineage`: human wins), recomputed for every
+    touched subject from all its `LINEAGE` / `COLUMN_LINEAGE` facts inside the same transaction as
+    `put_facts` / `delete_facts`. Shipped stores keep it in `lineage_edges` (SQLite migration 3,
+    Postgres migration 2; a 0.1.0 store migrates on open, facts unchanged).
+  - A store without it works, but downstream lineage is unavailable (`SG705`).
 
 ## Worked example: wrapping the SQLite store
 

@@ -5,10 +5,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Literal, Protocol, runtime_checkable
 
 from schemaguru.model.facts import Fact
 from schemaguru.model.joins import JoinRef
+from schemaguru.model.lineage import Level, LineageEdge
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column, Constraint, Schema, Table
 
@@ -113,3 +114,38 @@ class Store(Protocol):
     def feedback_summary(self) -> list[dict[str, object]]: ...
 
     def transaction(self) -> AbstractContextManager[None]: ...
+
+
+LineageDirection = Literal["upstream", "downstream"]
+
+
+@runtime_checkable
+class LineageIndex(Protocol):
+    """The store-side lineage index (0.2.0 spec 4.5); both shipped stores implement it.
+
+    ``lineage_edges`` holds EFFECTIVE lineage only (:func:`~schemaguru.model.lineage.
+    resolve_lineage`), kept in step with ``LINEAGE`` / ``COLUMN_LINEAGE`` facts inside the same
+    transaction as ``put_facts`` / ``delete_facts``. A custom :class:`Store` need not implement
+    it; downstream lineage is then unavailable (``SG705``).
+    """
+
+    def lineage_edges(
+        self, keys: Sequence[str], *, direction: LineageDirection, level: Level
+    ) -> list[LineageEdge]:
+        """``"upstream"``: the edges whose ``downstream_key`` is in ``keys`` (what they read);
+        ``"downstream"``: the edges whose ``upstream_key`` is in ``keys`` (what reads them).
+        Sorted by ``(downstream_key, upstream_key, fact_id)``."""
+        ...
+
+    def lineage_state_get(self, refs: Sequence[ObjectRef]) -> dict[ObjectRef, str]:
+        """The stored view-definition sha256 of each ref that has one."""
+        ...
+
+    def lineage_state_set(self, items: Mapping[ObjectRef, str | None]) -> None:
+        """Upsert each ref's definition sha256; ``None`` deletes the row."""
+        ...
+
+
+def lineage_index(store: Store) -> LineageIndex | None:
+    """``store`` as a :class:`LineageIndex`, or ``None`` for a store without one (``SG705``)."""
+    return store if isinstance(store, LineageIndex) else None

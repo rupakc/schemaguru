@@ -524,3 +524,94 @@ def test_snapshot_bytes_deterministic(store: Any) -> None:
     assert rows[0] == rows[1] == rows[2]  # the same facts give the same bytes, whatever order
     by_id = {f.id: f for f in facts}
     assert [d for _, d in rows[0]] == [canonical_json(by_id[i].to_dict()) for i, _ in rows[0]]
+
+
+# ----- lineage index (0.2.0 spec 4.5) -----------------------------------------------------------
+
+_VIEW = ObjectRef(None, "shop", "v")
+
+
+def _lin(
+    upstream: list[str] | None,
+    prov: Provenance,
+    source: str,
+    *,
+    ignore: bool = False,
+    subject: ObjectRef = _VIEW,
+) -> Fact:
+    from schemaguru.model.lineage import table_lineage_value
+
+    value = table_lineage_value(upstream, ignore=ignore)
+    return Fact.make(FactKind.LINEAGE, subject, value, prov, Status.UNVERIFIED, source=source)
+
+
+def _edge_ids(store: Any, keys: list[str], direction: str = "upstream") -> list[str]:
+    return [e.fact_id for e in store.lineage_edges(keys, direction=direction, level="table")]
+
+
+def test_lineage_edges_follow_facts(store: Any) -> None:
+    from schemaguru.model.lineage import LineageEdge
+    from schemaguru.store.protocol import lineage_index
+
+    assert lineage_index(store) is store
+    dbt = _lin(["shop.orders"], Provenance.DECLARED, "dbt:manifest:model.shop.v")
+    view = _lin(["shop.orders", "shop.refunds"], Provenance.CATALOG, "view_definition")
+    assert store.lineage_edges(["shop.v"], direction="upstream", level="table") == []
+    store.put_facts([dbt, view])
+    edges = store.lineage_edges(["shop.v"], direction="upstream", level="table")
+    assert {e.fact_id for e in edges} == {dbt.id, view.id}
+    assert edges == sorted(edges, key=lambda e: (e.downstream_key, e.upstream_key, e.fact_id))
+    assert LineageEdge("shop.refunds", "shop.v", "table", view.id) in edges
+    assert _edge_ids(store, ["shop.refunds"], "downstream") == [view.id]
+    assert store.lineage_edges(["shop.v"], direction="upstream", level="column") == []
+    assert store.lineage_edges([], direction="downstream", level="table") == []
+    # deleting a fact drops its edges
+    store.delete_facts([view.id])
+    assert _edge_ids(store, ["shop.v"]) == [dbt.id]
+
+
+def test_lineage_edges_effective_only(store: Any) -> None:
+    dbt = _lin(["shop.orders"], Provenance.DECLARED, "dbt:manifest:model.shop.v")
+    store.put_facts([dbt])
+    ignore = _lin(None, Provenance.HUMAN, "overlay:lineage.yml:1", ignore=True)
+    store.put_facts([ignore])
+    assert _edge_ids(store, ["shop.v"]) == []
+    assert _edge_ids(store, ["shop.orders"], "downstream") == []
+    store.delete_facts([ignore.id])
+    assert _edge_ids(store, ["shop.v"]) == [dbt.id]
+    # a human list replaces the parsed one; its own edges are the effective ones
+    human = _lin(["shop.payments"], Provenance.HUMAN, "overlay:lineage.yml:2")
+    store.put_facts([human])
+    assert _edge_ids(store, ["shop.v"]) == [human.id]
+    assert _edge_ids(store, ["shop.orders"], "downstream") == []
+
+
+def test_lineage_edges_same_transaction(store: Any) -> None:
+    dbt = _lin(["shop.orders"], Provenance.DECLARED, "dbt:manifest:model.shop.v")
+    with pytest.raises(RuntimeError), store.transaction():
+        store.put_facts([dbt])
+        assert _edge_ids(store, ["shop.v"]) == [dbt.id]  # visible inside the transaction
+        raise RuntimeError("boom")
+    assert _edge_ids(store, ["shop.v"]) == []
+    assert store.facts_for([_VIEW], None) == []
+
+
+def test_lineage_edges_many_keys_chunked(store: Any) -> None:
+    facts = [
+        _lin(["shop.orders"], Provenance.DECLARED, "dbt:manifest:x", subject=tref(f"v{i:04d}"))
+        for i in range(1200)
+    ]
+    store.put_facts(facts)
+    keys = [f"shop.v{i:04d}" for i in range(1200)]
+    assert len(store.lineage_edges(keys, direction="upstream", level="table")) == 1200
+    assert len(_edge_ids(store, ["shop.orders"], "downstream")) == 1200
+
+
+def test_lineage_state_roundtrip(store: Any) -> None:
+    a, b = tref("a"), tref("b")
+    assert store.lineage_state_get([a, b]) == {}
+    store.lineage_state_set({a: "1" * 64, b: "2" * 64})
+    assert store.lineage_state_get([a, b, tref("c")]) == {a: "1" * 64, b: "2" * 64}
+    store.lineage_state_set({a: None, b: "3" * 64})
+    assert store.lineage_state_get([a, b]) == {b: "3" * 64}
+    assert store.lineage_state_get([]) == {}

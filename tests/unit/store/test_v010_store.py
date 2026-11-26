@@ -70,3 +70,18 @@ def test_v010_golden_views_unchanged(v010_store: SQLiteStore, profile: str, qi: 
     text = golden_view(v010_store, profile, QUESTIONS[qi])
     expected = (VIEWS / f"{profile}__q{qi + 1}.txt").read_bytes().decode("utf-8")
     assert text + "\n" == expected.replace("\r\n", "\n")
+
+
+def test_v010_migrates_facts_and_views_unchanged(tmp_path: Path) -> None:
+    with open_v010(tmp_path) as store:
+        versions = [r[0] for r in store._q("SELECT version FROM schema_version ORDER BY version")]
+        assert versions == [1, 2, 3]
+        stored = sorted((f.to_dict() for f in store.iter_facts()), key=lambda d: str(d["id"]))
+        assert stored == _v010_facts()
+        assert store._q("SELECT COUNT(*) FROM lineage_edges") == [(0,)]
+        assert store._q("SELECT COUNT(*) FROM lineage_state") == [(0,)]
+        for profile in PROFILES:
+            for qi, question in enumerate(QUESTIONS):
+                text = golden_view(store, profile, question)
+                expected = (VIEWS / f"{profile}__q{qi + 1}.txt").read_bytes().decode("utf-8")
+                assert text + "\n" == expected.replace("\r\n", "\n"), (profile, qi)

@@ -51,6 +51,7 @@ Generated from `schemaguru.diagnostics.CODES`; a test asserts the two agree.
 | SG702 | the store was written by a newer schema version than this library supports |
 | SG703 | the shared store is unavailable (refused, lost or pool exhausted; HTTP 503) |
 | SG704 | the shared store rejected the configured credentials: a configuration error, not an outage (HTTP 500) |
+| SG705 | the store does not implement the lineage index (a custom Store): downstream lineage is unavailable |
 | SG706 | a read-only store's search index is empty: search finds nothing until the store is opened read-write once (which rebuilds it) |
 | SG801 | guard refused the SQL: not a single read-only SELECT/WITH statement |
 | SG802 | guard refused the SQL: it reads a never-query table |

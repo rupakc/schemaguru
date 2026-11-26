@@ -21,10 +21,12 @@ from schemaguru.diagnostics import CODES, Diagnostic, DiagnosticBag, Severity
 from schemaguru.errors import SchemaGuruError, StoreVersionError
 from schemaguru.model.facts import Fact
 from schemaguru.model.joins import JoinRef, subject_key
+from schemaguru.model.kinds import LINEAGE_KINDS
+from schemaguru.model.lineage import Level, LineageEdge, edges_of, resolve_lineage
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column, Constraint, Schema, Table
 from schemaguru.store import schema_sql
-from schemaguru.store.protocol import LedgerUnit
+from schemaguru.store.protocol import LedgerUnit, LineageDirection
 from schemaguru.store.search_docs import (
     GLOSSARY,
     INDEXED_KINDS,
@@ -42,6 +44,10 @@ _CHUNK = 500
 _FTS_WEIGHTS = "0.0, 10.0, 3.0, 1.0"  # ref, name_tokens, columns, text
 # crawl_state key naming the search backend that last wrote the index ("fts5" or "like")
 SEARCH_BACKEND_KEY = "_search_backend"
+_LINEAGE_VERSION = 3  # the schema version that added lineage_edges
+# the fact kind holding each lineage level, and back
+_LINEAGE_KIND: dict[str, str] = {"table": "LINEAGE", "column": "COLUMN_LINEAGE"}
+_LINEAGE_LEVEL: dict[str, str] = {v: k for k, v in _LINEAGE_KIND.items()}
 _EMPTY_INDEX = "the read-only store's search index is empty; open it read-write once to rebuild it"
 
 
@@ -153,6 +159,16 @@ class SQLiteStore:
                 conn.execute(
                     "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)",
                     (version, to_iso(utcnow())),
+                )
+            if current < _LINEAGE_VERSION:  # lineage facts written before the index existed
+                self._relineage(
+                    {
+                        (key, _LINEAGE_LEVEL[kind])
+                        for kind, key in conn.execute(
+                            f"SELECT kind, subject_key FROM facts WHERE kind IN ({_marks(2)})",
+                            sorted(LINEAGE_KINDS),
+                        )
+                    }
                 )
             conn.execute("COMMIT")
         except BaseException:
@@ -455,12 +471,18 @@ class SQLiteStore:
             touched: set[str] = set()
             rows = []
             indexed: list[str] = []
+            lineage: set[tuple[str, str]] = set()
+            lineage_ids: list[str] = []
             for f in facts:
                 key = _subject_key(f.subject)
                 rows.append((f.id, f.kind.name, key, _dumps(f.to_dict())))
                 if f.kind.name in INDEXED_KINDS:
                     touched |= doc_tables(f.kind.name, f.subject, f.value)
                     indexed.append(f.id)
+                if f.kind.name in LINEAGE_KINDS:
+                    lineage.add((key, _LINEAGE_LEVEL[f.kind.name]))
+                    lineage_ids.append(f.id)
+            lineage |= self._stored_lineage_subjects(lineage_ids)  # a replaced row's own subject
             # a fact replaced under the same id may have fed other tables' docs (a subject that
             # moved, a term that no longer maps there): those docs are rebuilt too
             for chunk in _chunks(sorted(set(indexed))):
@@ -476,6 +498,7 @@ class SQLiteStore:
             )
             for key in sorted(touched):
                 self._reindex(key)
+            self._relineage(lineage)
 
     def delete_facts(self, ids: Iterable[str]) -> int:
         wanted = sorted(set(ids))
@@ -484,15 +507,109 @@ class SQLiteStore:
         removed = 0
         with self.transaction():
             touched: set[str] = set()
+            lineage: set[tuple[str, str]] = set()
             for chunk in _chunks(wanted):
                 marks = _marks(len(chunk))
-                for _, data in self._q(f"SELECT id, data FROM facts WHERE id IN ({marks})", chunk):
+                for kind, key, data in self._q(
+                    f"SELECT kind, subject_key, data FROM facts WHERE id IN ({marks})", chunk
+                ):
                     removed += 1
                     touched |= stored_doc_tables(data)
+                    if kind in _LINEAGE_LEVEL:
+                        lineage.add((key, _LINEAGE_LEVEL[kind]))
                 self._conn.execute(f"DELETE FROM facts WHERE id IN ({marks})", list(chunk))
             for key in sorted(touched):
                 self._reindex(key)
+            self._relineage(lineage)
         return removed
+
+    # ----- lineage index -----------------------------------------------------------------
+
+    def _stored_lineage_subjects(self, ids: Sequence[str]) -> set[tuple[str, str]]:
+        """``(subject_key, level)`` of the stored lineage rows among ``ids``."""
+        out: set[tuple[str, str]] = set()
+        for chunk in _chunks(sorted(set(ids))):
+            for kind, key in self._conn.execute(
+                f"SELECT kind, subject_key FROM facts WHERE id IN ({_marks(len(chunk))})", chunk
+            ):
+                if kind in _LINEAGE_LEVEL:
+                    out.add((key, _LINEAGE_LEVEL[kind]))
+        return out
+
+    def _relineage(self, subjects: set[tuple[str, str]]) -> None:
+        """Recompute the effective edges of each ``(subject_key, level)`` from every lineage fact
+        of it, as stored now. Runs inside the caller's transaction."""
+        if not subjects:
+            return
+        conn = self._conn
+        conn.executemany(
+            "DELETE FROM lineage_edges WHERE warehouse='' AND downstream_key=? AND level=?",
+            sorted(subjects),
+        )
+        facts: list[Fact] = []
+        for level, kind in sorted(_LINEAGE_KIND.items()):
+            keys = sorted(k for k, lv in subjects if lv == level)
+            for chunk in _chunks(keys):
+                for (data,) in conn.execute(
+                    f"SELECT data FROM facts WHERE subject_key IN ({_marks(len(chunk))}) "
+                    "AND kind=?",
+                    [*chunk, kind],
+                ):
+                    facts.append(Fact.from_dict(json.loads(data)))
+        conn.executemany(
+            "INSERT INTO lineage_edges(upstream_key, downstream_key, level, fact_id) "
+            "VALUES (?,?,?,?)",
+            [
+                (e.upstream_key, e.downstream_key, e.level, e.fact_id)
+                for e in edges_of(resolve_lineage(facts))
+            ],
+        )
+
+    def lineage_edges(
+        self, keys: Sequence[str], *, direction: LineageDirection, level: Level
+    ) -> list[LineageEdge]:
+        if direction not in ("upstream", "downstream"):
+            raise ValueError(f"direction must be 'upstream' or 'downstream': {direction!r}")
+        on = "downstream_key" if direction == "upstream" else "upstream_key"
+        found: set[tuple[str, str, str]] = set()
+        for chunk in _chunks(sorted(set(keys))):
+            found.update(
+                (str(r[0]), str(r[1]), str(r[2]))
+                for r in self._q(
+                    "SELECT downstream_key, upstream_key, fact_id FROM lineage_edges "
+                    f"WHERE {on} IN ({_marks(len(chunk))}) AND level=?",
+                    [*chunk, level],
+                )
+            )
+        return [LineageEdge(up, down, level, fid) for down, up, fid in sorted(found)]
+
+    def lineage_state_get(self, refs: Sequence[ObjectRef]) -> dict[ObjectRef, str]:
+        by_key: dict[str, list[ObjectRef]] = {}
+        for r in refs:
+            by_key.setdefault(r.table_ref().canonical(), []).append(r)
+        out: dict[ObjectRef, str] = {}
+        for chunk in _chunks(sorted(by_key)):
+            for key, sha in self._q(
+                "SELECT table_ref, definition_sha256 FROM lineage_state "
+                f"WHERE table_ref IN ({_marks(len(chunk))})",
+                chunk,
+            ):
+                for r in by_key[key]:
+                    out[r] = str(sha)
+        return out
+
+    def lineage_state_set(self, items: Mapping[ObjectRef, str | None]) -> None:
+        rows = sorted((r.table_ref().canonical(), sha) for r, sha in items.items())
+        with self.transaction():
+            self._conn.executemany(
+                "DELETE FROM lineage_state WHERE table_ref=?",
+                [(key,) for key, sha in rows if sha is None],
+            )
+            self._conn.executemany(
+                "INSERT INTO lineage_state(table_ref, definition_sha256) VALUES (?, ?) "
+                "ON CONFLICT(table_ref) DO UPDATE SET definition_sha256=excluded.definition_sha256",
+                [(key, sha) for key, sha in rows if sha is not None],
+            )
 
     def iter_facts(self) -> Iterator[Fact]:
         last = ""

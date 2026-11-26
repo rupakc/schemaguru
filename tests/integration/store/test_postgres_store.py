@@ -362,3 +362,44 @@ def test_bulk_upsert_pages_are_indexed(store: Any) -> None:
     assert [r.table for r, _ in store.search("refunds", 3)] == ["t2299"]
     assert [r.table for r, _ in store.search("t1500", 3)][:1] == ["t1500"]
     assert sum(1 for _ in store.iter_tables()) == 2300
+
+
+def test_pg_v1_store_migrates(pg_schema: tuple[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
+    """A store at pg version 1 (0.1.0's schema) migrates on open: facts unchanged, and lineage
+    facts written before the index existed get their edges."""
+    from schemaguru._util.hashing import canonical_json
+    from schemaguru.model.facts import Fact, Provenance, Status
+    from schemaguru.model.kinds import FactKind
+    from schemaguru.model.lineage import LineageEdge, table_lineage_value
+    from schemaguru.model.refs import ObjectRef
+    from schemaguru.store.postgres import PostgresStore
+
+    dsn, schema = pg_schema
+    v1 = schema_sql.migrations("pg")[:1]
+    desc = Fact.make(
+        FactKind.DESCRIPTION, tref("orders"), {"text": "one row per order"}, Provenance.HUMAN,
+        Status.UNVERIFIED,
+    )  # fmt: skip
+    lin = Fact.make(
+        FactKind.LINEAGE, ObjectRef(None, "shop", "v"), table_lineage_value(["shop.orders"]),
+        Provenance.DECLARED, Status.UNVERIFIED, source="dbt:manifest:model.shop.v",
+    )  # fmt: skip
+    with monkeypatch.context() as m:
+        m.setattr(schema_sql, "migrations", lambda dialect="sqlite": v1)
+        m.setattr(schema_sql, "LATEST_PG_VERSION", 1)
+        with PostgresStore(dsn, schema=schema) as old:
+            assert old.schema_version() == 1
+            old.upsert_tables([tbl("orders")])
+            old.put_facts([desc])
+            old._x(
+                "INSERT INTO facts(id, kind, subject_key, data) VALUES (%s,%s,%s,%s)",
+                (lin.id, "LINEAGE", "shop.v", canonical_json(lin.to_dict())),
+            )
+            before = [f.to_dict() for f in old.iter_facts()]
+    with PostgresStore(dsn, schema=schema) as s:
+        assert s.schema_version() == 2
+        assert [f.to_dict() for f in s.iter_facts()] == before
+        assert s.lineage_edges(["shop.orders"], direction="downstream", level="table") == [
+            LineageEdge("shop.orders", "shop.v", "table", lin.id)
+        ]
+        assert [r for r, _ in s.search("order", 5)] == [tref("orders")]

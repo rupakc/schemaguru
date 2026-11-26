@@ -50,10 +50,12 @@ from schemaguru.errors import (
 )
 from schemaguru.model.facts import Fact
 from schemaguru.model.joins import JoinRef, subject_key
+from schemaguru.model.kinds import LINEAGE_KINDS
+from schemaguru.model.lineage import Level, LineageEdge, edges_of, resolve_lineage
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column, Constraint, Schema, Table
 from schemaguru.store import schema_sql
-from schemaguru.store.protocol import LedgerUnit
+from schemaguru.store.protocol import LedgerUnit, LineageDirection
 from schemaguru.store.search_docs import (
     GLOSSARY,
     INDEXED_KINDS,
@@ -78,6 +80,11 @@ _DOC_SQL = (
 
 _dumps = canonical_json
 _subject_key = subject_key
+
+_LINEAGE_VERSION = 2  # the pg schema version that added lineage_edges
+# the fact kind holding each lineage level, and back
+_LINEAGE_KIND: dict[str, str] = {"table": "LINEAGE", "column": "COLUMN_LINEAGE"}
+_LINEAGE_LEVEL: dict[str, str] = {v: k for k, v in _LINEAGE_KIND.items()}
 
 
 def _table_from_key(key: str) -> ObjectRef:
@@ -327,6 +334,16 @@ class PostgresStore:
                 conn.execute(
                     "INSERT INTO schema_version(version, applied_at) VALUES (%s, %s)",
                     (version, to_iso(utcnow())),
+                )
+            if current < _LINEAGE_VERSION:  # lineage facts written before the index existed
+                self._relineage(
+                    {
+                        (str(key), _LINEAGE_LEVEL[kind])
+                        for kind, key in conn.execute(
+                            "SELECT kind, subject_key FROM facts WHERE kind = ANY(%s)",
+                            (sorted(LINEAGE_KINDS),),
+                        ).fetchall()
+                    }
                 )
 
     def schema_version(self) -> int:
@@ -587,11 +604,23 @@ class PostgresStore:
             touched: set[str] = set()
             rows: dict[str, tuple[str, str, str, str]] = {}
             indexed: set[str] = set()
+            lineage: set[tuple[str, str]] = set()
+            lineage_ids: set[str] = set()
             for f in facts:
-                rows[f.id] = (f.id, f.kind.name, _subject_key(f.subject), _dumps(f.to_dict()))
+                key = _subject_key(f.subject)
+                rows[f.id] = (f.id, f.kind.name, key, _dumps(f.to_dict()))
                 if f.kind.name in INDEXED_KINDS:
                     touched |= doc_tables(f.kind.name, f.subject, f.value)
                     indexed.add(f.id)
+                if f.kind.name in LINEAGE_KINDS:
+                    lineage.add((key, _LINEAGE_LEVEL[f.kind.name]))
+                    lineage_ids.add(f.id)
+            if lineage_ids:  # a replaced row's own subject
+                for kind, key in self._q(
+                    "SELECT kind, subject_key FROM facts WHERE id = ANY(%s)", (sorted(lineage_ids),)
+                ):
+                    if kind in _LINEAGE_LEVEL:
+                        lineage.add((str(key), _LINEAGE_LEVEL[kind]))
             if indexed:  # a replaced fact may have fed other tables' docs (subject moved)
                 for (data,) in self._q(
                     "SELECT data FROM facts WHERE id = ANY(%s)", (sorted(indexed),)
@@ -604,6 +633,7 @@ class PostgresStore:
                 list(rows.values()),
             )
             self._reindex_many(sorted(touched))
+            self._relineage(lineage)
 
     def delete_facts(self, ids: Iterable[str]) -> int:
         wanted = sorted(set(ids))
@@ -611,12 +641,94 @@ class PostgresStore:
             return 0
         with self.transaction():
             touched: set[str] = set()
-            rows = self._q("SELECT id, data FROM facts WHERE id = ANY(%s)", (wanted,))
-            for _, data in rows:
+            lineage: set[tuple[str, str]] = set()
+            rows = self._q(
+                "SELECT kind, subject_key, data FROM facts WHERE id = ANY(%s)", (wanted,)
+            )
+            for kind, key, data in rows:
                 touched |= stored_doc_tables(data)
+                if kind in _LINEAGE_LEVEL:
+                    lineage.add((str(key), _LINEAGE_LEVEL[kind]))
             self._x("DELETE FROM facts WHERE id = ANY(%s)", (wanted,))
             self._reindex_many(sorted(touched))
+            self._relineage(lineage)
         return len(rows)
+
+    # ----- lineage index -----------------------------------------------------------------
+
+    def _relineage(self, subjects: set[tuple[str, str]]) -> None:
+        """Recompute the effective edges of each ``(subject_key, level)`` from every lineage fact
+        of it, as stored now. Runs inside the caller's transaction."""
+        if not subjects:
+            return
+        ordered = sorted(subjects)
+        self._many(
+            "DELETE FROM lineage_edges WHERE warehouse='' AND downstream_key=%s AND level=%s",
+            ordered,
+        )
+        facts: list[Fact] = []
+        for level, kind in sorted(_LINEAGE_KIND.items()):
+            keys = [k for k, lv in ordered if lv == level]
+            if keys:
+                facts.extend(
+                    Fact.from_dict(json.loads(data))
+                    for (data,) in self._q(
+                        "SELECT data FROM facts WHERE subject_key = ANY(%s) AND kind=%s",
+                        (keys, kind),
+                    )
+                )
+        self._many(
+            "INSERT INTO lineage_edges(upstream_key, downstream_key, level, fact_id) "
+            "VALUES (%s,%s,%s,%s)",
+            [
+                (e.upstream_key, e.downstream_key, e.level, e.fact_id)
+                for e in edges_of(resolve_lineage(facts))
+            ],
+        )
+
+    def lineage_edges(
+        self, keys: Sequence[str], *, direction: LineageDirection, level: Level
+    ) -> list[LineageEdge]:
+        if direction not in ("upstream", "downstream"):
+            raise ValueError(f"direction must be 'upstream' or 'downstream': {direction!r}")
+        wanted = sorted(set(keys))
+        if not wanted:
+            return []
+        on = "downstream_key" if direction == "upstream" else "upstream_key"
+        rows = self._q(
+            "SELECT downstream_key, upstream_key, fact_id FROM lineage_edges "
+            f"WHERE {on} = ANY(%s) AND level=%s ORDER BY downstream_key, upstream_key, fact_id",
+            (wanted, level),
+        )
+        return [LineageEdge(str(up), str(down), level, str(fid)) for down, up, fid in rows]
+
+    def lineage_state_get(self, refs: Sequence[ObjectRef]) -> dict[ObjectRef, str]:
+        by_key: dict[str, list[ObjectRef]] = {}
+        for r in refs:
+            by_key.setdefault(r.table_ref().canonical(), []).append(r)
+        if not by_key:
+            return {}
+        out: dict[ObjectRef, str] = {}
+        for key, sha in self._q(
+            "SELECT table_ref, definition_sha256 FROM lineage_state WHERE table_ref = ANY(%s)",
+            (sorted(by_key),),
+        ):
+            for r in by_key[key]:
+                out[r] = str(sha)
+        return out
+
+    def lineage_state_set(self, items: Mapping[ObjectRef, str | None]) -> None:
+        rows = sorted((r.table_ref().canonical(), sha) for r, sha in items.items())
+        with self.transaction():
+            self._many(
+                "DELETE FROM lineage_state WHERE table_ref=%s",
+                [(key,) for key, sha in rows if sha is None],
+            )
+            self._many(
+                "INSERT INTO lineage_state(table_ref, definition_sha256) VALUES (%s, %s) "
+                "ON CONFLICT(table_ref) DO UPDATE SET definition_sha256=excluded.definition_sha256",
+                [(key, sha) for key, sha in rows if sha is not None],
+            )
 
     def iter_facts(self) -> Iterator[Fact]:
         last = ""

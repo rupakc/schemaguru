@@ -638,7 +638,9 @@ class _Crawl:
             self._count()
             texts = dict(reader.view_definitions(refs))
         except Exception as e:
-            # a driver's message can quote SQL or bind values: only the exception type is kept
+            # a driver's message can quote SQL or bind values: only the exception type is kept.
+            # The batch's views KEEP their old lineage and state (a transient error must not drop
+            # lineage); a view the reader answers without a definition is retracted below.
             self.errors.append(
                 Diagnostic(
                     "SG102",

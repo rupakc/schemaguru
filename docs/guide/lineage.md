@@ -174,6 +174,14 @@ never SQL text.
   most the 5 s cap).
 * The worker has a **1 GiB** address-space cap on **Linux only**; on other systems only the 5 s cap
   applies.
+* The worker is started as `sys.executable -m schemaguru.lineage.worker`. Where `sys.executable`
+  is not a Python that can import SchemaGuru (an embedded interpreter, a frozen app, or a
+  `sys.path` extended only at runtime that the child does not inherit), every view fails closed
+  with `SG211 worker_died` and gets no lineage; the rest of the crawl is unaffected.
+* When the reader's `view_definitions` call itself fails (`SG102`), the views of that batch keep
+  the lineage of their last successful parse: a transient error must not drop lineage. A view the
+  reader answers without a definition is different: its lineage is retracted
+  (`SG211 definition_unavailable`).
 * `SELECT *` and unqualified columns are expanded with the columns the store holds; a name it does
   not hold is listed as unresolved, never guessed.
 * Projection lineage only: a column used only in `WHERE`, `JOIN ON` or `GROUP BY` is not an input.

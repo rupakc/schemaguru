@@ -382,3 +382,16 @@ def test_legacy_hash_only_state_is_reparsed_once(store: SQLiteStore) -> None:
     store.lineage_state_set({V: sha(V_SQL)})  # a 0.2.0-pre state: the bare definition hash
     assert crawl(reader, store, now=lambda: NOW + timedelta(days=1)).views_parsed == 1
     assert crawl(reader, store, now=lambda: NOW + timedelta(days=2)).views_parsed == 0
+
+
+def test_definition_read_error_keeps_old_lineage(store: SQLiteStore) -> None:
+    """Documented (lineage guide, Limits): a failing view_definitions call is transient; the
+    batch's views keep their last parsed lineage and state, unlike an omitted definition."""
+    reader = shop()
+    crawl(reader, store, now=lambda: NOW)
+    before, state = view_facts(store), store.lineage_state_get([V])
+    assert before and state
+    reader.fail_definitions = True
+    report = crawl(reader, store, now=lambda: NOW + timedelta(days=1))
+    assert [d.code for d in report.errors] == ["SG102"]
+    assert view_facts(store) == before and store.lineage_state_get([V]) == state

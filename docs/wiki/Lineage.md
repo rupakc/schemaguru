@@ -80,6 +80,11 @@ diagnostic or sent to an LLM. See [[PII-and-Sampling-Policy]] and [[Security]].
   date changes.
 - A custom store without the lineage index answers downstream queries with `SG705`
   ([[Extending-Store]]).
+- The worker is started as `sys.executable -m schemaguru.lineage.worker`: under an embedded or
+  frozen interpreter, or with a `sys.path` extended only at runtime, every view fails closed with
+  `SG211 worker_died`.
+- If the reader's `view_definitions` call fails (`SG102`), that batch's views keep their last
+  parsed lineage; a view answered without a definition loses it (`SG211 definition_unavailable`).
 
 Diagnostics: `SG211` (a definition could not be parsed), `SG212` (extra missing), `SG213` (an
 ignore matches nothing), `SG214` (no `compiled_code`), `SG215` (dbt nodes disagree), `SG705`

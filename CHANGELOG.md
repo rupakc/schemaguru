@@ -24,7 +24,8 @@ All notable changes to this project are documented here. The format follows
 - **`view_definitions`** on `CatalogReader` (`ReaderCapabilities.view_definitions`), implemented
   by all eleven shipped readers from metadata views only; a custom reader without it is unchanged.
 - New diagnostics `SG211` to `SG215` and `SG705`; store migrations for the lineage index
-  (SQLite 3, Postgres 2) that apply on open.
+  (SQLite 3, Postgres 2) and for a counter of inserted `JOIN` facts that lets the context
+  renderer skip an index rebuild (SQLite 4, Postgres 3), all applied on open.
 - **Scale benchmark** at 500,000 tables and 25,000,000 columns: harness in `benchmarks/`, committed
   results `benchmarks/results/0.2.0.json`, a nightly regression workflow, and the
   [Scale page](docs/guide/scale.md).
@@ -64,6 +65,12 @@ One line per area of the 0.2.0 hardening ledger
   secret.
 - **Connectors:** `check_fact` honours the claim cap; the inline-connector docstring names the
   zone-explicit forms.
+- **Final review:** a view whose upstream enters the crawl's scope or gains a column is re-parsed
+  (the skip now also needs its names to resolve as before); `"..."` is blanked in definition
+  templates for dialects where it can be a string (BigQuery, Databricks/Spark, Hive, MySQL/MariaDB,
+  T-SQL, unknown); `Config.from_env` ignores `SCHEMAGURU_*` variables that are not config fields,
+  so `schemaguru serve` with `SCHEMAGURU_SERVER_TOKENS` starts; the Postgres JOIN-counter trigger
+  uses `EXECUTE PROCEDURE`; lineage tool errors stay readable.
 
 ### Known limits
 - **`guru.context` is slow at 500,000 tables (`context_p95_ms`): p95 28.6 s (p50 9.3 s) against the 200 ms target,

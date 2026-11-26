@@ -9,6 +9,8 @@ Reader: `bigquery` (`schemaguru.catalog.readers.bigquery.BigQueryReader`). Catal
 ## Metadata sources
 Region views `` `region-<r>`.INFORMATION_SCHEMA.SCHEMATA `` and `TABLE_STORAGE` (row count, logical bytes, last modified), and dataset views `TABLES`, `TABLE_OPTIONS` (description), `COLUMNS`, `COLUMN_FIELD_PATHS` (column descriptions), `TABLE_CONSTRAINTS`, `KEY_COLUMN_USAGE`, `CONSTRAINT_COLUMN_USAGE`.
 
+View definitions: `INFORMATION_SCHEMA.VIEWS.view_definition` for views and `INFORMATION_SCHEMA.TABLES.ddl` for materialized views (`INFORMATION_SCHEMA.MATERIALIZED_VIEWS` has no definition column); one extra billed query each per dataset. Metadata only; the text is kept in memory and never logged.
+
 ## Permissions
 - `bigquery.jobs.create` on the billing project (role `BigQuery Job User`).
 - `bigquery.tables.get` / `bigquery.tables.list` / `bigquery.datasets.get` on the datasets to read (role `BigQuery Metadata Viewer`). `TABLE_STORAGE` additionally needs `bigquery.tables.get` on the project.

@@ -24,6 +24,7 @@ from schemaguru.catalog.executor import MetadataExecutor
 from schemaguru.catalog.protocol import CatalogError, Page, ReaderCapabilities
 from schemaguru.catalog.readers._common import (
     Row,
+    definition_text,
     group_by_scope,
     lower_keys,
     opt_int,
@@ -297,6 +298,33 @@ class BigQueryReader:
                     out.setdefault(ObjectRef(catalog, schema, table), []).append(con)
         return out
 
+    def view_definitions(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, str]:
+        """Views from ``INFORMATION_SCHEMA.VIEWS.view_definition`` (the query text). Ruling:
+        ``INFORMATION_SCHEMA.MATERIALIZED_VIEWS`` has no definition column, so materialized views
+        come from ``INFORMATION_SCHEMA.TABLES.ddl`` (``table_type = 'MATERIALIZED VIEW'``), which
+        is the full ``CREATE MATERIALIZED VIEW`` statement."""
+        out: dict[ObjectRef, str] = {}
+        for (catalog, schema), names in group_by_scope(tables).items():
+            if schema is None:
+                continue
+            marks = ", ".join("?" for _ in names)
+            sources = (
+                ("VIEWS", "view_definition", ""),
+                ("TABLES", "ddl", " AND table_type = 'MATERIALIZED VIEW'"),
+            )
+            for view, column, extra in sources:
+                rows = self._run(
+                    f"SELECT table_name, {column} AS definition "
+                    f"FROM {self._dataset_view(catalog, schema, view)} "
+                    f"WHERE table_name IN ({marks}){extra} ORDER BY table_name",
+                    names,
+                )
+                for r in rows:
+                    text = definition_text(r["definition"])
+                    if text is not None:
+                        out[ObjectRef(catalog, schema, r["table_name"])] = text
+        return out
+
     def capabilities(self) -> ReaderCapabilities:
         return ReaderCapabilities(
             comments=True,
@@ -305,6 +333,7 @@ class BigQueryReader:
             constraints=True,
             incremental=True,
             cost_estimate=True,
+            view_definitions=True,
         )
 
 

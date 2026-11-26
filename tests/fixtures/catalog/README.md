@@ -32,3 +32,9 @@ re-recording. Never hand-edit `queries.json` to make a test pass.
 
 The `integration` CI job runs the same assertions against live containers
 (`SCHEMAGURU_TEST_<ENGINE>_DSN`), see `tests/integration/catalog/`.
+
+`view_definitions` entries in the `mysql`, `clickhouse`, `tsql` and `trino` fixtures are
+synthetic (`"synthetic_view_definitions": true` in `queries.json`): written in the engine's
+documented shape for the seeded `v_customers` view because the containers were not available when
+the reader grew `view_definitions`. Re-run `python -m tests.conformance.record <engine>` against
+the live engine to replace them; the flag then disappears.

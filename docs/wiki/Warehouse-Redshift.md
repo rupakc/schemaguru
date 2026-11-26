@@ -9,6 +9,8 @@ Reader: `redshift`. Catalog = database, schema = schema. Extra: `pip install "sc
 ## Metadata sources
 `SVV_ALL_SCHEMAS`, `SVV_ALL_TABLES`, `SVV_ALL_COLUMNS` (cross-database, includes datashares), `SVV_TABLE_INFO` (row estimate, size), `SVV_EXTERNAL_TABLES` / `SVV_EXTERNAL_COLUMNS` (Spectrum external schemas), and `pg_constraint` / `pg_class` / `pg_attribute` for constraints.
 
+View definitions: `pg_views.definition` of the current database (ordinary and late-binding views); a materialized view has no definition column and a datashare database is not visible there, so both are unknown. Metadata only; the text is kept in memory and never logged.
+
 ## Permissions
 `USAGE` on the schemas and `SELECT` (or any privilege) on the tables to be described; `SVV_*` views show only visible objects. `SVV_TABLE_INFO` is visible only for tables the user can see (superusers see all); where a table is not listed, its row count and size are unknown. For external schemas, `USAGE` on the schema and access to the external catalog (Glue/Hive) through the associated IAM role.
 

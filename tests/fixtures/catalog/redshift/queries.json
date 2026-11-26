@@ -571,6 +571,20 @@
     }
    ],
    "sql": "select n.nspname as schema_name, c.relname as table_name, con.conname as constraint_name, con.contype as contype, k.i as pos, a.attname as column_name, fn.nspname as ref_schema, fc.relname as ref_table, fa.attname as ref_column from pg_constraint con join pg_class c on c.oid = con.conrelid join pg_namespace n on n.oid = c.relnamespace join (select generate_series(1, 32) as i) k on k.i <= array_upper(con.conkey, 1) join pg_attribute a on a.attrelid = con.conrelid and a.attnum = con.conkey[k.i] left join pg_class fc on fc.oid = con.confrelid left join pg_namespace fn on fn.oid = fc.relnamespace left join pg_attribute fa on fa.attrelid = con.confrelid and fa.attnum = con.confkey[k.i] where con.contype in (?, ?, ?) and ((n.nspname = ? and c.relname = ?) or (n.nspname = ? and c.relname = ?) or (n.nspname = ? and c.relname = ?) or (n.nspname = ? and c.relname = ?) or (n.nspname = ? and c.relname = ?) or (n.nspname = ? and c.relname = ?) or (n.nspname = ? and c.relname = ?)) order by n.nspname, c.relname, con.conname, k.i"
+  },
+  {
+   "params": [
+    "shop",
+    "v_open_orders"
+   ],
+   "rows": [
+    {
+     "definition": "SELECT order_id, status FROM shop.orders WHERE status = 'open'",
+     "schemaname": "shop",
+     "viewname": "v_open_orders"
+    }
+   ],
+   "sql": "select schemaname, viewname, definition from pg_views where ((schemaname = ? and viewname = ?)) order by schemaname, viewname"
   }
  ]
 }

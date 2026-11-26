@@ -9,6 +9,8 @@ Reader: `oracle`. Schema = owner; refs carry no catalog. Requires Oracle Databas
 ## Metadata sources
 `ALL_USERS`, `ALL_TABLES`, `ALL_VIEWS`, `ALL_MVIEWS`, `ALL_TAB_COMMENTS`, `ALL_PART_TABLES`, `ALL_TAB_COLUMNS`, `ALL_COL_COMMENTS`, `ALL_CONSTRAINTS`, `ALL_CONS_COLUMNS`.
 
+View definitions: `ALL_VIEWS.TEXT` and `ALL_MVIEWS.QUERY` (LONG columns, each read by its own query); a definition the driver cannot fetch is unknown. Metadata only; the text is kept in memory and never logged.
+
 ## Permissions
 Any user: `ALL_*` shows objects the user owns or has been granted access to. To describe another schema, grant `SELECT` (or `READ`) on its objects, or `SELECT ANY DICTIONARY` / the `SELECT_CATALOG_ROLE` role for the dictionary views to show everything.
 

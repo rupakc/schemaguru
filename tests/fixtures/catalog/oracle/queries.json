@@ -470,6 +470,28 @@
     }
    ],
    "sql": "select k.owner as owner, k.table_name as table_name, k.constraint_name as constraint_name, k.constraint_type as constraint_type, k.status as status, cc.column_name as column_name, cc.position as position, rc.owner as ref_owner, rc.table_name as ref_table, rcc.column_name as ref_column from all_constraints k join all_cons_columns cc on cc.owner = k.owner and cc.constraint_name = k.constraint_name left join all_constraints rc on rc.owner = k.r_owner and rc.constraint_name = k.r_constraint_name left join all_cons_columns rcc on rcc.owner = rc.owner and rcc.constraint_name = rc.constraint_name and rcc.position = cc.position where k.constraint_type in (?, ?, ?) and ((k.owner = ? and k.table_name = ?) or (k.owner = ? and k.table_name = ?) or (k.owner = ? and k.table_name = ?) or (k.owner = ? and k.table_name = ?) or (k.owner = ? and k.table_name = ?) or (k.owner = ? and k.table_name = ?)) order by k.owner, k.table_name, k.constraint_name, cc.position"
+  },
+  {
+   "params": [
+    "SHOP",
+    "V_OPEN_ORDERS"
+   ],
+   "rows": [
+    {
+     "DEFINITION": "SELECT ORDER_ID, STATUS FROM SHOP.ORDERS WHERE STATUS = 'open'",
+     "NAME": "V_OPEN_ORDERS",
+     "OWNER": "SHOP"
+    }
+   ],
+   "sql": "select owner, view_name as name, text as definition from all_views where ((owner = ? and view_name = ?)) order by owner, view_name"
+  },
+  {
+   "params": [
+    "SHOP",
+    "V_OPEN_ORDERS"
+   ],
+   "rows": [],
+   "sql": "select owner, mview_name as name, query as definition from all_mviews where ((owner = ? and mview_name = ?)) order by owner, mview_name"
   }
  ]
 }

@@ -505,6 +505,22 @@
     }
    ],
    "sql": "select k.table_catalog as table_catalog, k.table_schema as table_schema, k.table_name as table_name, k.constraint_name as constraint_name, tc.constraint_type as constraint_type, k.column_name as column_name, k.ordinal_position as ordinal_position, pk.table_catalog as ref_catalog, pk.table_schema as ref_schema, pk.table_name as ref_table, pk.column_name as ref_column from system.information_schema.key_column_usage k join system.information_schema.table_constraints tc on tc.constraint_catalog = k.constraint_catalog and tc.constraint_schema = k.constraint_schema and tc.constraint_name = k.constraint_name left join system.information_schema.referential_constraints rc on rc.constraint_catalog = k.constraint_catalog and rc.constraint_schema = k.constraint_schema and rc.constraint_name = k.constraint_name left join system.information_schema.key_column_usage pk on pk.constraint_catalog = rc.unique_constraint_catalog and pk.constraint_schema = rc.unique_constraint_schema and pk.constraint_name = rc.unique_constraint_name and pk.ordinal_position = k.position_in_unique_constraint where ((k.table_catalog = ? and k.table_schema = ? and k.table_name = ?) or (k.table_catalog = ? and k.table_schema = ? and k.table_name = ?) or (k.table_catalog = ? and k.table_schema = ? and k.table_name = ?) or (k.table_catalog = ? and k.table_schema = ? and k.table_name = ?) or (k.table_catalog = ? and k.table_schema = ? and k.table_name = ?) or (k.table_catalog = ? and k.table_schema = ? and k.table_name = ?) or (k.table_catalog = ? and k.table_schema = ? and k.table_name = ?)) order by k.table_catalog, k.table_schema, k.table_name, k.constraint_name, k.ordinal_position"
+  },
+  {
+   "params": [
+    "main",
+    "shop",
+    "v_open_orders"
+   ],
+   "rows": [
+    {
+     "table_catalog": "main",
+     "table_name": "v_open_orders",
+     "table_schema": "shop",
+     "view_definition": "SELECT order_id, status FROM shop.orders WHERE status = 'open'"
+    }
+   ],
+   "sql": "select table_catalog, table_schema, table_name, view_definition from system.information_schema.views where ((table_catalog = ? and table_schema = ? and table_name = ?)) order by table_catalog, table_schema, table_name"
   }
  ]
 }

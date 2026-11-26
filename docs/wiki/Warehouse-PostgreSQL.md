@@ -15,6 +15,8 @@ Reader: `postgres` (`schemaguru.catalog.readers.postgres.PostgresReader`). Extra
 (partitioning). Not `information_schema`, which hides objects the role cannot use and is slow on
 large catalogs.
 
+View definitions: `pg_views.definition` and `pg_matviews.definition` (`pg_get_viewdef` text, so a view over `SELECT *` is already expanded). Metadata only; the text is kept in memory and never logged.
+
 ## Permissions
 A role that can connect to the database. `pg_catalog` is readable by every role; nothing is
 written. Measurement probes need `SELECT` on the tables you measure, so give SchemaGuru a

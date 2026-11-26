@@ -499,5 +499,8 @@
    "row_count": null,
    "withdrawn_at": null
   }
- ]
+ ],
+ "view_definitions": {
+  "sg_shop.v_customers": "select `sg_shop`.`customers`.`customer_id` AS `customer_id`,`sg_shop`.`customers`.`email` AS `email` from `sg_shop`.`customers`"
+ }
 }

@@ -11,7 +11,7 @@ import pytest
 
 from schemaguru.catalog import ReaderCapabilities, dialects, reader_for
 from schemaguru.catalog.executor import check_metadata_sql
-from schemaguru.catalog.protocol import Page
+from schemaguru.catalog.protocol import Page, ViewDefinitionReader, reads_view_definitions
 from schemaguru.catalog.readers.bigquery import MIN_BILLED_BYTES, BigQueryReader
 from schemaguru.catalog.readers.databricks import DatabricksReader
 from schemaguru.catalog.readers.oracle import OracleReader
@@ -1425,3 +1425,89 @@ def test_crawl_surfaces_reader_diagnostics_once() -> None:
     assert "PostgreSQL 11" in report.errors[0].message
     assert not reader.diagnostics  # consumed: not repeated
     assert [d.code for d in again.errors] == ["SG102"]  # a new crawl reports its own, once
+
+
+_VIEW_SQL = "SELECT o.order_id FROM shop.orders o WHERE o.email = 'jane@example.com'"
+
+
+def test_postgres_view_definitions() -> None:
+    fake = Fake(
+        (["pg_views"], [{"schema_name": "shop", "table_name": "v_open", "definition": _VIEW_SQL}]),
+        (
+            ["pg_matviews"],
+            [{"schema_name": "shop", "table_name": "mv_daily", "definition": " SELECT 1 "}],
+        ),
+    )
+    reader = PostgresReader(fake)  # type: ignore[arg-type]
+    refs = [ObjectRef(None, "shop", n) for n in ("v_open", "mv_daily", "orders")]
+    got = reader.view_definitions(refs)
+    assert got == {refs[0]: _VIEW_SQL, refs[1]: " SELECT 1 "}  # orders is a table: absent
+    assert all(c[1] == ("shop", "v_open", "shop", "mv_daily", "shop", "orders") for c in fake.calls)
+    assert reader.capabilities().view_definitions
+    assert reads_view_definitions(reader) and isinstance(reader, ViewDefinitionReader)
+
+
+def test_view_definitions_absent_for_tables() -> None:
+    """A blank, NULL or non-text definition is absent; a table has no row to give one."""
+    rows = [
+        {"schema_name": "s", "table_name": "a", "definition": None},
+        {"schema_name": "s", "table_name": "b", "definition": "   "},
+        {"schema_name": "s", "table_name": "c", "definition": 7},
+        {"schema_name": "s", "table_name": "d", "definition": b"SELECT 1"},
+    ]
+    reader = PostgresReader(Fake((["pg_views"], rows), (["pg_matviews"], [])))  # type: ignore[arg-type]
+    refs = [ObjectRef(None, "s", n) for n in "abcde"]
+    assert reader.view_definitions(refs) == {refs[3]: "SELECT 1"}
+    assert reader.view_definitions([]) == {}
+
+
+def test_reads_view_definitions_needs_capability_and_method() -> None:
+    class UserReader:
+        dialect = "x"
+
+        def capabilities(self) -> ReaderCapabilities:
+            return ReaderCapabilities(view_definitions=True)
+
+    class Plain(UserReader):
+        def capabilities(self) -> ReaderCapabilities:
+            return ReaderCapabilities()
+
+    assert not reads_view_definitions(UserReader())  # type: ignore[arg-type]  # no method
+    assert not reads_view_definitions(Plain())  # type: ignore[arg-type]
+    assert ReaderCapabilities().view_definitions is False
+
+
+def test_oracle_view_definitions_never_leak_into_diagnostics() -> None:
+    class Failing(Fake):
+        def run(
+            self, sql: str, params: Sequence[Any] = (), *, timeout_s: float | None = None
+        ) -> Any:
+            if "all_mviews" in sql.lower():
+                raise RuntimeError(f"ORA-00997 near {_VIEW_SQL}")
+            return super().run(sql, params, timeout_s=timeout_s)
+
+    fake = Failing((["all_views"], [{"OWNER": "SHOP", "NAME": "V_OPEN", "DEFINITION": _VIEW_SQL}]))
+    reader = OracleReader(fake)  # type: ignore[arg-type]
+    ref = ObjectRef(None, "SHOP", "V_OPEN")
+    assert reader.view_definitions([ref]) == {ref: _VIEW_SQL}
+    assert len(reader.diagnostics) == 1
+    d = reader.diagnostics[0]
+    assert "RuntimeError" in d.message and "jane@example.com" not in d.message + d.hint
+    assert "all_views" in fake.calls[0][0].lower()
+
+
+def test_bigquery_view_definitions_use_views_and_table_ddl() -> None:
+    fake = Fake(
+        (["INFORMATION_SCHEMA.VIEWS"], [{"table_name": "v", "definition": "SELECT 1"}]),
+        (
+            ["INFORMATION_SCHEMA.TABLES", "MATERIALIZED VIEW"],
+            [{"table_name": "mv", "definition": "CREATE MATERIALIZED VIEW mv AS SELECT 2"}],
+        ),
+    )
+    reader = BigQueryReader(fake, project="p")  # type: ignore[arg-type]
+    refs = [ObjectRef("p", "shop", "v"), ObjectRef("p", "shop", "mv")]
+    assert reader.view_definitions(refs) == {
+        refs[0]: "SELECT 1",
+        refs[1]: "CREATE MATERIALIZED VIEW mv AS SELECT 2",
+    }
+    assert reader.bytes_billed == 2 * MIN_BILLED_BYTES

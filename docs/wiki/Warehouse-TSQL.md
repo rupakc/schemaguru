@@ -13,6 +13,8 @@ Microsoft ODBC Driver 18 for SQL Server).
 `sys.foreign_key_columns`, `sys.extended_properties`. The connection's database is the scope;
 refs carry no catalog.
 
+View definitions: `sys.sql_modules.definition` joined to `sys.objects` and `sys.schemas`; NULL for an encrypted module, which is then unknown. Metadata only; the text is kept in memory and never logged.
+
 ## Permissions needed
 `sys.*` shows only objects the login has some permission on, so grant `VIEW DEFINITION` on the
 schemas to crawl (or membership in `db_datareader`, which implies visibility). Nothing is written.

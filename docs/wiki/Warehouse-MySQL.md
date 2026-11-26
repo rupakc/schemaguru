@@ -13,6 +13,8 @@ Dialect name: `mysql` (extra: `pip install schemaguru[mysql]`, driver `pymysql`)
 MySQL 8 accounts default to `caching_sha2_password`; `pymysql` needs the `cryptography` package
 (`pip install cryptography`) to log in with one over a non-TLS connection.
 
+View definitions: `information_schema.VIEWS.VIEW_DEFINITION`; NULL without the `SHOW VIEW` privilege, which is then unknown. Metadata only; the text is kept in memory and never logged.
+
 ## Permissions needed
 `information_schema` shows only what the account may access, so grant `SELECT` (or any privilege)
 on the schemas to crawl. No access to `mysql.*` or `performance_schema` is needed. Nothing is

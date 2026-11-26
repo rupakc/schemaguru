@@ -501,5 +501,8 @@
    "row_count": null,
    "withdrawn_at": null
   }
- ]
+ ],
+ "view_definitions": {
+  "SHOP.V_OPEN_ORDERS": "SELECT ORDER_ID, STATUS FROM SHOP.ORDERS WHERE STATUS = 'open'"
+ }
 }

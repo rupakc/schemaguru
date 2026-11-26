@@ -172,3 +172,14 @@ def test_postgres_paging_and_crawl(conn: Any, tmp_path: Any) -> None:
         assert len(list(store.iter_tables())) == 10
     finally:
         store.close()
+
+
+def test_postgres_view_definition_live(conn: Any) -> None:
+    from schemaguru.lineage.parse import extract_tables
+
+    r = PostgresReader(DBAPIExecutor(conn, "format"))
+    view = ObjectRef(None, "sg_test", "v_customers")
+    table = ObjectRef(None, "sg_test", "customers")
+    got = r.view_definitions([view, table])
+    assert set(got) == {view}
+    assert "customers" in {n[-1].lower() for n in extract_tables(got[view], "postgres")}

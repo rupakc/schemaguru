@@ -6,7 +6,8 @@ import json
 
 import pytest
 
-from schemaguru.catalog import dialects, reader_for
+from schemaguru.catalog import dialects, reader_for, reads_view_definitions
+from schemaguru.model.refs import ObjectRef
 from tests.conformance.replay import FIXTURES, ReplayExecutor, fixture_doc, read_all
 
 # Engines without foreign keys (or that expose none in metadata).
@@ -52,3 +53,21 @@ def test_fixture_covers_the_shapes_every_reader_must_handle(dialect: str) -> Non
             assert any(c["kind"] == "foreign_key" for c in expected["constraints"]), (
                 "fixture needs a foreign key"
             )
+
+
+@pytest.mark.parametrize("dialect", FIXTURE_DIALECTS)
+def test_fixture_has_view_definitions(dialect: str) -> None:
+    expected = json.loads((FIXTURES / dialect / "expected.json").read_text(encoding="utf-8"))
+    reader = reader_for(dialect, ReplayExecutor.from_fixture(dialect))
+    if not reads_view_definitions(reader):
+        assert "view_definitions" not in expected
+        return
+    views = {
+        ObjectRef(t["ref"]["catalog"], t["ref"]["schema"], t["ref"]["table"]).canonical()
+        for t in expected["tables"]
+        if t["kind"] in ("view", "materialized_view")
+    }
+    got = expected.get("view_definitions", {})
+    assert got, f"{dialect}: no view definitions recorded"
+    assert views <= set(got), f"{dialect}: views without a definition: {sorted(views - set(got))}"
+    assert all(isinstance(v, str) and v.strip() for v in got.values())

@@ -1,5 +1,6 @@
 {
  "dialect": "duckdb",
+ "only_catalogs": null,
  "queries": [
   {
    "params": [
@@ -801,6 +802,20 @@
     }
    ],
    "sql": "select schema_name, table_name, constraint_type, constraint_column_names, referenced_table, referenced_column_names from duckdb_constraints() where database_name = current_database() and ((schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?) or (schema_name = ? and table_name = ?)) and constraint_type in ('primary key', 'unique', 'foreign key') order by schema_name, table_name, constraint_index"
+  },
+  {
+   "params": [
+    "shop",
+    "v_open_orders"
+   ],
+   "rows": [
+    {
+     "schema_name": "shop",
+     "sql": "CREATE VIEW shop.v_open_orders AS SELECT order_id, status FROM shop.orders;",
+     "view_name": "v_open_orders"
+    }
+   ],
+   "sql": "select schema_name, view_name, sql from duckdb_views() where database_name = current_database() and not internal and ((schema_name = ? and view_name = ?)) order by schema_name, view_name"
   }
  ]
 }

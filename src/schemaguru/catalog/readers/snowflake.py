@@ -17,6 +17,7 @@ from schemaguru.catalog.executor import MetadataExecutor
 from schemaguru.catalog.protocol import CatalogError, Page, ReaderCapabilities
 from schemaguru.catalog.readers._common import (
     Row,
+    definition_text,
     group_by_scope,
     lower_keys,
     opt_int,
@@ -275,9 +276,35 @@ class SnowflakeReader:
             rows += self._run(f"SHOW {show} IN TABLE {scope}.{quote_ident(name)}")
         return rows
 
+    def view_definitions(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, str]:
+        """``INFORMATION_SCHEMA.VIEWS.VIEW_DEFINITION`` (the ``CREATE VIEW`` text; NULL for a
+        secure view the role does not own, which is then absent)."""
+        out: dict[ObjectRef, str] = {}
+        for (catalog, schema), names in group_by_scope(tables).items():
+            if schema is None:
+                continue
+            db = self._db(catalog)
+            marks = ", ".join("?" for _ in names)
+            rows = self._run(
+                "SELECT table_name, view_definition "
+                f"FROM {quote_ident(db)}.INFORMATION_SCHEMA.VIEWS "
+                f"WHERE table_schema = ? AND table_name IN ({marks}) ORDER BY table_name",
+                (schema, *names),
+            )
+            for r in rows:
+                text = definition_text(r["view_definition"])
+                if text is not None:
+                    out[ObjectRef(db, schema, r["table_name"])] = text
+        return out
+
     def capabilities(self) -> ReaderCapabilities:
         return ReaderCapabilities(
-            comments=True, stats=True, last_altered=True, constraints=True, incremental=True
+            comments=True,
+            stats=True,
+            last_altered=True,
+            constraints=True,
+            incremental=True,
+            view_definitions=True,
         )
 
 

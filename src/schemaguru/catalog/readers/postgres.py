@@ -9,6 +9,7 @@ from datetime import datetime
 
 from schemaguru.catalog.executor import MetadataExecutor
 from schemaguru.catalog.protocol import Page, ReaderCapabilities
+from schemaguru.catalog.readers._common import definition_text
 from schemaguru.catalog.readers._types import family_of
 from schemaguru.catalog.registry import register_reader
 from schemaguru.diagnostics import Diagnostic, Severity
@@ -222,8 +223,30 @@ class PostgresReader:
                 Constraint("unique", tref, tuple(r["cols"]), None, None, True)
             )
 
+    def view_definitions(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, str]:
+        """``pg_views`` and ``pg_matviews`` (``definition`` is ``pg_get_viewdef``); a table is not
+        in either, so it is absent."""
+        out: dict[ObjectRef, str] = {}
+        if not tables:
+            return out
+        for rel, name in (("pg_views", "viewname"), ("pg_matviews", "matviewname")):
+            clause, params = _pairs(tables, "schemaname", name)
+            rows = self._ex.run(
+                f"SELECT schemaname AS schema_name, {name} AS table_name, definition "
+                f"FROM {rel} WHERE ({clause}) ORDER BY schemaname, {name}",
+                params,
+                timeout_s=self.timeout_s,
+            )
+            for r in rows:
+                text = definition_text(r["definition"])
+                if text is not None:
+                    out[ObjectRef(None, r["schema_name"], r["table_name"])] = text
+        return out
+
     def capabilities(self) -> ReaderCapabilities:
-        return ReaderCapabilities(comments=True, stats=True, constraints=True)
+        return ReaderCapabilities(
+            comments=True, stats=True, constraints=True, view_definitions=True
+        )
 
 
 register_reader("postgres", PostgresReader)

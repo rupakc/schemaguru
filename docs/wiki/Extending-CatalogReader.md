@@ -26,8 +26,12 @@ class CatalogReader(Protocol):
   altered since (meaningful only when `capabilities().incremental`).
 - `columns` and `constraints` are batched: the crawl passes up to `crawl.column_batch` (200)
   tables per call.
-- `ReaderCapabilities(comments, stats, last_altered, constraints, incremental, cost_estimate)`,
+- `ReaderCapabilities(comments, stats, last_altered, constraints, incremental, cost_estimate, view_definitions)`,
   all `False` by default: claim only what you really provide.
+- Optional `view_definitions(tables) -> Mapping[ObjectRef, str]`, batched like `columns`: the SQL
+  text of views and materialized views only. Declare `view_definitions=True` and implement it, or
+  leave both out; a reader without it keeps working. A missing definition is absent, never
+  guessed, and the text (raw SQL, possibly with PII literals) is never logged or put in an error.
 - Optional attributes the crawl uses if present: `page_size`, `timeout_s` (set from the config),
   `bytes_billed` and `bytes_billed_is_lower_bound` (for billed metadata).
 

@@ -9,6 +9,8 @@ from schemaguru.catalog.protocol import (
     CatalogReader,
     Page,
     ReaderCapabilities,
+    ViewDefinitionReader,
+    reads_view_definitions,
 )
 from schemaguru.catalog.registry import dialects, reader_for, register_reader
 
@@ -23,8 +25,10 @@ __all__ = [
     "Page",
     "ReaderCapabilities",
     "ScopeFilter",
+    "ViewDefinitionReader",
     "crawl",
     "dialects",
     "reader_for",
+    "reads_view_definitions",
     "register_reader",
 ]

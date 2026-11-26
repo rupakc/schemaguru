@@ -20,6 +20,10 @@ class CatalogReader(Protocol):
 * `list_tables` returns every live table when `changed_since` is `None`; otherwise only those
   altered since (meaningful only when `capabilities().incremental` is true).
 * `columns` and `constraints` are batched: the crawl passes up to `column_batch` tables.
+* Optional `view_definitions(tables) -> Mapping[ObjectRef, str]` (set `ReaderCapabilities(view_definitions=True)`):
+  the SQL text of views and materialized views, batched like `columns`. Leave both out and the
+  reader works unchanged. A definition you cannot read is absent, never guessed; the text is raw
+  SQL that may hold PII, so never log it or put it in an error.
 * `Page(items, next_token)`: `next_token=None` on the last page. List in a stable order, so an
   interrupted crawl can resume.
 * Raise `CatalogError(code, message)` for a failure of the whole call; the crawl records it

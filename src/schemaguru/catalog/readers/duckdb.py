@@ -12,6 +12,7 @@ from typing import Any
 
 from schemaguru.catalog.executor import MetadataExecutor
 from schemaguru.catalog.protocol import Page, ReaderCapabilities
+from schemaguru.catalog.readers._common import definition_text
 from schemaguru.catalog.readers._types import family_of
 from schemaguru.catalog.registry import register_reader
 from schemaguru.model.refs import ObjectRef
@@ -25,8 +26,8 @@ _KINDS: Mapping[str, ConstraintKind] = {
 }
 
 
-def _pairs(tables: Sequence[ObjectRef]) -> tuple[str, list[str]]:
-    clause = " OR ".join("(schema_name = ? AND table_name = ?)" for _ in tables)
+def _pairs(tables: Sequence[ObjectRef], table_col: str = "table_name") -> tuple[str, list[str]]:
+    clause = " OR ".join(f"(schema_name = ? AND {table_col} = ?)" for _ in tables)
     params: list[str] = []
     for t in tables:
         params += [t.schema or "main", t.table]
@@ -146,8 +147,29 @@ class DuckDBReader:
             )
         return out
 
+    def view_definitions(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, str]:
+        """``duckdb_views().sql``: the full ``CREATE VIEW`` statement (internal views excluded)."""
+        out: dict[ObjectRef, str] = {}
+        if not tables:
+            return out
+        clause, params = _pairs(tables, "view_name")
+        rows = self._ex.run(
+            "SELECT schema_name, view_name, sql FROM duckdb_views() "
+            f"WHERE database_name = current_database() AND NOT internal AND ({clause}) "
+            "ORDER BY schema_name, view_name",
+            params,
+            timeout_s=self.timeout_s,
+        )
+        for r in rows:
+            text = definition_text(r["sql"])
+            if text is not None:
+                out[ObjectRef(None, r["schema_name"], r["view_name"])] = text
+        return out
+
     def capabilities(self) -> ReaderCapabilities:
-        return ReaderCapabilities(comments=True, stats=True, constraints=True)
+        return ReaderCapabilities(
+            comments=True, stats=True, constraints=True, view_definitions=True
+        )
 
 
 register_reader("duckdb", DuckDBReader)

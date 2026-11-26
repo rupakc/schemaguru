@@ -16,7 +16,14 @@ from typing import Any
 
 from schemaguru.catalog.executor import MetadataExecutor
 from schemaguru.catalog.protocol import Page, ReaderCapabilities
-from schemaguru.catalog.readers._common import Row, lower_keys, opt_int, pairs, yes_no
+from schemaguru.catalog.readers._common import (
+    Row,
+    definition_text,
+    lower_keys,
+    opt_int,
+    pairs,
+    yes_no,
+)
 from schemaguru.catalog.readers._types import family_of
 from schemaguru.catalog.registry import register_reader
 from schemaguru.model.refs import ObjectRef
@@ -290,8 +297,33 @@ class RedshiftReader:
                 )
         return out
 
+    def view_definitions(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, str]:
+        """``pg_views.definition`` of the current database. Redshift lists ordinary and
+        late-binding views there; it has no definition column for a materialized view, and
+        ``pg_views`` is blind to other databases (datashares), so those are absent."""
+        out: dict[ObjectRef, str] = {}
+        if not tables:
+            return out
+        db = self._current()
+        mine = [t for t in tables if self._db(t.catalog) == db]
+        if not mine:
+            return out
+        clause, params = pairs(mine, "schemaname", "viewname")
+        rows = self._run(
+            "SELECT schemaname, viewname, definition FROM pg_views "
+            f"WHERE ({clause}) ORDER BY schemaname, viewname",
+            params,
+        )
+        for r in rows:
+            text = definition_text(r["definition"])
+            if text is not None:
+                out[ObjectRef(db, r["schemaname"], r["viewname"])] = text
+        return out
+
     def capabilities(self) -> ReaderCapabilities:
-        return ReaderCapabilities(comments=True, stats=True, constraints=True)
+        return ReaderCapabilities(
+            comments=True, stats=True, constraints=True, view_definitions=True
+        )
 
 
 register_reader("redshift", RedshiftReader)

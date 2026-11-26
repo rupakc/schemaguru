@@ -556,5 +556,8 @@
    "row_count": null,
    "withdrawn_at": null
   }
- ]
+ ],
+ "view_definitions": {
+  "\"demo-project\".shop.v_open_orders": "SELECT order_id, status FROM shop.orders WHERE status = 'open'"
+ }
 }

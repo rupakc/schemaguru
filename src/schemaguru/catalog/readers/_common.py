@@ -107,3 +107,16 @@ def pairs3(
     for t in tables:
         params += [t.catalog or "", t.schema or "", t.table]
     return f"({clause})", params
+
+
+def definition_text(value: Any) -> str | None:
+    """A view definition as text, or ``None`` when absent, blank or not text (unknown is never
+    guessed). The value is raw SQL that may hold PII: callers keep it in memory only."""
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            value = bytes(value).decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value

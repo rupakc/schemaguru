@@ -575,6 +575,19 @@
     }
    ],
    "sql": "show imported keys in schema \"demo_db\".\"shop\""
+  },
+  {
+   "params": [
+    "SHOP",
+    "V_OPEN_ORDERS"
+   ],
+   "rows": [
+    {
+     "TABLE_NAME": "V_OPEN_ORDERS",
+     "VIEW_DEFINITION": "SELECT ORDER_ID, STATUS FROM SHOP.ORDERS WHERE STATUS = 'open'"
+    }
+   ],
+   "sql": "select table_name, view_definition from \"demo_db\".information_schema.views where table_schema = ? and table_name in (?) order by table_name"
   }
  ]
 }

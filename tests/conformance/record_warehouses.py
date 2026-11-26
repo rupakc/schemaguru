@@ -63,6 +63,10 @@ class Scripted:
         return self._h(sql.lower(), params)
 
 
+VIEW_SQL = "SELECT order_id, status FROM shop.orders WHERE status = 'open'"
+VIEW_SQL_UPPER = "SELECT ORDER_ID, STATUS FROM SHOP.ORDERS WHERE STATUS = 'open'"
+
+
 def _pairs(params: Sequence[Any]) -> set[tuple[str, str]]:
     return {(params[i], params[i + 1]) for i in range(0, len(params) - 1, 2)}
 
@@ -73,6 +77,12 @@ BQ_P = "demo-project"
 
 def _bq(sql: str, params: Sequence[Any]) -> Rows:
     ds = "shop" if "`shop`" in sql else "ops" if "`ops`" in sql else None
+    if "information_schema.views" in sql:  # view_definitions: views, per dataset
+        if "`shop`" in sql and "v_open_orders" in params:
+            return [{"table_name": "v_open_orders", "definition": VIEW_SQL}]
+        return []
+    if "information_schema.tables" in sql and "materialized view" in sql:
+        return []  # the fixture has no materialized view; TABLES.ddl is read for them
     if "schemata" in sql:
         return [
             {"catalog_name": BQ_P, "schema_name": "ops"},
@@ -218,6 +228,10 @@ def _sf_tables() -> dict[str, list[tuple[Any, ...]]]:
 
 
 def _sf(sql: str, params: Sequence[Any]) -> Rows:
+    if "information_schema.views" in sql:  # view_definitions
+        if params[0] == "SHOP" and "V_OPEN_ORDERS" in params[1:]:
+            return [{"TABLE_NAME": "V_OPEN_ORDERS", "VIEW_DEFINITION": VIEW_SQL_UPPER}]
+        return []
     if "current_database()" in sql and "from" not in sql:
         return [{"NAME": SF_DB}]
     if "information_schema.schemata" in sql:
@@ -370,6 +384,10 @@ RS_TABLES: dict[str, list[tuple[Any, ...]]] = {
 
 
 def _rs(sql: str, params: Sequence[Any]) -> Rows:
+    if "from pg_views" in sql:  # view_definitions
+        if ("shop", "v_open_orders") in _pairs(params[0:]):
+            return [{"schemaname": "shop", "viewname": "v_open_orders", "definition": VIEW_SQL}]
+        return []
     if sql.startswith("select current_database()"):
         return [{"name": "dev"}]
     if "from svv_all_schemas" in sql:
@@ -447,6 +465,14 @@ def _rs(sql: str, params: Sequence[Any]) -> Rows:
 
 # ---------------------------------------------------------------------------------- Databricks
 def _dbx(sql: str, params: Sequence[Any]) -> Rows:
+    if "information_schema.views" in sql:  # view_definitions
+        want = {(params[i], params[i + 1], params[i + 2]) for i in range(0, len(params), 3)}
+        if ("main", "shop", "v_open_orders") in want:
+            return [
+                {"table_catalog": "main", "table_schema": "shop", "table_name": "v_open_orders",
+                 "view_definition": VIEW_SQL}
+            ]  # fmt: skip
+        return []
     if "information_schema.catalogs" in sql:
         return [{"catalog_name": "lake"}, {"catalog_name": "main"}]
     if "information_schema.schemata" in sql:
@@ -541,6 +567,12 @@ def _dbx(sql: str, params: Sequence[Any]) -> Rows:
 
 # ---------------------------------------------------------------------------------- Oracle
 def _ora(sql: str, params: Sequence[Any]) -> Rows:
+    if "as definition from all_views" in sql:  # view_definitions (a LONG column)
+        if ("SHOP", "V_OPEN_ORDERS") in _pairs(params):
+            return [{"OWNER": "SHOP", "NAME": "V_OPEN_ORDERS", "DEFINITION": VIEW_SQL_UPPER}]
+        return []
+    if "as definition from all_mviews" in sql:
+        return []
     if "from all_users" in sql:
         return [{"NAME": "OPS", "TABLE_COUNT": 2}, {"NAME": "SHOP", "TABLE_COUNT": 4}]
     if "from all_tables t" in sql:
@@ -649,6 +681,8 @@ KNOWN: dict[str, frozenset[str]] = {
             "fe504efaa214",  # select k.table_name as table_name, k.constraint_name as cons
             "c0d40fc8192f",  # select t.table_name as table_name, t.table_type as table_typ
             "e42e418c23fd",  # select t.table_name as table_name, t.table_type as table_typ
+            "de968ec4ec23",  # select table_name, ddl as definition from `demo-project`.`shop`.in
+            "d9d268ef2ba5",  # select table_name, view_definition as definition from `demo-projec
         }
     ),
     "snowflake": frozenset(
@@ -658,6 +692,7 @@ KNOWN: dict[str, frozenset[str]] = {
             "b94b3b2aa25f",  # select table_name, column_name, ordinal_position, data_type,
             "3f9ab72a2933",  # select table_name, column_name, ordinal_position, data_type,
             "50d1ccf8647b",  # select table_name, table_type, row_count, bytes, created, la
+            "fa4f5e7e8414",  # select table_name, view_definition from "demo_db".information_sche
             "05c2be2c031e",  # show imported keys in schema "demo_db"."ops"
             "af53087ac00a",  # show imported keys in schema "demo_db"."shop"
             "70f20e905e8b",  # show primary keys in schema "demo_db"."ops"
@@ -674,6 +709,7 @@ KNOWN: dict[str, frozenset[str]] = {
             "f8e574d5238b",  # select s.schema_name as schema_name, (select count(*) from s
             "de59bae5c3dd",  # select schema_name, table_name, column_name, ordinal_positio
             "aafd40681632",  # select schemaname, tablename, columnname, columnnum, externa
+            "4e70794396da",  # select schemaname, viewname, definition from pg_views where ((sche
             "f12f74d69309",  # select t.table_name as table_name, t.table_type as table_typ
             "1e4b3ccfa288",  # select tablename as table_name from svv_external_tables wher
         }
@@ -684,6 +720,7 @@ KNOWN: dict[str, frozenset[str]] = {
             "77c63f9f3fb7",  # select k.table_catalog as table_catalog, k.table_schema as t
             "b224715781b3",  # select s.catalog_name as catalog_name, s.schema_name as sche
             "1c252fe0c0ba",  # select table_catalog, table_schema, table_name, column_name,
+            "1e10afc0662d",  # select table_catalog, table_schema, table_name, view_definition fr
             "e5f9c8644a80",  # select table_name, table_type, comment, created, last_altere
         }
     ),
@@ -693,6 +730,8 @@ KNOWN: dict[str, frozenset[str]] = {
             "a0e567050d5b",  # select k.owner as owner, k.table_name as table_name, k.const
             "b09f035d90ee",  # select u.username as name, (select count(*) from all_tables
             "12ded0872f93",  # select x.table_name as table_name, x.kind as kind, x.num_row
+            "810f00cf1eb8",  # select owner, mview_name as name, query as definition from all_mvi
+            "a0fe2e952eb4",  # select owner, view_name as name, text as definition from all_views
         }
     ),
 }

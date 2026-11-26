@@ -17,7 +17,14 @@ from typing import Any
 
 from schemaguru.catalog.executor import MetadataExecutor
 from schemaguru.catalog.protocol import Page, ReaderCapabilities
-from schemaguru.catalog.readers._common import Row, lower_keys, pairs3, to_utc, yes_no
+from schemaguru.catalog.readers._common import (
+    Row,
+    definition_text,
+    lower_keys,
+    pairs3,
+    to_utc,
+    yes_no,
+)
 from schemaguru.catalog.readers._types import family_of
 from schemaguru.catalog.registry import register_reader
 from schemaguru.model.refs import ObjectRef
@@ -211,9 +218,31 @@ class DatabricksReader:
             )
         return out
 
+    def view_definitions(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, str]:
+        """``system.information_schema.views.view_definition`` (the view's query text)."""
+        out: dict[ObjectRef, str] = {}
+        if not tables:
+            return out
+        clause, params = pairs3(tables, "table_catalog", "table_schema", "table_name")
+        rows = self._run(
+            "SELECT table_catalog, table_schema, table_name, view_definition "
+            f"FROM {_IS}.views WHERE {clause} "
+            "ORDER BY table_catalog, table_schema, table_name",
+            params,
+        )
+        for r in rows:
+            text = definition_text(r["view_definition"])
+            if text is not None:
+                out[ObjectRef(r["table_catalog"], r["table_schema"], r["table_name"])] = text
+        return out
+
     def capabilities(self) -> ReaderCapabilities:
         return ReaderCapabilities(
-            comments=True, last_altered=True, constraints=True, incremental=True
+            comments=True,
+            last_altered=True,
+            constraints=True,
+            incremental=True,
+            view_definitions=True,
         )
 
 

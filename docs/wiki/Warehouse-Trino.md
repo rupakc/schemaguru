@@ -11,6 +11,8 @@ Dialect name: `trino` (extra: `pip install schemaguru[trino]`, driver `trino`).
 `system.metadata.table_comments` for table comments. Trino is federated: every connector catalog
 is a SchemaGuru catalog and refs carry it (`system` is skipped).
 
+View definitions: `<catalog>.information_schema.views.view_definition`; a connector that does not expose it leaves the definition unknown. Metadata only; the text is kept in memory and never logged.
+
 ## Permissions needed
 The Trino user needs access to the catalogs to crawl; `information_schema` shows only what the
 user may see. Table comments need read access to `system.metadata.table_comments`. Nothing is

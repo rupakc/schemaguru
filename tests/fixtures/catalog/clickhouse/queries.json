@@ -355,6 +355,21 @@
     }
    ],
    "sql": "select database as schema_name, `table` as table_name, name as column_name, position as ordinal, type as data_type, default_kind, default_expression, comment from system.columns where (database = ? and `table` = ?) or (database = ? and `table` = ?) or (database = ? and `table` = ?) or (database = ? and `table` = ?) or (database = ? and `table` = ?) or (database = ? and `table` = ?) order by database, `table`, position"
+  },
+  {
+   "params": [
+    "sg_shop",
+    "v_customers"
+   ],
+   "rows": [
+    {
+     "as_select": "SELECT customer_id, email FROM sg_shop.customers",
+     "schema_name": "sg_shop",
+     "table_name": "v_customers"
+    }
+   ],
+   "sql": "select database as schema_name, name as table_name, as_select from system.tables where ((database = ? and `table` = ?)) and engine in ('view', 'materializedview', 'liveview', 'windowview') order by database, name"
   }
- ]
+ ],
+ "synthetic_view_definitions": true
 }

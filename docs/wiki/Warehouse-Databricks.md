@@ -9,6 +9,8 @@ Reader: `databricks`. Three-level namespace: catalog.schema.table. Extra: `pip i
 ## Metadata sources
 `system.information_schema.{catalogs, schemata, tables, columns, table_constraints, key_column_usage, referential_constraints}`. One `system.information_schema` serves every catalog the principal can see, so one connection reads all of them. The `system` catalog and `information_schema` schemas are skipped.
 
+View definitions: `system.information_schema.views.view_definition`. Metadata only; the text is kept in memory and never logged.
+
 ## Permissions
 `USE CATALOG`, `USE SCHEMA` and `SELECT` or `BROWSE` on the objects to describe (Unity Catalog filters `information_schema` to what the principal may see); `SELECT` on `system.information_schema` (granted to all account users by default). A running SQL warehouse (or serverless) executes the queries.
 

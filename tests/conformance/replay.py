@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from schemaguru.catalog.executor import MetadataExecutor
-from schemaguru.catalog.protocol import CatalogReader
+from schemaguru.catalog.protocol import CatalogReader, reads_view_definitions
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "catalog"
 
@@ -164,7 +164,13 @@ def read_all(
             columns += cols
         for cons in reader.constraints(batch).values():
             constraints += cons
-    return {
+    definitions: dict[str, str] = {}
+    if reads_view_definitions(reader):
+        views = [t.ref for t in tables if t.kind in ("view", "materialized_view")]
+        for i in range(0, len(views), 200):
+            for ref, text in reader.view_definitions(views[i : i + 200]).items():  # type: ignore[attr-defined]
+                definitions[ref.canonical()] = text
+    out: dict[str, Any] = {
         "schemas": [s.to_dict() for s in sorted(schemas, key=lambda s: s.key())],
         "tables": [t.to_dict() for t in sorted(tables, key=lambda t: t.ref.canonical())],
         "columns": [
@@ -177,6 +183,9 @@ def read_all(
             )
         ],
     }
+    if definitions:
+        out["view_definitions"] = dict(sorted(definitions.items()))
+    return out
 
 
 def _catalogs(reader: CatalogReader) -> list[str | None]:

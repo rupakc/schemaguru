@@ -413,5 +413,8 @@
    "row_count": null,
    "withdrawn_at": null
   }
- ]
+ ],
+ "view_definitions": {
+  "sg_shop.v_customers": "SELECT customer_id, email FROM sg_shop.customers"
+ }
 }

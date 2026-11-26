@@ -15,6 +15,7 @@ from datetime import datetime
 
 from schemaguru.catalog.executor import MetadataExecutor
 from schemaguru.catalog.protocol import Page, ReaderCapabilities
+from schemaguru.catalog.readers._common import definition_text
 from schemaguru.catalog.readers._rules import blank_to_none
 from schemaguru.catalog.readers._types import family_of
 from schemaguru.catalog.registry import register_reader
@@ -133,8 +134,34 @@ class TrinoReader:
     def constraints(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, list[Constraint]]:
         return {t.table_ref(): [] for t in tables}
 
+    def view_definitions(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, str]:
+        """``<catalog>.information_schema.views.view_definition`` (the view's SQL; a catalog
+        that does not expose it, or a materialized view it does not list, is absent)."""
+        out: dict[ObjectRef, str] = {}
+        by_catalog: dict[str, list[ObjectRef]] = {}
+        for t in tables:
+            if t.catalog is not None:
+                by_catalog.setdefault(t.catalog, []).append(t)
+        for catalog, group in by_catalog.items():
+            clause = " OR ".join("(table_schema = ? AND table_name = ?)" for _ in group)
+            params: list[str] = []
+            for t in group:
+                params += [t.schema or "", t.table]
+            rows = self._ex.run(
+                "SELECT table_schema AS schema_name, table_name AS table_name, "
+                f"view_definition AS definition FROM {_q(catalog)}.information_schema.views "
+                f"WHERE {clause} ORDER BY table_schema, table_name",
+                params,
+                timeout_s=self.timeout_s,
+            )
+            for r in rows:
+                text = definition_text(r["definition"])
+                if text is not None:
+                    out[ObjectRef(catalog, r["schema_name"], r["table_name"])] = text
+        return out
+
     def capabilities(self) -> ReaderCapabilities:
-        return ReaderCapabilities(comments=True)
+        return ReaderCapabilities(comments=True, view_definitions=True)
 
 
 register_reader("trino", TrinoReader)

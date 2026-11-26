@@ -9,6 +9,8 @@ Reader: `snowflake`. Catalog = database, schema = schema. Identifiers are stored
 ## Metadata sources
 `<db>.INFORMATION_SCHEMA.SCHEMATA / TABLES / COLUMNS` (row count, bytes, `LAST_ALTERED`, clustering key, comments) and `SHOW PRIMARY KEYS`, `SHOW UNIQUE KEYS`, `SHOW IMPORTED KEYS` `IN SCHEMA "<db>"."<schema>"` for constraints.
 
+View definitions: `INFORMATION_SCHEMA.VIEWS.VIEW_DEFINITION`; NULL for a secure view the role does not own, which is then unknown. Metadata only; the text is kept in memory and never logged.
+
 ## Permissions
 A role with `USAGE` on the database and schemas and any privilege (`SELECT`, `REFERENCES`, ...) on the tables to be described: `INFORMATION_SCHEMA` and `SHOW` list only objects the role can see. `USAGE` on a warehouse for the `INFORMATION_SCHEMA` queries.
 

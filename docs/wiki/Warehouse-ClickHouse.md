@@ -11,6 +11,8 @@ Dialect name: `clickhouse` (extra: `pip install schemaguru[clickhouse]`, driver
 `system.databases`, `system.tables`, `system.columns`. A database is a schema; refs carry no
 catalog.
 
+View definitions: `system.tables.as_select` for `View`, `MaterializedView`, `LiveView` and `WindowView` engines. Metadata only; the text is kept in memory and never logged.
+
 ## Permissions needed
 `system.tables` and `system.columns` list only objects the user can see. Grant `SHOW TABLES` /
 `SHOW COLUMNS` (or `SHOW DATABASES`) on the databases to crawl. `SELECT` on data is not needed.

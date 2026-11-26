@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from schemaguru.catalog.executor import MetadataExecutor
 from schemaguru.catalog.protocol import Page, ReaderCapabilities
+from schemaguru.catalog.readers._common import definition_text
 from schemaguru.catalog.readers._rules import blank_to_none, compile_rules, family_by, utc
 from schemaguru.catalog.readers._types import family_of
 from schemaguru.catalog.registry import register_reader
@@ -218,9 +219,34 @@ class MySQLReader:
             )
         return out
 
+    def view_definitions(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, str]:
+        """``information_schema.VIEWS.VIEW_DEFINITION`` (the SELECT; NULL without the SHOW VIEW
+        privilege, which is then absent)."""
+        out: dict[ObjectRef, str] = {}
+        if not tables:
+            return out
+        clause, params = _pairs(tables, "table_schema", "table_name")
+        rows = self._ex.run(
+            "SELECT table_schema AS schema_name, table_name AS table_name, "
+            "view_definition AS definition FROM information_schema.views "
+            f"WHERE {clause} ORDER BY table_schema, table_name",
+            params,
+            timeout_s=self.timeout_s,
+        )
+        for r in rows:
+            text = definition_text(r["definition"])
+            if text is not None:
+                out[ObjectRef(None, r["schema_name"], r["table_name"])] = text
+        return out
+
     def capabilities(self) -> ReaderCapabilities:
         return ReaderCapabilities(
-            comments=True, stats=True, last_altered=True, constraints=True, incremental=True
+            comments=True,
+            stats=True,
+            last_altered=True,
+            constraints=True,
+            incremental=True,
+            view_definitions=True,
         )
 
 

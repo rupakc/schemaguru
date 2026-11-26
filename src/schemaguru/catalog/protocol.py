@@ -38,6 +38,7 @@ class ReaderCapabilities:
     constraints: bool = False
     incremental: bool = False
     cost_estimate: bool = False
+    view_definitions: bool = False
 
 
 @runtime_checkable
@@ -50,6 +51,26 @@ class BillingReader(Protocol):
 
     bytes_billed: int
     bytes_billed_is_lower_bound: bool
+
+
+@runtime_checkable
+class ViewDefinitionReader(Protocol):
+    """Optional: a reader that can return the SQL text of its views.
+
+    Batched like ``columns`` and keyed by the refs ``columns`` would use. Holds views and
+    materialized views only; a missing, empty or unfetchable definition is absent (unknown is
+    never guessed). The text is raw SQL that may carry PII literals: return it in memory only,
+    never log it or put it in a diagnostic or exception message.
+    """
+
+    def view_definitions(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, str]: ...
+
+
+def reads_view_definitions(reader: CatalogReader) -> bool:
+    """True when the reader declares the capability and implements ``view_definitions``."""
+    return bool(reader.capabilities().view_definitions) and callable(
+        getattr(reader, "view_definitions", None)
+    )
 
 
 class CatalogReader(Protocol):

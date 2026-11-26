@@ -14,6 +14,8 @@ from typing import Any
 import pytest
 
 from schemaguru.catalog import reader_for
+from schemaguru.lineage.parse import extract_tables
+from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Schema
 from tests.conformance.replay import FIXTURES, read_all
 from tests.integration.catalog.engines import COLLATION_NAMES, ENGINES, Engine
@@ -160,3 +162,22 @@ def test_mysql_timestamps_are_utc_whatever_the_session_zone() -> None:
     # the stored instant does not move with the session zone
     assert shifted["customers"].created_at == cust.created_at
     assert shifted["customers"].last_altered == cust.last_altered
+
+
+def test_view_definition_live(live: tuple[Engine, Any]) -> None:
+    """The seeded view's definition comes back and parses to the seeded base table; a base
+    table has no definition."""
+    engine, conn = live
+    reader = reader_for(engine.name, engine.executor(conn))
+    out = read_all(reader, only_catalogs=engine.only_catalogs)
+    view = next(
+        t["ref"]
+        for t in out["tables"]
+        if t["ref"]["table"] == "v_customers" and t["kind"] == "view"
+    )
+    ref = ObjectRef(view["catalog"], view["schema"], view["table"])
+    base = ObjectRef(view["catalog"], view["schema"], "customers")
+    got = reader.view_definitions([ref, base])  # type: ignore[attr-defined]
+    assert set(got) == {ref}
+    names = {n[-1].lower() for n in extract_tables(got[ref], engine.name)}
+    assert "customers" in names

@@ -16,9 +16,10 @@ from typing import Any
 
 from schemaguru.catalog.executor import MetadataExecutor
 from schemaguru.catalog.protocol import Page, ReaderCapabilities
-from schemaguru.catalog.readers._common import Row, lower_keys, opt_int, pairs
+from schemaguru.catalog.readers._common import Row, definition_text, lower_keys, opt_int, pairs
 from schemaguru.catalog.readers._types import family_of
 from schemaguru.catalog.registry import register_reader
+from schemaguru.diagnostics import Diagnostic, Severity
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column, Constraint, ConstraintKind, Schema, Table, TableKind
 
@@ -77,6 +78,7 @@ class OracleReader:
         timeout_s: float | None = None,
     ) -> None:
         self._ex = executor
+        self.diagnostics: list[Diagnostic] = []
         self.page_size = page_size
         self.timeout_s = timeout_s
 
@@ -214,8 +216,43 @@ class OracleReader:
             )
         return out
 
+    def view_definitions(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, str]:
+        """``ALL_VIEWS.TEXT`` and ``ALL_MVIEWS.QUERY``. Both are LONG columns: they cannot be
+        joined or unioned, so each is read by its own single-table query and arrives as text
+        through the driver's ordinary fetch. A query that fails leaves its definitions absent and
+        notes ``SG102`` (the error's type only: never its text, which may echo the SQL)."""
+        out: dict[ObjectRef, str] = {}
+        if not tables:
+            return out
+        sources = (("all_views", "view_name", "text"), ("all_mviews", "mview_name", "query"))
+        for rel, name_col, text_col in sources:
+            clause, params = pairs(tables, "owner", name_col)
+            try:
+                rows = self._run(
+                    f"SELECT owner, {name_col} AS name, {text_col} AS definition FROM {rel} "
+                    f"WHERE ({clause}) ORDER BY owner, {name_col}",
+                    params,
+                )
+            except Exception as e:
+                self.diagnostics.append(
+                    Diagnostic(
+                        "SG102",
+                        Severity.WARNING,
+                        f"{rel} definitions not read ({type(e).__name__})",
+                        hint="the views are still crawled; their definitions are unknown",
+                    )
+                )
+                continue
+            for r in rows:
+                text = definition_text(r["definition"])
+                if text is not None:
+                    out[ObjectRef(None, r["owner"], r["name"])] = text
+        return out
+
     def capabilities(self) -> ReaderCapabilities:
-        return ReaderCapabilities(comments=True, stats=True, constraints=True)
+        return ReaderCapabilities(
+            comments=True, stats=True, constraints=True, view_definitions=True
+        )
 
 
 register_reader("oracle", OracleReader)

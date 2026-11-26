@@ -30,6 +30,8 @@ guru = sg.Guru(reader=reader_for("duckdb", DBAPIExecutor(conn)), dialect="duckdb
 `duckdb_constraints()`, filtered to `current_database()`. Schemas `information_schema` and
 `pg_catalog` and temporary and internal objects are skipped.
 
+View definitions: `duckdb_views().sql`, the full `CREATE VIEW` statement. Metadata only; the text is kept in memory and never logged.
+
 ## Permissions and cost
 None beyond opening the database; metadata queries are in-process and free.
 

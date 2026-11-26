@@ -468,6 +468,25 @@
     }
    ],
    "sql": "select k.table_name as table_name, k.constraint_name as constraint_name, tc.constraint_type as constraint_type, tc.enforced as enforced, k.column_name as column_name, k.ordinal_position as ordinal_position, k.position_in_unique_constraint as unique_position, u.table_catalog as ref_catalog, u.table_schema as ref_schema, u.table_name as ref_table, u.column_name as ref_column, pk.ordinal_position as ref_position from `demo-project`.`shop`.information_schema.key_column_usage k join `demo-project`.`shop`.information_schema.table_constraints tc on tc.constraint_catalog = k.constraint_catalog and tc.constraint_schema = k.constraint_schema and tc.constraint_name = k.constraint_name and tc.table_name = k.table_name left join `demo-project`.`shop`.information_schema.constraint_column_usage u on u.constraint_catalog = k.constraint_catalog and u.constraint_schema = k.constraint_schema and u.constraint_name = k.constraint_name and tc.constraint_type = ? left join (select pkk.table_catalog as table_catalog, pkk.table_schema as table_schema, pkk.table_name as table_name, pkk.column_name as column_name, pkk.ordinal_position as ordinal_position from `demo-project`.`shop`.information_schema.key_column_usage pkk join `demo-project`.`shop`.information_schema.table_constraints pkc on pkc.constraint_catalog = pkk.constraint_catalog and pkc.constraint_schema = pkk.constraint_schema and pkc.constraint_name = pkk.constraint_name and pkc.table_name = pkk.table_name where pkc.constraint_type = ?) pk on pk.table_catalog = u.table_catalog and pk.table_schema = u.table_schema and pk.table_name = u.table_name and pk.column_name = u.column_name where k.table_name in (?, ?, ?, ?) order by k.table_name, k.constraint_name, k.ordinal_position"
+  },
+  {
+   "params": [
+    "v_open_orders"
+   ],
+   "rows": [
+    {
+     "definition": "SELECT order_id, status FROM shop.orders WHERE status = 'open'",
+     "table_name": "v_open_orders"
+    }
+   ],
+   "sql": "select table_name, view_definition as definition from `demo-project`.`shop`.information_schema.views where table_name in (?) order by table_name"
+  },
+  {
+   "params": [
+    "v_open_orders"
+   ],
+   "rows": [],
+   "sql": "select table_name, ddl as definition from `demo-project`.`shop`.information_schema.tables where table_name in (?) and table_type = 'materialized view' order by table_name"
   }
  ]
 }

@@ -15,6 +15,7 @@ from datetime import datetime
 
 from schemaguru.catalog.executor import MetadataExecutor
 from schemaguru.catalog.protocol import Page, ReaderCapabilities
+from schemaguru.catalog.readers._common import definition_text
 from schemaguru.catalog.readers._rules import blank_to_none, compile_rules, family_by
 from schemaguru.catalog.registry import register_reader
 from schemaguru.model.refs import ObjectRef
@@ -262,8 +263,31 @@ class TSQLReader:
             )
         return out
 
+    def view_definitions(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, str]:
+        """``sys.sql_modules.definition`` (the ``CREATE VIEW`` text; NULL for an encrypted
+        module, which is then absent)."""
+        out: dict[ObjectRef, str] = {}
+        if not tables:
+            return out
+        clause, params = _pairs(tables)
+        rows = self._ex.run(
+            "SELECT s.name AS schema_name, o.name AS table_name, m.definition AS definition "
+            "FROM sys.sql_modules m JOIN sys.objects o ON o.object_id = m.object_id "
+            "JOIN sys.schemas s ON s.schema_id = o.schema_id "
+            f"WHERE o.type = ? AND ({clause}) ORDER BY s.name, o.name",
+            ("V", *params),
+            timeout_s=self.timeout_s,
+        )
+        for r in rows:
+            text = definition_text(r["definition"])
+            if text is not None:
+                out[ObjectRef(None, r["schema_name"], r["table_name"])] = text
+        return out
+
     def capabilities(self) -> ReaderCapabilities:
-        return ReaderCapabilities(comments=True, stats=True, constraints=True)
+        return ReaderCapabilities(
+            comments=True, stats=True, constraints=True, view_definitions=True
+        )
 
 
 register_reader("tsql", TSQLReader)

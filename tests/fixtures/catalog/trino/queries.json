@@ -370,6 +370,21 @@
     }
    ],
    "sql": "select c.table_schema as schema_name, c.table_name as table_name, t.table_type as table_type, c.column_name as column_name, c.ordinal_position as ordinal, c.data_type as data_type, c.is_nullable as is_nullable, c.column_default as column_default, c.comment as comment from \"memory\".information_schema.columns c join \"memory\".information_schema.tables t on t.table_schema = c.table_schema and t.table_name = c.table_name where (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) or (c.table_schema = ? and c.table_name = ?) order by c.table_schema, c.table_name, c.ordinal_position"
+  },
+  {
+   "params": [
+    "sg_shop",
+    "v_customers"
+   ],
+   "rows": [
+    {
+     "definition": "SELECT customer_id, email FROM sg_shop.customers",
+     "schema_name": "sg_shop",
+     "table_name": "v_customers"
+    }
+   ],
+   "sql": "select table_schema as schema_name, table_name as table_name, view_definition as definition from \"memory\".information_schema.views where (table_schema = ? and table_name = ?) order by table_schema, table_name"
   }
- ]
+ ],
+ "synthetic_view_definitions": true
 }

@@ -486,6 +486,21 @@
     }
    ],
    "sql": "select tc.table_schema as schema_name, tc.table_name as table_name, tc.constraint_type as ctype, tc.constraint_name as cname, k.ordinal_position as pos, k.column_name as column_name, k.referenced_table_schema as ref_schema, k.referenced_table_name as ref_table, k.referenced_column_name as ref_column from information_schema.table_constraints tc join information_schema.key_column_usage k on k.constraint_schema = tc.constraint_schema and k.constraint_name = tc.constraint_name and k.table_schema = tc.table_schema and k.table_name = tc.table_name where tc.constraint_type in ('primary key', 'unique', 'foreign key') and ((tc.table_schema = ? and tc.table_name = ?) or (tc.table_schema = ? and tc.table_name = ?) or (tc.table_schema = ? and tc.table_name = ?) or (tc.table_schema = ? and tc.table_name = ?) or (tc.table_schema = ? and tc.table_name = ?) or (tc.table_schema = ? and tc.table_name = ?)) order by tc.table_schema, tc.table_name, tc.constraint_type desc, tc.constraint_name, k.ordinal_position"
+  },
+  {
+   "params": [
+    "sg_shop",
+    "v_customers"
+   ],
+   "rows": [
+    {
+     "definition": "select `sg_shop`.`customers`.`customer_id` AS `customer_id`,`sg_shop`.`customers`.`email` AS `email` from `sg_shop`.`customers`",
+     "schema_name": "sg_shop",
+     "table_name": "v_customers"
+    }
+   ],
+   "sql": "select table_schema as schema_name, table_name as table_name, view_definition as definition from information_schema.views where (table_schema = ? and table_name = ?) order by table_schema, table_name"
   }
- ]
+ ],
+ "synthetic_view_definitions": true
 }

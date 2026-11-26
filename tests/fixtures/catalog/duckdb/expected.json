@@ -1119,5 +1119,8 @@
    "row_count": null,
    "withdrawn_at": null
   }
- ]
+ ],
+ "view_definitions": {
+  "shop.v_open_orders": "CREATE VIEW shop.v_open_orders AS SELECT order_id, status FROM shop.orders;"
+ }
 }

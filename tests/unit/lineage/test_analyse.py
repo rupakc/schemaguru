@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -184,3 +185,38 @@ def test_column_match_case_insensitive_unique() -> None:
 def test_no_table_fact_when_nothing_upstream() -> None:
     res = DefinitionResult(VIEW, "postgres", "0" * 64, ParsedLineage((), (), ()), None, None)
     assert _facts(res) == []
+
+
+def test_duckdb_view_with_a_join_gets_column_lineage(tmp_path: Path) -> None:
+    """End to end: DuckDB prints a stored join view as ``FROM (a AS o LEFT JOIN b AS r ON …)``."""
+    import duckdb
+
+    from schemaguru.catalog import DBAPIExecutor
+    from schemaguru.catalog.crawl import crawl
+    from schemaguru.catalog.readers.duckdb import DuckDBReader
+    from schemaguru.model.refs import ObjectRef
+    from schemaguru.store.sqlite import SQLiteStore
+
+    conn = duckdb.connect(str(tmp_path / "w.duckdb"))
+    conn.execute("CREATE SCHEMA shop")
+    conn.execute("CREATE TABLE shop.orders(id BIGINT, amount DOUBLE)")
+    conn.execute("CREATE TABLE shop.refunds(order_id BIGINT, amount DOUBLE)")
+    conn.execute(
+        "CREATE VIEW shop.v_net AS SELECT o.id, r.amount AS refund FROM shop.orders AS o "
+        "LEFT JOIN shop.refunds AS r ON o.id = r.order_id"
+    )
+    sql = conn.execute("SELECT sql FROM duckdb_views() WHERE view_name = 'v_net'").fetchone()
+    assert (
+        sql is not None and "(" in sql[0].split("FROM", 1)[1]
+    )  # the control: DuckDB parenthesises
+    store = SQLiteStore(tmp_path / "s.db")
+    crawl(DuckDBReader(DBAPIExecutor(conn)), store)
+    facts = store.facts_for(
+        [ObjectRef(None, "shop", "v_net", c) for c in ("id", "refund")], ["COLUMN_LINEAGE"]
+    )
+    got = {f.subject.canonical(): (f.value["inputs"], f.value["transform"]) for f in facts}
+    store.close()
+    assert got == {
+        "shop.v_net.id": (["shop.orders.id"], "copy"),
+        "shop.v_net.refund": (["shop.refunds.amount"], "copy"),
+    }

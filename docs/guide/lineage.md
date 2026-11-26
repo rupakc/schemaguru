@@ -171,8 +171,6 @@ never SQL text.
   not hold is listed as unresolved, never guessed.
 * Projection lineage only: a column used only in `WHERE`, `JOIN ON` or `GROUP BY` is not an input.
 * An unaliased computed output (a bare `SUM(x)`) gets no column lineage.
-* A join written in parentheses as the whole `FROM` (`FROM (a JOIN b ON …)`, the form DuckDB prints
-  for a stored view) is read at table level, but its columns come out `unknown` with no inputs.
 * A deleted `JOIN` edge can stay in the cached join graph until the snapshot, generation or date
   changes; lineage itself is not affected.
 * Lineage is never a join path and never `VERIFIED`; a dbt or overlay link says what a person or a

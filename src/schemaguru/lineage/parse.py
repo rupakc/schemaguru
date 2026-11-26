@@ -456,9 +456,9 @@ class _Walker:
         exp = self.exp
         from_ = _arg(node, "from_", "from")
         if from_ is not None:
-            env.sources.append(self.source(from_.this, env))
+            env.sources.extend(self.chain(from_.this, env))
         for join in node.args.get("joins") or []:
-            env.sources.append(self.join_source(join, env))
+            env.sources.extend(self.join_sources(join, env))
         out = _Outs([])
         for proj in node.expressions:
             if isinstance(proj, exp.Star) or (
@@ -502,14 +502,33 @@ class _Walker:
 
     # -- sources --
 
-    def join_source(self, join: Any, env: _Env) -> _Source:
+    def join_sources(self, join: Any, env: _Env) -> list[_Source]:
         exp = self.exp
         this = join.this
         if str(join.args.get("kind") or "").upper() == "ARRAY":  # ClickHouse ARRAY JOIN
             target = this.this if isinstance(this, exp.Alias) else this
             name = this.alias_or_name
-            return _Source("unnest", name, lin=self.unnest_lin(target, env), names=(name,))
-        return self.source(this, env)
+            return [_Source("unnest", name, lin=self.unnest_lin(target, env), names=(name,))]
+        return self.chain(this, env)
+
+    def chain(self, node: Any, env: _Env) -> list[_Source]:
+        """The sources a FROM element contributes. An unaliased parenthesised join
+        (``(a JOIN b ON …)``, DuckDB's stored-view form) parses as a ``Subquery`` around the first
+        table, with the joins hung on the tables themselves; it registers its tables exactly as
+        an unparenthesised join does. An aliased group, or a parenthesised query, is one source."""
+        exp = self.exp
+        out: list[_Source]
+        if (
+            isinstance(node, exp.Subquery)
+            and node.args.get("alias") is None
+            and isinstance(node.this, exp.Table | exp.Subquery)
+        ):
+            out = self.chain(node.this, env)
+        else:
+            out = [self.source(node, env)]
+        for join in node.args.get("joins") or []:
+            out.extend(self.join_sources(join, env))
+        return out
 
     def source(self, node: Any, env: _Env) -> _Source:
         exp = self.exp

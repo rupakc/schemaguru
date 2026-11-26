@@ -73,8 +73,7 @@ One line per area of the 0.2.0 hardening ledger
   p95 is 1.2 s at 500,000 tables. See the [Scale page](docs/guide/scale.md). The benchmark's join
   facts are synthetic.
 - Lineage: never a join path and never verified; an unaliased computed output has no column
-  lineage; a join written in parentheses as the whole `FROM` (DuckDB's stored-view form) gives
-  `unknown` columns; the parser worker's 1 GiB cap is Linux only; a deleted `JOIN` edge can stay in
+  lineage; the parser worker's 1 GiB cap is Linux only; a deleted `JOIN` edge can stay in
   the cached graph until the snapshot, generation or date changes
   ([details](docs/guide/lineage.md#limits)).
 - Masking trades precision for recall ([PII guide](docs/guide/pii.md#known-limits)): a `00`-prefixed

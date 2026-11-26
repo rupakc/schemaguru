@@ -438,3 +438,101 @@ def test_sqlglot_logger_quiet_across_threads() -> None:
         logger.setLevel(level)
     assert records == []
     assert logger.disabled is False
+
+
+# -- a parenthesised join as (part of) FROM: DuckDB's stored-view form --
+
+_PAREN_DIALECTS = ("duckdb", "postgres", "snowflake", "bigquery")
+_PAREN_FROM = "(shop.orders AS o LEFT JOIN shop.refunds AS r ON o.order_id = r.order_id)"
+_PAREN = {
+    "copy": (
+        f"SELECT o.order_id, r.amount AS refund FROM {_PAREN_FROM}",
+        {"order_id": ((f"{ORD}.order_id",), "copy"), "refund": ((f"{REF}.amount",), "copy")},
+    ),
+    "cast": (
+        f"SELECT CAST(r.amount AS INT) AS a FROM {_PAREN_FROM}",
+        {"a": ((f"{REF}.amount",), "cast")},
+    ),
+    "aggregate": (
+        f"SELECT o.status, SUM(r.amount) AS total FROM {_PAREN_FROM} GROUP BY o.status",
+        {"status": ((f"{ORD}.status",), "copy"), "total": ((f"{REF}.amount",), "aggregate")},
+    ),
+    "expression": (
+        f"SELECT o.amount - r.amount AS net FROM {_PAREN_FROM}",
+        {"net": ((f"{ORD}.amount", f"{REF}.amount"), "expression")},
+    ),
+    "unqualified_resolved_by_store": (
+        f"SELECT status FROM {_PAREN_FROM}",
+        {"status": ((f"{ORD}.status",), "copy")},
+    ),
+    "nested": (
+        "SELECT o.status, r.amount AS refund, c.amount AS credit FROM "
+        "((shop.orders AS o JOIN shop.refunds AS r ON o.order_id = r.order_id) "
+        "JOIN shop.credits AS c ON c.order_id = o.order_id)",
+        {
+            "status": ((f"{ORD}.status",), "copy"),
+            "refund": ((f"{REF}.amount",), "copy"),
+            "credit": (("shop.credits.amount",), "copy"),
+        },
+    ),
+    "then_join": (
+        "SELECT r.amount AS refund, c.amount AS credit FROM "
+        "(shop.orders AS o JOIN shop.refunds AS r ON o.order_id = r.order_id) "
+        "JOIN shop.credits AS c ON c.order_id = o.order_id",
+        {"refund": ((f"{REF}.amount",), "copy"), "credit": (("shop.credits.amount",), "copy")},
+    ),
+    "join_a_group": (
+        "SELECT r.amount AS refund, c.amount AS credit FROM shop.orders AS o JOIN "
+        "(shop.refunds AS r JOIN shop.credits AS c ON c.order_id = r.order_id) "
+        "ON o.order_id = r.order_id",
+        {"refund": ((f"{REF}.amount",), "copy"), "credit": (("shop.credits.amount",), "copy")},
+    ),
+}
+_PAREN_SCHEMA = {
+    **SCHEMA,
+    (None, "shop", "credits"): ResolvedTable("shop.credits", ("order_id", "amount")),
+}
+
+
+@pytest.mark.parametrize("dialect", _PAREN_DIALECTS)
+@pytest.mark.parametrize("construct", sorted(_PAREN))
+def test_parenthesised_join_in_from(dialect: str, construct: str) -> None:
+    sql, expected = _PAREN[construct]
+    p = parse_lineage(sql, dialect, _PAREN_SCHEMA)
+    assert _cols(p) == expected
+    assert p.unresolved == ()
+
+
+@pytest.mark.parametrize("dialect", _PAREN_DIALECTS)
+def test_parenthesised_join_ambiguous_and_unknown_never_guessed(dialect: str) -> None:
+    # ``amount`` is held by both tables: ambiguous, so unknown, exactly as without parentheses
+    ambiguous = parse_lineage(f"SELECT amount FROM {_PAREN_FROM}", dialect, SCHEMA)
+    assert _cols(ambiguous) == {"amount": ((), "unknown")}
+    # a name neither table holds is unresolved, not guessed
+    missing = parse_lineage(f"SELECT nope FROM {_PAREN_FROM}", dialect, SCHEMA)
+    assert _cols(missing) == {"nope": ((), "unknown")}
+    # an unresolved table in the group makes only its own columns unknown
+    partial = parse_lineage(
+        "SELECT o.order_id, x.v FROM (shop.orders AS o JOIN shop.ghost AS x ON o.order_id = x.id)",
+        dialect,
+        SCHEMA,
+    )
+    assert _cols(partial)["order_id"] == ((f"{ORD}.order_id",), "copy")
+    plain = parse_lineage(
+        "SELECT o.order_id, x.v FROM shop.orders AS o JOIN shop.ghost AS x ON o.order_id = x.id",
+        dialect,
+        SCHEMA,
+    )
+    assert partial.columns == plain.columns  # the same rules, parentheses or not
+    assert partial.unresolved == plain.unresolved == ("shop.ghost",)
+
+
+@pytest.mark.parametrize("dialect", _PAREN_DIALECTS)
+def test_aliased_parenthesised_group_stays_opaque(dialect: str) -> None:
+    p = parse_lineage(
+        "SELECT t.order_id FROM (shop.orders AS o JOIN shop.refunds AS r "
+        "ON o.order_id = r.order_id) AS t",
+        dialect,
+        SCHEMA,
+    )
+    assert _cols(p) == {"order_id": ((), "unknown")}

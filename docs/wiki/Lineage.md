@@ -73,8 +73,6 @@ diagnostic or sent to an LLM. See [[PII-and-Sampling-Policy]] and [[Security]].
   not hold is listed as unresolved, never guessed.
 - Projection lineage only: a column used only in `WHERE`, `JOIN ON` or `GROUP BY` is not an input.
 - An unaliased computed output (a bare `SUM(x)`) gets no column lineage.
-- A join written in parentheses as the whole `FROM` (the form DuckDB prints for a stored view)
-  gives table lineage but `unknown` columns.
 - A parser worker outlives a hard-killed parent only until its current parse returns (at most the
   5 s cap). A deleted `JOIN` edge can stay in the cached graph until the snapshot, generation or
   date changes.

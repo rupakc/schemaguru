@@ -380,3 +380,61 @@ def test_star_except_and_cte_column_list() -> None:
         SCHEMA,
     )
     assert _cols(p) == {"a": ((f"{REF}.order_id",), "copy")}
+
+
+def test_select_list_alias_never_beats_an_open_source() -> None:
+    # ghost.g may hold a real column ``a``: attributing it to the alias would be a guess
+    p = parse_lineage("SELECT g.x AS a, a AS b FROM ghost.g", "postgres", SCHEMA)
+    assert next(c for c in p.columns if c.column == "b").transform == "unknown"
+    # with only known tables, a lateral alias reference still resolves
+    q = parse_lineage("SELECT o.amount AS a, a * 2 AS b FROM shop.orders o", "snowflake", SCHEMA)
+    assert _cols(q)["b"] == ((f"{ORD}.amount",), "expression")
+
+
+def test_parenthesised_column_is_copy_or_cast() -> None:
+    p = parse_lineage(
+        "SELECT (o.amount) AS a, CAST((o.amount) AS INT) AS b, ((o.status)) AS c "
+        "FROM shop.orders o",
+        "postgres",
+        SCHEMA,
+    )
+    assert _cols(p) == {
+        "a": ((f"{ORD}.amount",), "copy"),
+        "b": ((f"{ORD}.amount",), "cast"),
+        "c": ((f"{ORD}.status",), "copy"),
+    }
+
+
+def test_sqlglot_logger_quiet_across_threads() -> None:
+    import threading
+
+    records: list[logging.LogRecord] = []
+
+    class _Keep(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger = logging.getLogger("sqlglot")
+    handler, level = _Keep(), logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    barrier = threading.Barrier(2)
+
+    def work() -> None:
+        barrier.wait()
+        for _ in range(150):
+            # sqlglot logs this statement (with its text) when it falls back to a Command
+            with contextlib.suppress(LineageFailure):
+                parse_lineage("CREATE VIEW v AS SELECT 1 FOO BAR", "postgres", SCHEMA)
+
+    try:
+        threads = [threading.Thread(target=work) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(level)
+    assert records == []
+    assert logger.disabled is False

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -93,15 +94,32 @@ def _guarded(fn: Callable[[], _T]) -> _T:
     raise LineageFailure(reason)
 
 
+_QUIET_LOCK = threading.Lock()
+_quiet_depth = 0
+_quiet_before = False
+
+
 @contextmanager
 def _quiet_sqlglot() -> Iterator[None]:
+    """Disable the ``sqlglot`` logger while any call (in any thread) is parsing.
+
+    ``Logger.disabled`` is process-global, so it is reference-counted: the first caller saves its
+    state, the last one restores it; an inner exit never re-enables it under another thread.
+    """
+    global _quiet_depth, _quiet_before
     logger = logging.getLogger("sqlglot")
-    before = logger.disabled
-    logger.disabled = True
+    with _QUIET_LOCK:
+        if _quiet_depth == 0:
+            _quiet_before = logger.disabled
+            logger.disabled = True
+        _quiet_depth += 1
     try:
         yield
     finally:
-        logger.disabled = before
+        with _QUIET_LOCK:
+            _quiet_depth -= 1
+            if _quiet_depth == 0:
+                logger.disabled = _quiet_before
 
 
 # ----- parsing and unwrapping ------------------------------------------------------------------
@@ -580,12 +598,15 @@ class _Walker:
 
     def classify(self, node: Any) -> str:
         exp = self.exp
+        while isinstance(node, exp.Paren):
+            node = node.this
         if isinstance(node, exp.Column):
             return "copy"
-        inner = node
-        while isinstance(inner, exp.Cast | exp.Convert):
-            inner = inner.this if isinstance(inner, exp.Cast) else inner.expression
-        if inner is not node and isinstance(inner, exp.Column):
+        inner, casts = node, 0
+        while isinstance(inner, exp.Cast | exp.Convert | exp.Paren):
+            casts += not isinstance(inner, exp.Paren)
+            inner = inner.expression if isinstance(inner, exp.Convert) else inner.this
+        if casts and isinstance(inner, exp.Column):
             return "cast"
         windowed: set[int] = set()
         aggregate = window = False
@@ -633,11 +654,10 @@ class _Walker:
         if closed:
             return cast(_Lin, closed[0].lookup(name))
         alias = env.aliases.get(name.lower())
-        if alias is not None:
-            return alias
         if open_:
-            return cast(_Lin, open_[0].lookup(name))
-        return None
+            # the open relation may hold ``name`` itself: never prefer a select-list alias
+            return _UNKNOWN if alias is not None else cast(_Lin, open_[0].lookup(name))
+        return alias
 
 
 def _finish(outs: _Outs, names: tuple[str, ...] | None) -> tuple[ColumnLineage, ...]:

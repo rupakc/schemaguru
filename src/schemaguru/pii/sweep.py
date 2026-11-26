@@ -177,6 +177,10 @@ _RULES: tuple[_Rule, ...] = (
     ("ip", re.compile(rf"(?<![\w.]){d.IPV4_RE.pattern}(?![\w]|\.\d)"), d.ipv4_ok, _tok("<ip>")),
     ("ip", re.compile(rf"(?<![\w:]){d.IPV6_RE.pattern}(?![\w:])"), d.ipv6_ok, _tok("<ip>")),
     ("hex", _b(d.HEX_RE.pattern), d.hex_ok, lambda m: f"<hex{len(m)}>"),
+    # A run glued to hex (``<20 hex>::0``) is not an IP on the first look, but once the hex is a
+    # placeholder the remainder follows a ``>`` and is one. Mask it now, not on a second sweep.
+    ("ip", re.compile(rf"(?<=>){d.IPV4_RE.pattern}(?![\w]|\.\d)"), d.ipv4_ok, _tok("<ip>")),
+    ("ip", re.compile(rf"(?<=>){d.IPV6_RE.pattern}(?![\w:])"), d.ipv6_ok, _tok("<ip>")),
     *[("address", rx, lambda _m: True, _tok("<address>")) for rx in d.ADDRESS_IN_TEXT_RES],
     ("phone", re.compile(rf"(?<![\w+]){d.E164_RE.pattern}(?!\d)"), d.phone_ok, _tok("<phone>")),
     (

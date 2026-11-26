@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from schemaguru.pii import mask_value, sweep
@@ -31,6 +31,8 @@ def test_mask_idempotent(v: str) -> None:
 
 @settings(max_examples=400, deadline=None)
 @given(PIIISH)
+@example("0000000000000000000A::0")
+@example("0000000000000000000A.1.2.3")
 def test_sweep_idempotent(v: str) -> None:
     once, _ = sweep(v)
     twice, hits = sweep(once)

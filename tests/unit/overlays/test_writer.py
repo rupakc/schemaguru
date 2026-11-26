@@ -126,18 +126,22 @@ def test_changed_join_replaces(tmp_path: Path) -> None:
 def test_atomic_write_mode_and_recheck(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import os
     import stat
+    import sys
 
+    posix = sys.platform != "win32"  # Windows reports 0o666 whatever the mode: no POSIX bits
     f = Fact.make(FactKind.DESCRIPTION, ORD, {"text": "x"}, Provenance.DRAFTED, Status.UNVERIFIED)
     old = os.umask(0o022)
     try:
         new = tmp_path / "new.yaml"
         append_accepted([f], new)
-        assert stat.S_IMODE(new.stat().st_mode) == 0o644
+        if posix:
+            assert stat.S_IMODE(new.stat().st_mode) == 0o644
         existing = tmp_path / "existing.yaml"
         append_accepted([f], existing)
         existing.chmod(0o664)
         append_accepted([f], existing)
-        assert stat.S_IMODE(existing.stat().st_mode) == 0o664
+        if posix:
+            assert stat.S_IMODE(existing.stat().st_mode) == 0o664
     finally:
         os.umask(old)
     # the ownership header is re-checked right before the replace

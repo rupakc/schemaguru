@@ -74,11 +74,14 @@ ABS_CEILING_S = 2.0
 # Below this the small run is dominated by timer and scheduler noise (a Windows runner measured
 # 0.04 s for a linear 50k run against a 0.0002 s small run: ratio 8.2 from noise alone).
 NOISE_FLOOR_S = 0.01
+# Each size is timed best-of-N: a scheduler hiccup inflates one repetition, rarely all of them
+# (a macOS 3.10 runner measured a 0.083 s large run against a 0.0002 s small one: ratio 8.33).
+REPEATS = 7
 
 
 def _best(fn: Callable[[str], object], arg: str) -> float:
     best = 1e9
-    for _ in range(3):
+    for _ in range(REPEATS):
         t = time.perf_counter()
         fn(arg)
         best = min(best, time.perf_counter() - t)
@@ -92,6 +95,21 @@ def _assert_scales_linearly(fn: Callable[[str], object], text: str, label: objec
     t_large = _best(fn, text)
     ratio = t_large / max(t_small, NOISE_FLOOR_S)
     assert ratio < MAX_SCALING_RATIO, (label, t_small, t_large, round(ratio, 2))
+
+
+def test_negative_control_scaling_check_catches_quadratic() -> None:
+    def quadratic(s: str) -> None:
+        for _ in range((len(s) // 10) ** 2):  # ~20 ms at 12.5k, 16x that at 50k
+            pass
+
+    def linear(s: str) -> None:
+        for _ in range(len(s) * 20):
+            pass
+
+    text = "a" * 50_000
+    _assert_scales_linearly(linear, text, "linear")
+    with pytest.raises(AssertionError):
+        _assert_scales_linearly(quadratic, text, "quadratic")
 
 
 @pytest.mark.benchmark

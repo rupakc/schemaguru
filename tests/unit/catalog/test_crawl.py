@@ -367,6 +367,27 @@ def test_crawl_bytes_none_or_unreported_is_uncounted(store: SQLiteStore) -> None
     other.close()
 
 
+def test_reader_with_only_bytes_billed_is_still_counted(store: SQLiteStore) -> None:
+    """A 0.1.0 reader exposing just ``bytes_billed`` is billed, capped and ledgered; a missing
+    flag means exact."""
+
+    class OnlyBytes(BilledReader):
+        def __init__(self, *a: object, **k: object) -> None:
+            super().__init__(*a, **k)
+            del self.bytes_billed_is_lower_bound
+
+    cfg = CrawlConfig(page_size=100, column_batch=100, workers=1)
+    full = crawl(OnlyBytes(300, tables_per_schema=300, page_size=100), store, config=cfg)
+    assert full.bytes_billed == 600 and not full.bytes_billed_is_estimate
+    assert store.ledger_total("crawl", "bytes", None) == 600
+    other = SQLiteStore(":memory:")
+    capped = crawl(
+        OnlyBytes(1000, tables_per_schema=1000, page_size=100), other, config=cfg, crawl_bytes=500
+    )
+    assert [d.code for d in capped.errors] == ["SG110"]
+    other.close()
+
+
 def test_billing_reader_protocol(store: SQLiteStore) -> None:
     """``BillingReader`` is a runtime-checkable protocol (both attributes), not a ``getattr``
     probe: a reader that only happens to carry a ``bytes_billed`` attribute is not billed."""
@@ -382,10 +403,7 @@ def test_billing_reader_protocol(store: SQLiteStore) -> None:
             super().__init__(*a, **k)
             del self.bytes_billed_is_lower_bound  # the flag half of the protocol is missing
 
-    half = HalfBilled(10, tables_per_schema=10)
-    assert not isinstance(half, BillingReader)
-    report = crawl(half, store, config=CrawlConfig(workers=1), now=lambda: NOW)
-    assert report.bytes_billed is None and not report.bytes_billed_is_estimate
+    assert not isinstance(HalfBilled(10, tables_per_schema=10), BillingReader)
 
     class Estimating(BilledReader):
         def __init__(self, *a: object, **k: object) -> None:

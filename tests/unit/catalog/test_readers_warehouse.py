@@ -911,6 +911,28 @@ def test_postgres_not_valid_fk_unenforced() -> None:
     assert "con.convalidated" in fake.calls[0][0]
 
 
+def test_postgres_unique_index_query_failure_keeps_keys() -> None:
+    """On PostgreSQL 10 and older ``indnkeyatts`` does not exist: the index query fails, the
+    keys already read are returned, and a diagnostic names the cause."""
+
+    class Pg10(Fake):
+        def run(
+            self, sql: str, params: Sequence[Any] = (), *, timeout_s: float | None = None
+        ) -> Any:
+            if "pg_index" in sql:
+                raise RuntimeError("column i.indnkeyatts does not exist")
+            return super().run(sql, params, timeout_s=timeout_s)
+
+    fake = Pg10(
+        (["pg_constraint"], [_pg_constraint_row(contype="p", cols=["id"], ref_schema=None)])
+    )
+    reader = PostgresReader(fake)  # type: ignore[arg-type]
+    ref = ObjectRef(None, "s", "items")
+    cons = reader.constraints([ref])[ref]
+    assert [(c.kind, c.columns) for c in cons] == [("primary_key", ("id",))]
+    assert len(reader.diagnostics) == 1 and "PostgreSQL 11" in reader.diagnostics[0].message
+
+
 def test_postgres_unique_index_reported() -> None:
     """A unique index that backs no constraint is still a uniqueness guarantee."""
     fake = Fake(

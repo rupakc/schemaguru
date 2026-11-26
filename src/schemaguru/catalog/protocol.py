@@ -44,8 +44,9 @@ class ReaderCapabilities:
 class BillingReader(Protocol):
     """A reader whose metadata queries are billed (BigQuery). The crawl reads ``bytes_billed``
     (the running total) to enforce ``Budget.crawl_bytes`` and reports
-    ``bytes_billed_is_lower_bound`` as ``CrawlReport.bytes_billed_is_estimate``. A reader needs
-    both attributes to be counted; one that carries only a ``bytes_billed`` is not."""
+    ``bytes_billed_is_lower_bound`` as ``CrawlReport.bytes_billed_is_estimate``. This protocol
+    documents and types the pair; the crawl does not gate on it: a reader exposing only a
+    non-negative int ``bytes_billed`` is counted, and a missing flag means exact."""
 
     bytes_billed: int
     bytes_billed_is_lower_bound: bool

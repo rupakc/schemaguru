@@ -11,6 +11,7 @@ from schemaguru.catalog.executor import MetadataExecutor
 from schemaguru.catalog.protocol import Page, ReaderCapabilities
 from schemaguru.catalog.readers._types import family_of
 from schemaguru.catalog.registry import register_reader
+from schemaguru.diagnostics import Diagnostic, Severity
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column, Constraint, ConstraintKind, Schema, Table, TableKind
 
@@ -49,6 +50,7 @@ class PostgresReader:
         self._ex = executor
         self.page_size = page_size
         self.timeout_s = timeout_s
+        self.diagnostics: list[Diagnostic] = []
 
     def list_catalogs(self) -> Iterator[str]:
         return iter(())
@@ -178,7 +180,17 @@ class PostgresReader:
             out.setdefault(tref, []).append(
                 Constraint(kind, tref, tuple(r["cols"]), ref_table, ref_cols, enforced)
             )
-        self._unique_indexes(tables, out)
+        try:
+            self._unique_indexes(tables, out)
+        except Exception as e:
+            self.diagnostics.append(
+                Diagnostic(
+                    "SG102",
+                    Severity.WARNING,
+                    f"unique indexes not read ({type(e).__name__}); they need PostgreSQL 11+",
+                    hint="primary, unique and foreign key constraints are still reported",
+                )
+            )
         return out
 
     def _unique_indexes(

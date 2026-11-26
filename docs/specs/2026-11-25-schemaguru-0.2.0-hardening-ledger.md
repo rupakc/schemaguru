@@ -56,24 +56,24 @@ Audited against `main` at `710e21f` (Task 1). Tasks 2–8 turn the `open` rows i
 | A3.11 | sampled max-per-key cardinality may say 1:1 | fixed | test tests/unit/measure/test_convert.py::test_sampled_cardinality_not_one_to_one |
 | A3.12 | rule-2 id↔id candidate noise | fixed | test tests/unit/measure/test_candidates.py::test_no_id_to_id_candidate |
 | A3.13 | `flbridge` imports `factlang.semantics.refs` (not public API) | already fixed | commit 35e0c54 · test tests/architecture/test_layers.py::test_factlang_public_modules_only |
-| A4.1 | Postgres `NOT VALID` FKs reported enforced | open | Task 6 |
-| A4.2 | Postgres unique indexes not reported | open | Task 6 |
-| A4.3 | Postgres integration test lacks partitioned / unanalysed tables | open | Task 6 |
+| A4.1 | Postgres `NOT VALID` FKs reported enforced | fixed | test tests/unit/catalog/test_readers_warehouse.py::test_postgres_not_valid_fk_unenforced |
+| A4.2 | Postgres unique indexes not reported | fixed | test tests/unit/catalog/test_readers_warehouse.py::test_postgres_unique_index_reported |
+| A4.3 | Postgres integration test lacks partitioned / unanalysed tables | fixed | test tests/integration/catalog/test_reader_postgres.py::test_partitioned_and_unanalysed |
 | A4.4 | reader `row_count` estimate unlabelled (must be CATALOG provenance, never MEASURED exact) | already fixed | commit c1642f6 · test tests/unit/measure/test_scheduler.py::test_large_table_uses_system_sample · commit d131b6c · test tests/unit/render/test_table_block.py::test_catalog_row_count_is_labelled_catalog_stats |
-| A4.5 | Oracle `ALL_PART_TABLES` joined on nullable `c.owner` | open | Task 6 |
-| A4.6 | Oracle materialized-view comments | open | Task 6 |
-| A4.7 | Snowflake clustering expressions read as names | open | Task 6 |
-| A4.8 | Snowflake raises `ValueError`, not `CatalogError` | open | Task 6 |
-| A4.9 | Snowflake `SHOW` caps | open | Task 6 |
-| A4.10 | BigQuery `_PARTITIONTIME` pseudo-columns | open | Task 6 |
-| A4.11 | BigQuery cross-project `TABLE_STORAGE` | open | Task 6 |
-| A4.12 | BigQuery region default docs | open | Task 6 |
-| A4.13 | BigQuery FK join by constraint name only | open | Task 6 |
-| A4.14 | Redshift re-reads schema-wide info per page | open | Task 6 |
+| A4.5 | Oracle `ALL_PART_TABLES` joined on nullable `c.owner` | fixed | test tests/unit/catalog/test_readers_warehouse.py::test_oracle_partitioning_null_owner |
+| A4.6 | Oracle materialized-view comments | fixed | test tests/unit/catalog/test_readers_warehouse.py::test_oracle_mv_comment |
+| A4.7 | Snowflake clustering expressions read as names | fixed | test tests/unit/catalog/test_readers_warehouse.py::test_snowflake_clustering_expressions |
+| A4.8 | Snowflake raises `ValueError`, not `CatalogError` | fixed | test tests/unit/catalog/test_readers_warehouse.py::test_snowflake_bad_metadata_is_catalog_error |
+| A4.9 | Snowflake `SHOW` caps | fixed | test tests/unit/catalog/test_readers_warehouse.py::test_snowflake_lists_past_show_cap |
+| A4.10 | BigQuery `_PARTITIONTIME` pseudo-columns | fixed | test tests/unit/catalog/test_readers_warehouse.py::test_bigquery_pseudo_columns_hidden |
+| A4.11 | BigQuery cross-project `TABLE_STORAGE` | fixed | test tests/unit/catalog/test_readers_warehouse.py::test_bigquery_cross_project_storage |
+| A4.12 | BigQuery region default docs | fixed | test tests/conformance/test_wiki_facts.py::test_bigquery_region_documented |
+| A4.13 | BigQuery FK join by constraint name only | fixed | test tests/unit/catalog/test_readers_warehouse.py::test_bigquery_fk_join_full_key |
+| A4.14 | Redshift re-reads schema-wide info per page | fixed | test tests/unit/catalog/test_readers_warehouse.py::test_redshift_schema_info_once |
 | A4.15 | Redshift ignores `changed_since` (capabilities must then say `incremental=False`) | already fixed | commit 5b6fe87 · test tests/unit/catalog/test_readers_warehouse.py::test_redshift_ignores_changed_since_and_says_so |
-| A4.16 | `bytes_billed_is_lower_bound` duck-typed | open | Task 6 |
-| A4.17 | fixture handlers match SQL by substring | open | Task 6 |
-| A4.18 | keyset paging vs collations | open | Task 6 |
+| A4.16 | `bytes_billed_is_lower_bound` duck-typed | fixed | test tests/unit/catalog/test_crawl.py::test_billing_reader_protocol |
+| A4.17 | fixture handlers match SQL by substring | fixed | test tests/conformance/test_replay.py::test_scripted_rejects_unknown_statement |
+| A4.18 | keyset paging vs collations | already fixed | commit a46dd1a · test tests/unit/catalog/test_readers_warehouse.py::test_paging_collation_stable · commit 21de7f3 · test tests/unit/catalog/test_readers_warehouse.py::test_paging_collation_stable |
 | A5.1 | `from_dict` trusts the stored id | fixed | test tests/unit/model/test_facts.py::test_from_dict_rejects_tampered_id |
 | A5.2 | `stable_hash` Decimal / date / mixed-key normalisation | fixed | test tests/property/test_model_props.py::test_stable_hash_normalises |
 | A5.3 | py3.10 `'Z'` isoformat (`datetime.fromisoformat` in `Fact.from_dict`) | fixed | test tests/unit/model/test_facts.py::test_from_dict_accepts_z_suffix |

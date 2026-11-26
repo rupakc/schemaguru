@@ -50,6 +50,7 @@ _CONSTRAINTS: Mapping[str, ConstraintKind] = {
     "FOREIGN KEY": "foreign_key",
     "UNIQUE": "unique",
 }
+_RESERVED_PREFIX = "_PARTITION"  # BigQuery forbids user columns with this prefix
 _PROJECT = re.compile(r"[A-Za-z0-9_\-.:]+\Z")
 _DATASET = re.compile(r"[A-Za-z0-9_]+\Z")
 _REGION = re.compile(r"[A-Za-z0-9\-]+\Z")
@@ -118,8 +119,13 @@ class BigQueryReader:
         self._lock = threading.Lock()
 
     # -- plumbing ---------------------------------------------------------------------------
-    def _region_view(self, view: str) -> str:
-        prefix = f"`{self.project}`." if self.project else ""
+    def _region_view(self, view: str, project: str | None = None) -> str:
+        """A region view of ``project`` (default: the reader's): the project a dataset lives in
+        owns its ``TABLE_STORAGE`` rows, which need not be the billing project."""
+        proj = project if project is not None else self.project
+        if proj is not None and not _PROJECT.match(proj):
+            raise CatalogError("SG104", f"unsupported characters in project {proj!r}")
+        prefix = f"`{proj}`." if proj else ""
         return f"{prefix}`region-{self.region}`.INFORMATION_SCHEMA.{view}"
 
     def _dataset_view(self, project: str | None, dataset: str, view: str) -> str:
@@ -152,7 +158,7 @@ class BigQueryReader:
         project = catalog or self.project
         where = "WHERE catalog_name = ? " if project else ""
         rows = self._run(
-            f"SELECT catalog_name, schema_name FROM {self._region_view('SCHEMATA')} "
+            f"SELECT catalog_name, schema_name FROM {self._region_view('SCHEMATA', project)} "
             f"{where}ORDER BY schema_name",
             (project,) if project else (),
         )
@@ -185,7 +191,7 @@ class BigQueryReader:
             "s.storage_last_modified_time AS last_modified "
             f"FROM {t} t "
             f"LEFT JOIN {o} d ON d.table_name = t.table_name AND d.option_name = ? "
-            f"LEFT JOIN {self._region_view('TABLE_STORAGE')} s "
+            f"LEFT JOIN {self._region_view('TABLE_STORAGE', schema.catalog)} s "
             "ON s.table_schema = t.table_schema AND s.table_name = t.table_name "
             "AND s.project_id = t.table_catalog AND NOT s.deleted "
             f"{clause}ORDER BY t.table_name LIMIT ?",
@@ -227,6 +233,8 @@ class BigQueryReader:
                 names,
             )
             for r in rows:
+                if str(r["column_name"]).upper().startswith(_RESERVED_PREFIX):
+                    continue  # _PARTITIONTIME / _PARTITIONDATE: pseudo-columns, not stored
                 tref = ObjectRef(catalog, schema, r["table_name"])
                 default = r["column_default"]
                 out.setdefault(tref, []).append(
@@ -261,13 +269,24 @@ class BigQueryReader:
                 "u.table_catalog AS ref_catalog, u.table_schema AS ref_schema, "
                 "u.table_name AS ref_table, u.column_name AS ref_column, "
                 "pk.ordinal_position AS ref_position "
-                f"FROM {kcu} k JOIN {tc} tc ON tc.constraint_name = k.constraint_name "
-                "AND tc.table_name = k.table_name "
-                f"LEFT JOIN {ccu} u ON u.constraint_name = k.constraint_name "
-                "AND tc.constraint_type = ? "
-                f"LEFT JOIN {kcu} pk ON pk.table_name = u.table_name "
-                "AND pk.column_name = u.column_name AND pk.constraint_name IN "
-                f"(SELECT constraint_name FROM {tc} WHERE constraint_type = ?) "
+                f"FROM {kcu} k JOIN {tc} tc "
+                "ON tc.constraint_catalog = k.constraint_catalog "
+                "AND tc.constraint_schema = k.constraint_schema "
+                "AND tc.constraint_name = k.constraint_name AND tc.table_name = k.table_name "
+                f"LEFT JOIN {ccu} u ON u.constraint_catalog = k.constraint_catalog "
+                "AND u.constraint_schema = k.constraint_schema "
+                "AND u.constraint_name = k.constraint_name AND tc.constraint_type = ? "
+                "LEFT JOIN (SELECT pkk.table_catalog AS table_catalog, "
+                "pkk.table_schema AS table_schema, pkk.table_name AS table_name, "
+                "pkk.column_name AS column_name, pkk.ordinal_position AS ordinal_position "
+                f"FROM {kcu} pkk JOIN {tc} pkc "
+                "ON pkc.constraint_catalog = pkk.constraint_catalog "
+                "AND pkc.constraint_schema = pkk.constraint_schema "
+                "AND pkc.constraint_name = pkk.constraint_name "
+                "AND pkc.table_name = pkk.table_name "
+                "WHERE pkc.constraint_type = ?) pk "
+                "ON pk.table_catalog = u.table_catalog AND pk.table_schema = u.table_schema "
+                "AND pk.table_name = u.table_name AND pk.column_name = u.column_name "
                 f"WHERE k.table_name IN ({marks}) "
                 "ORDER BY k.table_name, k.constraint_name, k.ordinal_position",
                 ("FOREIGN KEY", "PRIMARY KEY", *names),

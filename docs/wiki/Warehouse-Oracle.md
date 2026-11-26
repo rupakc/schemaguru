@@ -17,6 +17,7 @@ Dictionary queries only; no extra licensing beyond the base database.
 
 ## Quirks
 - Names are upper-case unless created quoted (`"Order Items"`); the reader keeps them as returned.
+- Partitioning is read from `ALL_PART_TABLES` joined on the listed schema's own owner, so a table without a row in `ALL_TAB_COMMENTS` still reports its partitioning. Materialized-view comments come from `ALL_MVIEW_COMMENTS` (a table's from `ALL_TAB_COMMENTS`).
 - `NUM_ROWS` is the optimizer-statistics estimate and is unknown until statistics are gathered. Table bytes are not read (they would need `DBA_SEGMENTS`).
 - `DATE` includes a time part, so it maps to the `timestamp` family. Dictionary timestamps are zone-less, so `created_at` / `last_altered` stay unknown and `incremental` is not offered.
 - Materialized view container tables, nested tables, IOT overflow segments and recycle-bin (`DROPPED = 'YES'`) tables are excluded.

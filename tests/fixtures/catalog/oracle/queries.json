@@ -1,5 +1,6 @@
 {
  "dialect": "oracle",
+ "only_catalogs": null,
  "queries": [
   {
    "params": [
@@ -23,6 +24,7 @@
     "OPS",
     "OPS",
     "OPS",
+    "OPS",
     1001
    ],
    "rows": [
@@ -41,10 +43,11 @@
      "TABLE_NAME": "SESSIONS"
     }
    ],
-   "sql": "select x.table_name as table_name, x.kind as kind, x.num_rows as num_rows, c.comments as comments, p.partitioning_type as partitioning_type from ( select t.table_name as table_name, 'table' as kind, t.num_rows as num_rows from all_tables t where t.owner = ? and t.nested = 'no' and t.dropped = 'no' and t.iot_name is null and not exists (select 1 from all_mviews m where m.owner = t.owner and m.mview_name = t.table_name) union all select v.view_name, 'view', null from all_views v where v.owner = ? union all select m.mview_name, 'materialized view', null from all_mviews m where m.owner = ?) x left join all_tab_comments c on c.owner = ? and c.table_name = x.table_name left join all_part_tables p on p.owner = c.owner and p.table_name = x.table_name order by x.table_name fetch first ? rows only"
+   "sql": "select x.table_name as table_name, x.kind as kind, x.num_rows as num_rows, case when x.kind = 'materialized view' then x.mv_comment else c.comments end as comments, p.partitioning_type as partitioning_type from ( select t.table_name as table_name, 'table' as kind, t.num_rows as num_rows, cast(null as varchar2(4000)) as mv_comment from all_tables t where t.owner = ? and t.nested = 'no' and t.dropped = 'no' and t.iot_name is null and not exists (select 1 from all_mviews m where m.owner = t.owner and m.mview_name = t.table_name) union all select v.view_name, 'view', null, null from all_views v where v.owner = ? union all select m.mview_name, 'materialized view', null, mc.comments from all_mviews m left join all_mview_comments mc on mc.owner = m.owner and mc.mview_name = m.mview_name where m.owner = ?) x left join all_tab_comments c on c.owner = ? and c.table_name = x.table_name left join all_part_tables p on p.owner = ? and p.table_name = x.table_name order by x.table_name fetch first ? rows only"
   },
   {
    "params": [
+    "SHOP",
     "SHOP",
     "SHOP",
     "SHOP",
@@ -81,7 +84,7 @@
      "TABLE_NAME": "V_OPEN_ORDERS"
     }
    ],
-   "sql": "select x.table_name as table_name, x.kind as kind, x.num_rows as num_rows, c.comments as comments, p.partitioning_type as partitioning_type from ( select t.table_name as table_name, 'table' as kind, t.num_rows as num_rows from all_tables t where t.owner = ? and t.nested = 'no' and t.dropped = 'no' and t.iot_name is null and not exists (select 1 from all_mviews m where m.owner = t.owner and m.mview_name = t.table_name) union all select v.view_name, 'view', null from all_views v where v.owner = ? union all select m.mview_name, 'materialized view', null from all_mviews m where m.owner = ?) x left join all_tab_comments c on c.owner = ? and c.table_name = x.table_name left join all_part_tables p on p.owner = c.owner and p.table_name = x.table_name order by x.table_name fetch first ? rows only"
+   "sql": "select x.table_name as table_name, x.kind as kind, x.num_rows as num_rows, case when x.kind = 'materialized view' then x.mv_comment else c.comments end as comments, p.partitioning_type as partitioning_type from ( select t.table_name as table_name, 'table' as kind, t.num_rows as num_rows, cast(null as varchar2(4000)) as mv_comment from all_tables t where t.owner = ? and t.nested = 'no' and t.dropped = 'no' and t.iot_name is null and not exists (select 1 from all_mviews m where m.owner = t.owner and m.mview_name = t.table_name) union all select v.view_name, 'view', null, null from all_views v where v.owner = ? union all select m.mview_name, 'materialized view', null, mc.comments from all_mviews m left join all_mview_comments mc on mc.owner = m.owner and mc.mview_name = m.mview_name where m.owner = ?) x left join all_tab_comments c on c.owner = ? and c.table_name = x.table_name left join all_part_tables p on p.owner = ? and p.table_name = x.table_name order by x.table_name fetch first ? rows only"
   },
   {
    "params": [

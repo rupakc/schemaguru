@@ -183,3 +183,20 @@ def test_wiki_sync_explains_a_missing_wiki_repository() -> None:
     assert "::error::Cannot clone $WIKI_URL" in step
     assert "enable the wiki" in step and "create any page once" in step
     assert "exit 1" in step
+
+
+def test_bigquery_region_documented() -> None:
+    """The BigQuery page states the reader's default region and how to set another one, derived
+    from the constructor (negative control: the same check on a page that omits them fails)."""
+    import inspect
+
+    from schemaguru.catalog.readers.bigquery import BigQueryReader
+
+    default = inspect.signature(BigQueryReader).parameters["region"].default
+
+    def documents(text: str) -> bool:
+        return f'`region` defaults to `"{default}"`' in text and "region=" in text
+
+    assert documents(_read("Warehouse-BigQuery"))
+    assert not documents("Pass `project=` to the reader.")
+    assert not documents('`region` defaults to `"eu"`; set `region=`')

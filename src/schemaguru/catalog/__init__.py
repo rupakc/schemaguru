@@ -3,10 +3,17 @@
 from schemaguru.catalog.crawl import CrawlReport, crawl
 from schemaguru.catalog.executor import DBAPIExecutor, FactLangExecutor, MetadataExecutor
 from schemaguru.catalog.filters import ScopeFilter
-from schemaguru.catalog.protocol import CatalogError, CatalogReader, Page, ReaderCapabilities
+from schemaguru.catalog.protocol import (
+    BillingReader,
+    CatalogError,
+    CatalogReader,
+    Page,
+    ReaderCapabilities,
+)
 from schemaguru.catalog.registry import dialects, reader_for, register_reader
 
 __all__ = [
+    "BillingReader",
     "CatalogError",
     "CatalogReader",
     "CrawlReport",

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Generic, Protocol, TypeVar
+from typing import Generic, Protocol, TypeVar, runtime_checkable
 
 from schemaguru.errors import SchemaGuruError
 from schemaguru.model.refs import ObjectRef
@@ -38,6 +38,17 @@ class ReaderCapabilities:
     constraints: bool = False
     incremental: bool = False
     cost_estimate: bool = False
+
+
+@runtime_checkable
+class BillingReader(Protocol):
+    """A reader whose metadata queries are billed (BigQuery). The crawl reads ``bytes_billed``
+    (the running total) to enforce ``Budget.crawl_bytes`` and reports
+    ``bytes_billed_is_lower_bound`` as ``CrawlReport.bytes_billed_is_estimate``. A reader needs
+    both attributes to be counted; one that carries only a ``bytes_billed`` is not."""
+
+    bytes_billed: int
+    bytes_billed_is_lower_bound: bool
 
 
 class CatalogReader(Protocol):

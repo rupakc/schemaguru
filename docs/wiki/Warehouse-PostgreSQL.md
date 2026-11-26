@@ -34,7 +34,11 @@ and constraints. They are cheap even on catalogs with many thousands of relation
   that was never analysed (`reltuples = -1`, or no pages and no tuples) has an **unknown** row
   count, never 0.
 - `bytes` from `pg_total_relation_size` (table, indexes and TOAST).
-- Primary, unique and foreign keys (`enforced=True`), composite keys in full, in key order.
+- Primary, unique and foreign keys, composite keys in full, in key order. A foreign key created
+  `NOT VALID` (existing rows never checked) is `enforced=False`; every other key is `enforced=True`.
+- Unique indexes that back no constraint (`CREATE UNIQUE INDEX`) are reported as `unique`
+  constraints. Partial, expression and invalid indexes are not: they guarantee nothing about
+  the whole column list.
 - Column defaults as expressions (`pg_get_expr`); view column nullability is unknown.
 
 ## Quirks

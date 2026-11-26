@@ -102,24 +102,28 @@ class OracleReader:
         self, schema: Schema, *, page_token: str | None, changed_since: datetime | None
     ) -> Page[Table]:
         keyset = "" if page_token is None else "WHERE x.table_name > ? "
-        params: list[Any] = [schema.name, schema.name, schema.name, schema.name]
+        params: list[Any] = [schema.name] * 5
         if page_token is not None:
             params.append(page_token)
         params.append(self.page_size + 1)
         rows = self._run(
             "SELECT x.table_name AS table_name, x.kind AS kind, x.num_rows AS num_rows, "
-            "c.comments AS comments, p.partitioning_type AS partitioning_type FROM ("
-            " SELECT t.table_name AS table_name, 'TABLE' AS kind, t.num_rows AS num_rows"
+            "CASE WHEN x.kind = 'MATERIALIZED VIEW' THEN x.mv_comment ELSE c.comments END "
+            "AS comments, p.partitioning_type AS partitioning_type FROM ("
+            " SELECT t.table_name AS table_name, 'TABLE' AS kind, t.num_rows AS num_rows,"
+            "  CAST(NULL AS VARCHAR2(4000)) AS mv_comment"
             "  FROM all_tables t WHERE t.owner = ? AND t.nested = 'NO' AND t.dropped = 'NO'"
             "  AND t.iot_name IS NULL AND NOT EXISTS (SELECT 1 FROM all_mviews m"
             "   WHERE m.owner = t.owner AND m.mview_name = t.table_name)"
             " UNION ALL"
-            " SELECT v.view_name, 'VIEW', NULL FROM all_views v WHERE v.owner = ?"
+            " SELECT v.view_name, 'VIEW', NULL, NULL FROM all_views v WHERE v.owner = ?"
             " UNION ALL"
-            " SELECT m.mview_name, 'MATERIALIZED VIEW', NULL FROM all_mviews m WHERE m.owner = ?"
+            " SELECT m.mview_name, 'MATERIALIZED VIEW', NULL, mc.comments FROM all_mviews m"
+            "  LEFT JOIN all_mview_comments mc ON mc.owner = m.owner"
+            "  AND mc.mview_name = m.mview_name WHERE m.owner = ?"
             ") x "
             "LEFT JOIN all_tab_comments c ON c.owner = ? AND c.table_name = x.table_name "
-            "LEFT JOIN all_part_tables p ON p.owner = c.owner AND p.table_name = x.table_name "
+            "LEFT JOIN all_part_tables p ON p.owner = ? AND p.table_name = x.table_name "
             f"{keyset}ORDER BY x.table_name FETCH FIRST ? ROWS ONLY",
             params,
         )

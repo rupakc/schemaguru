@@ -27,7 +27,7 @@ from typing import Any
 
 from schemaguru._util.timeutil import to_iso, utcnow
 from schemaguru.catalog.filters import ScopeFilter
-from schemaguru.catalog.protocol import CatalogReader
+from schemaguru.catalog.protocol import BillingReader, CatalogReader
 from schemaguru.config import CrawlConfig
 from schemaguru.diagnostics import Diagnostic, Severity
 from schemaguru.model.refs import ObjectRef
@@ -57,7 +57,9 @@ class _OverCrawlBudget(Exception):
 
 def _billed(reader: CatalogReader) -> int | None:
     """The reader's billed metadata bytes so far, or None when it reports none."""
-    value = getattr(reader, "bytes_billed", None)
+    if not isinstance(reader, BillingReader):
+        return None
+    value = reader.bytes_billed
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
@@ -510,6 +512,7 @@ def crawl(
         errors=run.errors,
         queries=run.queries,
         bytes_billed=bytes_billed,
-        bytes_billed_is_estimate=getattr(reader, "bytes_billed_is_lower_bound", False) is True,
+        bytes_billed_is_estimate=isinstance(reader, BillingReader)
+        and reader.bytes_billed_is_lower_bound is True,
         duration_s=time.monotonic() - t0,
     )

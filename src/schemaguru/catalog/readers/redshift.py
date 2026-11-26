@@ -80,6 +80,9 @@ class RedshiftReader:
         self.page_size = page_size
         self.timeout_s = timeout_s
         self._current_db: str | None = None
+        # (database, schema) -> (SVV_TABLE_INFO rows by table, external table names): read when
+        # a listing starts and kept until its last page, so a paged schema pays once, not per page
+        self._schema_info: dict[tuple[str, str], tuple[dict[str, Row], set[str]]] = {}
 
     def _run(self, sql: str, params: Sequence[Any] = ()) -> list[Row]:
         return lower_keys(self._ex.run(sql, params, timeout_s=self.timeout_s))
@@ -138,22 +141,11 @@ class RedshiftReader:
         )
         info: dict[str, Row] = {}
         external: set[str] = set()
+        key = (db, schema.name)
         if rows and db == self._current():
-            info = {
-                r["table_name"]: r
-                for r in self._run(
-                    'SELECT "table" AS table_name, tbl_rows, "size" AS size_mb '
-                    'FROM SVV_TABLE_INFO WHERE "schema" = ?',
-                    (schema.name,),
-                )
-            }
-            external = {
-                r["table_name"]
-                for r in self._run(
-                    "SELECT tablename AS table_name FROM SVV_EXTERNAL_TABLES WHERE schemaname = ?",
-                    (schema.name,),
-                )
-            }
+            if page_token is None or key not in self._schema_info:
+                self._schema_info[key] = self._read_schema_info(schema.name)
+            info, external = self._schema_info[key]
         more = len(rows) > self.page_size
         rows = rows[: self.page_size]
         items: list[Table] = []
@@ -172,7 +164,27 @@ class RedshiftReader:
                     None if size is None else size * _MB,
                 )
             )
+        if not more:
+            self._schema_info.pop(key, None)  # the listing is done: nothing stale outlives it
         return Page(items, rows[-1]["table_name"] if more else None)
+
+    def _read_schema_info(self, schema: str) -> tuple[dict[str, Row], set[str]]:
+        info = {
+            r["table_name"]: r
+            for r in self._run(
+                'SELECT "table" AS table_name, tbl_rows, "size" AS size_mb '
+                'FROM SVV_TABLE_INFO WHERE "schema" = ?',
+                (schema,),
+            )
+        }
+        external = {
+            r["table_name"]
+            for r in self._run(
+                "SELECT tablename AS table_name FROM SVV_EXTERNAL_TABLES WHERE schemaname = ?",
+                (schema,),
+            )
+        }
+        return info, external
 
     def columns(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, list[Column]]:
         out: dict[ObjectRef, list[Column]] = {t.table_ref(): [] for t in tables}

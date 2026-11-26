@@ -5,17 +5,24 @@ exactly like the system view's documented columns, then ``record`` writes ``quer
 ``expected.json``. Review ``expected.json`` by eye after a regeneration; it is a contract.
 
     python -m tests.conformance.record_warehouses [bigquery snowflake ...]
+    python -m tests.conformance.record_warehouses --fingerprints [bigquery ...]
+
+A handler is written for specific statements, not for any SQL that happens to contain a keyword:
+``Scripted`` refuses a statement whose fingerprint (``KNOWN``) the handler was not written for.
+After changing a reader query, run ``--fingerprints``, check that the handler's branch really
+answers the new statement as the engine would, then update ``KNOWN`` (the old digest goes).
 """
 
 from __future__ import annotations
 
+import hashlib
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
 from schemaguru.catalog import reader_for
-from tests.conformance.replay import record
+from tests.conformance.replay import fingerprint, record
 
 UTC = timezone.utc
 T0 = datetime(2026, 1, 5, 9, 30, tzinfo=UTC)
@@ -24,14 +31,35 @@ Rows = list[dict[str, Any]]
 Handler = Callable[[str, Sequence[Any]], Rows]
 
 
+def digest(sql: str) -> str:
+    """Short stable id of a statement's fingerprint (whitespace-collapsed, lower-cased)."""
+    return hashlib.blake2b(fingerprint(sql).encode(), digest_size=6).hexdigest()
+
+
+class UnscriptedStatement(AssertionError):
+    """The reader sent SQL its scripted handler was not written for."""
+
+
 class Scripted:
-    def __init__(self, handler: Handler) -> None:
+    """A scripted engine. ``known`` is the set of statement digests the handler answers; ``None``
+    disables the check (only ``--fingerprints`` does that, to list what a reader sends)."""
+
+    def __init__(self, handler: Handler, known: Collection[str] | None = None) -> None:
         self._h = handler
+        self._known = None if known is None else frozenset(known)
+        self.seen: dict[str, str] = {}
 
     def run(self, sql: str, params: Sequence[Any] = (), *, timeout_s: float | None = None) -> Rows:
         from schemaguru.catalog.executor import check_metadata_sql
 
         check_metadata_sql(sql)
+        d = digest(sql)
+        self.seen[d] = fingerprint(sql)
+        if self._known is not None and d not in self._known:
+            raise UnscriptedStatement(
+                f"the handler was not written for this statement (digest {d}); check its branch "
+                f"answers it as the engine would, then add the digest to KNOWN:\n{fingerprint(sql)}"
+            )
         return self._h(sql.lower(), params)
 
 
@@ -610,9 +638,80 @@ SCRIPTS: dict[str, Handler] = {
 }
 
 
-def main(names: Sequence[str]) -> None:
+# Statements each handler was written for (see the module docstring on updating).
+KNOWN: dict[str, frozenset[str]] = {
+    "bigquery": frozenset(
+        {
+            "6a497602dc45",  # select c.table_name as table_name, c.column_name as column_n
+            "7aa01f11c114",  # select c.table_name as table_name, c.column_name as column_n
+            "5924856f4690",  # select catalog_name, schema_name from `region-us`.informatio
+            "57ecb9975bcf",  # select k.table_name as table_name, k.constraint_name as cons
+            "fe504efaa214",  # select k.table_name as table_name, k.constraint_name as cons
+            "c0d40fc8192f",  # select t.table_name as table_name, t.table_type as table_typ
+            "e42e418c23fd",  # select t.table_name as table_name, t.table_type as table_typ
+        }
+    ),
+    "snowflake": frozenset(
+        {
+            "ce6f68ffeb57",  # select current_database() as name
+            "53585fe11e41",  # select schema_name, comment from "demo_db".information_schem
+            "b94b3b2aa25f",  # select table_name, column_name, ordinal_position, data_type,
+            "3f9ab72a2933",  # select table_name, column_name, ordinal_position, data_type,
+            "50d1ccf8647b",  # select table_name, table_type, row_count, bytes, created, la
+            "05c2be2c031e",  # show imported keys in schema "demo_db"."ops"
+            "af53087ac00a",  # show imported keys in schema "demo_db"."shop"
+            "70f20e905e8b",  # show primary keys in schema "demo_db"."ops"
+            "98e1eb20206c",  # show primary keys in schema "demo_db"."shop"
+            "d0c0e2fe2e7f",  # show unique keys in schema "demo_db"."ops"
+            "d25643d3597e",  # show unique keys in schema "demo_db"."shop"
+        }
+    ),
+    "redshift": frozenset(
+        {
+            "a50a6e70350a",  # select "table" as table_name, tbl_rows, "size" as size_mb fr
+            "ce6f68ffeb57",  # select current_database() as name
+            "da07b884bf36",  # select n.nspname as schema_name, c.relname as table_name, co
+            "f8e574d5238b",  # select s.schema_name as schema_name, (select count(*) from s
+            "de59bae5c3dd",  # select schema_name, table_name, column_name, ordinal_positio
+            "aafd40681632",  # select schemaname, tablename, columnname, columnnum, externa
+            "f12f74d69309",  # select t.table_name as table_name, t.table_type as table_typ
+            "1e4b3ccfa288",  # select tablename as table_name from svv_external_tables wher
+        }
+    ),
+    "databricks": frozenset(
+        {
+            "4036e1f99f01",  # select catalog_name from system.information_schema.catalogs
+            "77c63f9f3fb7",  # select k.table_catalog as table_catalog, k.table_schema as t
+            "b224715781b3",  # select s.catalog_name as catalog_name, s.schema_name as sche
+            "1c252fe0c0ba",  # select table_catalog, table_schema, table_name, column_name,
+            "e5f9c8644a80",  # select table_name, table_type, comment, created, last_altere
+        }
+    ),
+    "oracle": frozenset(
+        {
+            "a207e57136c3",  # select c.owner as owner, c.table_name as table_name, c.colum
+            "a0e567050d5b",  # select k.owner as owner, k.table_name as table_name, k.const
+            "b09f035d90ee",  # select u.username as name, (select count(*) from all_tables
+            "12ded0872f93",  # select x.table_name as table_name, x.kind as kind, x.num_row
+        }
+    ),
+}
+
+
+def main(argv: Sequence[str]) -> None:
+    listing = "--fingerprints" in argv
+    names = [a for a in argv if not a.startswith("--")]
     for name in names or list(SCRIPTS):
-        record(lambda ex, n=name: reader_for(n, ex), Scripted(SCRIPTS[name]), name)
+        if listing:
+            engine = Scripted(SCRIPTS[name])
+            from tests.conformance.replay import read_all
+
+            read_all(reader_for(name, engine))
+            print(f"{name}: {len(engine.seen)} statements")
+            for d, fp in sorted(engine.seen.items(), key=lambda kv: kv[1]):
+                print(f'    "{d}",  # {fp[:70]}')
+            continue
+        record(lambda ex, n=name: reader_for(n, ex), Scripted(SCRIPTS[name], KNOWN[name]), name)
         print("recorded", name)
 
 

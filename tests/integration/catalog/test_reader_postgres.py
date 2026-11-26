@@ -89,6 +89,75 @@ def test_reader_postgres(conn: Any) -> None:
     assert Constraint("foreign_key", oi, ("customer_id",), cust, ("id",), True) in cons[oi]
 
 
+def test_partitioned_and_unanalysed(conn: Any) -> None:
+    """A partitioned parent has no storage of its own (partition key reported, size and rows
+    unknown, partitions not listed); a table never analysed has an unknown row count, not 0."""
+    r = PostgresReader(DBAPIExecutor(conn, "format"))
+    by = {
+        t.ref.table: t
+        for t in r.list_tables(Schema(None, "sg_test"), page_token=None, changed_since=None).items
+    }
+    assert "events_2026" not in by  # a partition is part of its parent
+    assert by["events"].kind == "table" and "RANGE" in (by["events"].partitioning or "")
+    assert by["events"].bytes is None and by["events"].row_count is None
+    assert by["customers"].partitioning is None and by["customers"].row_count == 1
+    assert by["fresh"].row_count is None  # 1000 rows exist; the estimate does not
+    conn.execute("ANALYZE sg_test.fresh")
+    analysed = r.list_tables(Schema(None, "sg_test"), page_token=None, changed_since=None)
+    assert {t.ref.table: t for t in analysed.items}["fresh"].row_count == 1000
+
+
+def test_postgres_unique_indexes_and_not_valid_fk(conn: Any) -> None:
+    conn.execute("CREATE TABLE sg_test.u(a integer, b integer, c integer, d integer, e text)")
+    conn.execute("CREATE UNIQUE INDEX u_ab ON sg_test.u(a, b)")  # backs no constraint
+    conn.execute("CREATE UNIQUE INDEX u_part ON sg_test.u(c) WHERE c > 0")  # partial
+    conn.execute("CREATE UNIQUE INDEX u_expr ON sg_test.u(lower(e))")  # expression
+    conn.execute("CREATE UNIQUE INDEX u_inc ON sg_test.u(d) INCLUDE (e)")  # INCLUDE is not key
+    conn.execute("ALTER TABLE sg_test.u ADD CONSTRAINT u_c_key UNIQUE (c)")  # constraint-backed
+    conn.execute("INSERT INTO sg_test.customers VALUES (2, 'b@x', 'n', 1.5, NULL)")
+    conn.execute("CREATE TABLE sg_test.child(id integer, customer_id integer, other_id integer)")
+    conn.execute(
+        "ALTER TABLE sg_test.child ADD CONSTRAINT fk_valid FOREIGN KEY (customer_id) "
+        "REFERENCES sg_test.customers(id)"
+    )
+    conn.execute(
+        "ALTER TABLE sg_test.child ADD CONSTRAINT fk_nv FOREIGN KEY (other_id) "
+        "REFERENCES sg_test.customers(id) NOT VALID"
+    )
+    r = PostgresReader(DBAPIExecutor(conn, "format"))
+    u, child, cust = (ObjectRef(None, "sg_test", n) for n in ("u", "child", "customers"))
+    cons = r.constraints([u, child, cust])
+    uniques = [c for c in cons[u] if c.kind == "unique"]
+    assert sorted(c.columns for c in uniques) == [("a", "b"), ("c",), ("d",)]
+    assert all(c.enforced is True for c in uniques)
+    fks = {c.columns: c for c in cons[child] if c.kind == "foreign_key"}
+    assert fks[("customer_id",)].enforced is True
+    assert fks[("other_id",)].enforced is False
+    assert fks[("other_id",)].ref_table == cust
+    # the customers table's own unique constraint is reported once (the index backs it)
+    assert [c.columns for c in cons[cust] if c.kind == "unique"] == [("email",)]
+
+
+def test_postgres_paging_collation_across_a_page_boundary(conn: Any) -> None:
+    """The keyset test and the ORDER BY use one (binary) collation, so ``a, B, b, ä`` split over
+    pages of two come out once each, in byte order, whatever the database's own collation is."""
+    for name in ("a", "B", "b", "ä"):
+        conn.execute(f'CREATE TABLE sg_test."{name}"(id integer)')
+    r = PostgresReader(DBAPIExecutor(conn, "format"), page_size=2)
+    seen: list[str] = []
+    token = None
+    while True:
+        page = r.list_tables(Schema(None, "sg_test"), page_token=token, changed_since=None)
+        seen += [t.ref.table for t in page.items]
+        token = page.next_token
+        if token is None:
+            break
+    assert len(seen) == len(set(seen))
+    odd = [n for n in seen if n in ("a", "B", "b", "ä")]
+    assert odd == ["B", "a", "b", "ä"]
+    assert seen == sorted(seen, key=lambda n: n.encode("utf-8"))
+
+
 def test_postgres_paging_and_crawl(conn: Any, tmp_path: Any) -> None:
     from schemaguru.config import CrawlConfig
     from schemaguru.store.sqlite import SQLiteStore

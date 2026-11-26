@@ -1,5 +1,6 @@
 {
  "dialect": "redshift",
+ "only_catalogs": null,
  "queries": [
   {
    "params": [],

@@ -327,6 +327,7 @@ class BilledReader(FakeReader):
     def __init__(self, *a: object, **k: object) -> None:
         super().__init__(*a, **k)  # type: ignore[arg-type]
         self.bytes_billed = 0
+        self.bytes_billed_is_lower_bound = False
 
     def list_tables(self, *a: object, **k: object) -> object:
         self.bytes_billed += self.PER_QUERY
@@ -363,6 +364,37 @@ def test_crawl_bytes_none_or_unreported_is_uncounted(store: SQLiteStore) -> None
     plain = crawl(FakeReader(300, tables_per_schema=300, page_size=100), other, config=cfg,
                   crawl_bytes=1)  # fmt: skip
     assert not plain.errors and len(live(other)) == 300 and plain.bytes_billed is None
+    other.close()
+
+
+def test_billing_reader_protocol(store: SQLiteStore) -> None:
+    """``BillingReader`` is a runtime-checkable protocol (both attributes), not a ``getattr``
+    probe: a reader that only happens to carry a ``bytes_billed`` attribute is not billed."""
+    from schemaguru.catalog.protocol import BillingReader
+    from schemaguru.catalog.readers.bigquery import BigQueryReader
+
+    assert isinstance(BilledReader(1, tables_per_schema=1), BillingReader)
+    assert isinstance(BigQueryReader(FakeReader(1)), BillingReader)  # type: ignore[arg-type]
+    assert not isinstance(FakeReader(1), BillingReader)
+
+    class HalfBilled(BilledReader):
+        def __init__(self, *a: object, **k: object) -> None:
+            super().__init__(*a, **k)
+            del self.bytes_billed_is_lower_bound  # the flag half of the protocol is missing
+
+    half = HalfBilled(10, tables_per_schema=10)
+    assert not isinstance(half, BillingReader)
+    report = crawl(half, store, config=CrawlConfig(workers=1), now=lambda: NOW)
+    assert report.bytes_billed is None and not report.bytes_billed_is_estimate
+
+    class Estimating(BilledReader):
+        def __init__(self, *a: object, **k: object) -> None:
+            super().__init__(*a, **k)
+            self.bytes_billed_is_lower_bound = True
+
+    other = SQLiteStore(":memory:")
+    est = crawl(Estimating(10, tables_per_schema=10), other, config=CrawlConfig(workers=1))
+    assert est.bytes_billed is not None and est.bytes_billed_is_estimate
     other.close()
 
 

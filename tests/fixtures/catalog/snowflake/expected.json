@@ -443,7 +443,9 @@
  "tables": [
   {
    "bytes": 7340032,
-   "clustering": null,
+   "clustering": [
+    "TO_DATE(TS)"
+   ],
    "comment": null,
    "created_at": "2026-01-05T09:30:00+00:00",
    "kind": "table",

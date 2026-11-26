@@ -18,8 +18,9 @@ A role with `USAGE` on the database and schemas and any privilege (`SELECT`, `RE
 ## Quirks
 - The driver must use `qmark` binding (`snowflake.connector.paramstyle = "qmark"`).
 - Result column names come back upper-case; the reader lower-cases all keys.
-- `SHOW ... KEYS` returns the whole schema; the reader filters to the requested tables. Constraints are declared, never enforced (`enforced=False`).
-- A clustering key that is an expression (`LINEAR(TO_DATE(TS))`) is left unknown; plain column lists become `clustering`.
+- `SHOW ... KEYS` returns the whole schema; the reader filters to the requested tables. `SHOW` returns at most 10,000 rows, so an answer that reaches that count may be cut off: the reader then asks per table (`SHOW ... KEYS IN TABLE`) instead of trusting it. Constraints are declared, never enforced (`enforced=False`).
+- `clustering` holds each clustering key expression verbatim: `LINEAR(A, B)` gives `("A", "B")`, `LINEAR(TO_DATE(TS))` gives `("TO_DATE(TS)",)`. A key that cannot be split unambiguously (unbalanced parentheses or quotes) is left unknown.
+- Metadata the reader cannot interpret (no database, a `SHOW` row without its key columns or sequence) raises `SG102`; the crawl records it and continues.
 - `INFORMATION_SCHEMA.TABLES` shows only the current database (give the reader `database=` or set one on the session). Views report no row count.
 - Live test: `SCHEMAGURU_LIVE_SNOWFLAKE=1` with `SCHEMAGURU_SF_{ACCOUNT,USER,PASSWORD,WAREHOUSE,DATABASE,SCHEMA}`.
 

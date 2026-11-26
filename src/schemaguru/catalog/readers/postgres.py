@@ -151,7 +151,7 @@ class PostgresReader:
             "(SELECT array_agg(a.attname::text ORDER BY k.ord) "
             " FROM unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord) "
             " JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum) AS cols, "
-            "fn.nspname AS ref_schema, fc.relname AS ref_table, "
+            "con.convalidated AS validated, fn.nspname AS ref_schema, fc.relname AS ref_table, "
             "(SELECT array_agg(a.attname::text ORDER BY k.ord) "
             " FROM unnest(con.confkey) WITH ORDINALITY AS k(attnum, ord) "
             " JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum) "
@@ -169,13 +169,46 @@ class PostgresReader:
             kind = _CONSTRAINT_KINDS[r["contype"]]
             tref = ObjectRef(None, r["schema_name"], r["table_name"])
             ref_table = ref_cols = None
+            enforced = True
             if kind == "foreign_key":
                 ref_table = ObjectRef(None, r["ref_schema"], r["ref_table"])
                 ref_cols = tuple(r["ref_cols"])
+                # NOT VALID: new rows are checked, existing rows were never verified
+                enforced = bool(r["validated"])
             out.setdefault(tref, []).append(
-                Constraint(kind, tref, tuple(r["cols"]), ref_table, ref_cols, True)
+                Constraint(kind, tref, tuple(r["cols"]), ref_table, ref_cols, enforced)
             )
+        self._unique_indexes(tables, out)
         return out
+
+    def _unique_indexes(
+        self, tables: Sequence[ObjectRef], out: dict[ObjectRef, list[Constraint]]
+    ) -> None:
+        """A unique index that backs no constraint still guarantees uniqueness (the table has
+        ``CREATE UNIQUE INDEX`` and no ``UNIQUE``). Partial, expression and invalid indexes
+        guarantee nothing about the whole column list and are skipped."""
+        clause, params = _pairs(tables, "n.nspname", "c.relname")
+        rows = self._ex.run(
+            "SELECT n.nspname AS schema_name, c.relname AS table_name, "
+            "(SELECT array_agg(a.attname::text ORDER BY k.ord) "
+            " FROM unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord) "
+            " JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum "
+            " WHERE k.ord <= i.indnkeyatts) AS cols "
+            "FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE i.indisunique AND NOT i.indisprimary AND i.indisvalid "
+            "AND i.indpred IS NULL AND i.indexprs IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid) "
+            f"AND ({clause}) "
+            "ORDER BY n.nspname, c.relname, i.indexrelid",
+            params,
+            timeout_s=self.timeout_s,
+        )
+        for r in rows:
+            tref = ObjectRef(None, r["schema_name"], r["table_name"])
+            out.setdefault(tref, []).append(
+                Constraint("unique", tref, tuple(r["cols"]), None, None, True)
+            )
 
     def capabilities(self) -> ReaderCapabilities:
         return ReaderCapabilities(comments=True, stats=True, constraints=True)

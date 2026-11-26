@@ -16,7 +16,7 @@ import pytest
 from schemaguru.catalog import reader_for
 from schemaguru.model.structure import Schema
 from tests.conformance.replay import FIXTURES, read_all
-from tests.integration.catalog.engines import ENGINES, Engine
+from tests.integration.catalog.engines import COLLATION_NAMES, ENGINES, Engine
 from tests.integration.conftest import engine_dsn, require_driver
 
 pytestmark = pytest.mark.integration
@@ -83,6 +83,34 @@ def test_paging_returns_every_table_once(live: tuple[Engine, Any]) -> None:
             break
     assert names == [t.ref.table for t in full.items]
     assert len(set(names)) == len(names) == 4 and pages == 2
+
+
+def test_paging_collation_across_a_page_boundary(live: tuple[Engine, Any]) -> None:
+    """Names ``a, B, b, ä`` (distinct only under a case- and accent-sensitive collation) are each
+    listed once and in byte order across a page boundary: the keyset test and the ORDER BY agree."""
+    engine, conn = live
+    if not engine.collation_ddl:
+        pytest.skip(f"{engine.name}: names fold or are case-insensitive; not exercised")
+    cursor = conn.cursor() if hasattr(conn, "cursor") else None
+    for stmt in engine.collation_ddl:
+        if engine.name == "clickhouse":
+            conn.client.command(stmt)
+        else:
+            assert cursor is not None
+            cursor.execute(stmt)
+            cursor.fetchall()
+    reader = reader_for(engine.name, engine.executor(conn))
+    reader.page_size = 2  # type: ignore[attr-defined]
+    schema = Schema(None, "sg_coll")
+    names: list[str] = []
+    token = None
+    while True:
+        page = reader.list_tables(schema, page_token=token, changed_since=None)
+        names += [t.ref.table for t in page.items]
+        token = page.next_token
+        if token is None:
+            break
+    assert names == sorted(COLLATION_NAMES, key=lambda n: n.encode("utf-8"))
 
 
 def test_changed_since_in_the_future_lists_nothing(live: tuple[Engine, Any]) -> None:

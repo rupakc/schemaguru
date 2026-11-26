@@ -1,5 +1,6 @@
 {
  "dialect": "snowflake",
+ "only_catalogs": null,
  "queries": [
   {
    "params": [],

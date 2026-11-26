@@ -17,6 +17,8 @@ Catalog queries run on the leader node and are free of scan charges; Serverless 
 
 ## Quirks
 - `tbl_rows` (from `SVV_TABLE_INFO`) includes rows deleted but not yet vacuumed; `size` is in 1 MB blocks, so `bytes` is a multiple of 1 MiB. Row counts are joined only for the current database.
+- `SVV_TABLE_INFO` and `SVV_EXTERNAL_TABLES` are read once per schema listing, not once per page; a new listing (its first page) reads them again.
+- Paging compares names with the database's own collation in both the `>` test and the `ORDER BY`; Redshift has no per-expression collation clause (PostgreSQL's `COLLATE "C"` is not valid there), so none is added.
 - External tables are flagged `external`; a table that `SVV_ALL_COLUMNS` does not describe falls back to `SVV_EXTERNAL_COLUMNS` (types are the external type text, e.g. `varchar(65535)`).
 - `PRIMARY KEY`, `UNIQUE` and `FOREIGN KEY` are informational and not enforced (`enforced=False`). Composite keys are read per column position with `generate_series` over `conkey` (up to 32 columns), because `unnest ... WITH ORDINALITY` is unavailable on Redshift. This query is exercised by recorded fixtures only, not a live cluster, until a live run is contributed.
 - Live test: `SCHEMAGURU_LIVE_REDSHIFT=1` with `SCHEMAGURU_RS_{HOST,DATABASE,USER,PASSWORD,SCHEMA}`.

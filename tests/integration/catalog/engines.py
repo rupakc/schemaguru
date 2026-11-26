@@ -24,6 +24,9 @@ class Engine:
     seed: Callable[[Any], None]
     executor: Callable[[Any], MetadataExecutor]
     only_catalogs: tuple[str, ...] | None = None  # restrict a federated engine's crawl
+    # extra statements building schema ``sg_coll`` with the case-/accent-distinct tables
+    # a, B, b, ä (engines whose table names are case-sensitive); empty = not exercised
+    collation_ddl: tuple[str, ...] = ()
 
 
 def _mysql_connect(dsn: str) -> Any:
@@ -219,10 +222,33 @@ def _dbapi(style: str) -> Callable[[Any], MetadataExecutor]:
     return lambda conn: DBAPIExecutor(conn, style)
 
 
+COLLATION_NAMES = ("a", "B", "b", "ä")  # byte order: B, a, b, ä; a locale sorts them otherwise
+
+
 ENGINES: dict[str, Engine] = {
-    "mysql": Engine("mysql", "pymysql", _mysql_connect, _mysql_seed, _dbapi("format")),
+    "mysql": Engine(
+        "mysql",
+        "pymysql",
+        _mysql_connect,
+        _mysql_seed,
+        _dbapi("format"),
+        collation_ddl=(
+            "DROP DATABASE IF EXISTS sg_coll",
+            "CREATE DATABASE sg_coll",
+            *(f"CREATE TABLE sg_coll.`{n}`(id INT)" for n in COLLATION_NAMES),
+        ),
+    ),
     "clickhouse": Engine(
-        "clickhouse", "clickhouse_connect", _clickhouse_connect, _clickhouse_seed, _dbapi("format")
+        "clickhouse",
+        "clickhouse_connect",
+        _clickhouse_connect,
+        _clickhouse_seed,
+        _dbapi("format"),
+        collation_ddl=(
+            "DROP DATABASE IF EXISTS sg_coll",
+            "CREATE DATABASE sg_coll",
+            *(f"CREATE TABLE sg_coll.`{n}`(id Int8) ENGINE = Memory" for n in COLLATION_NAMES),
+        ),
     ),
     "tsql": Engine("tsql", "pyodbc", _tsql_connect, _tsql_seed, _tsql_executor),
     "trino": Engine(

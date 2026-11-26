@@ -170,3 +170,20 @@ def test_out_of_catalog_name_is_swept_even_when_tables_are_raw(
         assert raw["edges"][0]["upstream"] == "shop.customers"
     finally:
         g.close()
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        ({"ref": "shop.orders", "level": "column"}, "level `column` needs a column reference"),
+        ({"ref": "shop.nowhere"}, "`ref` names no stored table or column"),
+        ({"ref": "maria.garcia@example.com"}, "`ref` names no stored table or column"),
+    ],
+)
+def test_error_texts_stay_readable(
+    shop_guru: Guru, no_seam_check: Any, args: dict[str, Any], expected: str
+) -> None:
+    out = shop_guru.handle_tool_call("lineage", args)
+    assert out["error"]["code"] == "SG803"
+    assert expected in out["text"], out["text"]
+    assert " ? " not in out["text"] and "maria" not in out["text"]

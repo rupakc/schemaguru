@@ -857,7 +857,9 @@ class Guru:
         except (StoreUnavailableError, StoreConfigError):
             raise
         except SchemaGuruError:
-            raise SchemaGuruError(f"unknown table or column {name!r}") from None
+            raise SchemaGuruError(
+                f"unknown table or column {name!r} (crawl first, or qualify the name)"
+            ) from None
 
     def lineage(
         self,
@@ -877,7 +879,7 @@ class Guru:
         subject = self._subject_ref(ref)
         if level == "column" and subject.column is None:
             raise SchemaGuruError(
-                f"{subject.canonical()} is a table; level 'column' needs a column reference"
+                f"{subject.canonical()} is a table; level `column` needs a column reference"
             )
         way: Direction = "upstream" if direction == "upstream" else "downstream"
         lvl: Level | None = None if level is None else ("table" if level == "table" else "column")

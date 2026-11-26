@@ -464,6 +464,12 @@ def _lineage(guru: ToolHost, args: dict[str, Any]) -> dict[str, Any]:
     except SchemaGuruError as e:
         if isinstance(e, StoreUnavailableError | StoreConfigError):
             raise
+        if str(e).startswith("unknown table or column"):
+            # the caller's ref would be blanked to `?` (a quoted literal): say it without echoing
+            raise ToolError(
+                "SG803",
+                "lineage: `ref` names no stored table or column (crawl first, or qualify the name)",
+            ) from None
         code = "SG705" if str(e).startswith("SG705") else "SG803"
         raise ToolError(code, f"lineage: {e}") from None
     # a name outside the catalog belongs to no configured table: then every configured mode

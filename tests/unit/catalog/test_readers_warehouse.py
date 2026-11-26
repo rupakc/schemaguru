@@ -1383,3 +1383,45 @@ def test_paging_collation_stable(dialect: str) -> None:
         assert "COLLATE" not in upper and "BINARY" not in upper, paged
     else:  # both halves carry it: the comparison (before ORDER BY) and the ordering
         assert pin in order and pin in before, paged
+
+
+def test_crawl_surfaces_reader_diagnostics_once() -> None:
+    """The PostgreSQL-10 unique-index warning reaches ``CrawlReport.errors`` exactly once."""
+    from schemaguru.catalog import crawl
+    from schemaguru.store.sqlite import SQLiteStore
+
+    class Pg10(Fake):
+        def run(
+            self, sql: str, params: Sequence[Any] = (), *, timeout_s: float | None = None
+        ) -> Any:
+            if "pg_index" in sql:
+                raise RuntimeError("column i.indnkeyatts does not exist")
+            return super().run(sql, params, timeout_s=timeout_s)
+
+    fake = Pg10(
+        (["obj_description"], [{"name": "s", "comment": None, "table_count": 1}]),
+        (
+            ["reltuples"],
+            [
+                {
+                    "name": "items",
+                    "relkind": "r",
+                    "reltuples": 1,
+                    "size_bytes": 1,
+                    "partitioning": None,
+                    "comment": None,
+                }
+            ],
+        ),
+        (["FROM pg_attribute a"], []),
+        (["pg_constraint con"], [_pg_constraint_row(contype="p", cols=["id"], ref_schema=None)]),
+    )
+    reader = PostgresReader(fake)  # type: ignore[arg-type]
+    store = SQLiteStore(":memory:")
+    report = crawl(reader, store)
+    again = crawl(reader, store)
+    store.close()
+    assert [d.code for d in report.errors] == ["SG102"]
+    assert "PostgreSQL 11" in report.errors[0].message
+    assert not reader.diagnostics  # consumed: not repeated
+    assert [d.code for d in again.errors] == ["SG102"]  # a new crawl reports its own, once

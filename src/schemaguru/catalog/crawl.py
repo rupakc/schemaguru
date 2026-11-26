@@ -162,6 +162,7 @@ class _Crawl:
         self.filter = ScopeFilter(config.include, config.exclude)
         self.caps = reader.capabilities()
         self.errors: list[Diagnostic] = []
+        self.notes: list[Diagnostic] = []  # reader notes: reported, but not a failed crawl
         self._qlock = threading.Lock()
         self.queries = 0
         self.tables_seen = 0
@@ -218,6 +219,15 @@ class _Crawl:
     def _count(self, n: int = 1) -> None:
         with self._qlock:
             self.queries += n
+
+    def drain_reader_diagnostics(self) -> None:
+        """Move what the reader noted (``reader.diagnostics``, duck-typed) into the report, once."""
+        notes = getattr(self.reader, "diagnostics", None)
+        if not isinstance(notes, list):
+            return
+        with self._qlock:
+            taken, notes[:] = list(notes), []
+        self.notes.extend(d for d in taken if isinstance(d, Diagnostic))
 
     def _error(self, location: str, exc: BaseException) -> None:
         self.errors.append(
@@ -391,6 +401,7 @@ class _Crawl:
                 cons = dict(self.reader.constraints(refs))
             except Exception as e:
                 self._error(f"constraints of a batch in {loc}", e)
+            self.drain_reader_diagnostics()
         return cols, cons
 
     def _write_page(self, tables: list[Table], loc: str, pool: ThreadPoolExecutor) -> None:
@@ -471,6 +482,8 @@ def crawl(
         stopped = False
         try:
             run = _Crawl(reader, store, cfg, resume, incremental, now, seen, crawl_bytes)
+            run.drain_reader_diagnostics()  # a note left by an earlier use is not this crawl's
+            run.notes.clear()
             with ThreadPoolExecutor(max_workers=max(1, cfg.workers)) as pool:
                 try:
                     withdrawn = run.run(pool)
@@ -478,6 +491,7 @@ def crawl(
                     stopped, withdrawn = True, 0  # an incomplete listing withdraws nothing
         finally:
             seen.close()
+    run.drain_reader_diagnostics()
     bytes_billed = run.spent_bytes()
     if stopped:
         run.errors.append(
@@ -509,7 +523,7 @@ def crawl(
         tables_seen=run.tables_seen,
         tables_written=run.tables_written,
         withdrawn=withdrawn,
-        errors=run.errors,
+        errors=[*run.errors, *run.notes],
         queries=run.queries,
         bytes_billed=bytes_billed,
         bytes_billed_is_estimate=getattr(reader, "bytes_billed_is_lower_bound", False) is True,

@@ -325,5 +325,4 @@ def test_via_success_bounded_work(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(search_mod.heapq, "heappop", counting)
     res = find_paths(g, a, b, cfg=GraphConfig(), automaton=Via(w))
     assert res.paths or res.refusal is not None
-    print("POPS", pops)
-    assert 0 < pops <= 200_000, pops
+    assert 0 < pops <= 120_000, pops

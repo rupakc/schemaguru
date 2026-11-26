@@ -240,6 +240,7 @@ FACTLANG_PUBLIC = {
     "factlang.sql",
     "factlang.connectors",
     "factlang.agent",
+    "factlang.agent.tools",  # count_claims (in its __all__)
     "factlang.syntax",
 }
 _FACTLANG_MODULE = re.compile(r"factlang(?:\.[A-Za-z_]\w*)*")

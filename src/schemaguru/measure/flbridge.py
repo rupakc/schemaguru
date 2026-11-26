@@ -584,6 +584,21 @@ def scrub_evidence(ev: Evidence, mode: Mode) -> Evidence:
     return _scrubbed(ev, mode)
 
 
+def count_claims(text: str) -> int:
+    """Claims in ``text`` by FactLang's own line rule (``factlang.agent.tools.count_claims``).
+
+    When the installed FactLang lacks it, the count is the number of non-blank lines: a count
+    that can only be too high, so a cap built on it refuses too much, never too little.
+    """
+    counter = _attr("factlang.agent.tools", "count_claims")
+    if callable(counter):
+        try:
+            return int(counter(text))
+        except Exception:
+            pass
+    return sum(1 for ln in text.replace("\r\n", "\n").replace("\r", "\n").split("\n") if ln.strip())
+
+
 def check_tool_definition() -> dict[str, Any] | None:
     """FactLang's ``factlang_check`` agent tool spec, or None when the installed FactLang has
     no agent surface (``factlang.agent.tool_definitions`` + ``handle_tool_call``).

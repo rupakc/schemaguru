@@ -208,6 +208,34 @@ def test_check_fact_claim_cap(
         g.close()
 
 
+def test_check_fact_cap_follows_factlang_line_rule(
+    tmp_path: Path, shop_duckdb: tuple[Any, ShopFacts], seam_check: Any
+) -> None:
+    backend = CheckingBackend(shop_duckdb[0], [_evidence()])
+    g = make_shop_guru(tmp_path, shop_duckdb[0], backend=backend)
+    try:
+        # a trailing comment ending in a backslash continues nothing: 300 claims, not 1
+        bomb = "\n".join(f"ROWS shop.orders VALUE >={i}  # \\" for i in range(300))
+        out = call(g, "check_fact", {"claims": bomb})
+        assert out["error"]["code"] == "too_many_claims" and "300" in out["error"]["message"]
+        assert backend.checked == []
+        # CRLF and bare CR line endings count as lines too
+        crlf = "\r\n".join(f"ROWS shop.orders VALUE >={i}" for i in range(201))
+        assert call(g, "check_fact", {"claims": crlf})["error"]["code"] == "too_many_claims"
+        cr = "\r".join(f"ROWS shop.orders VALUE >={i}" for i in range(201))
+        assert call(g, "check_fact", {"claims": cr})["error"]["code"] == "too_many_claims"
+        assert backend.checked == []
+    finally:
+        g.close()
+
+
+def test_claim_count_fails_safe_without_factlang_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+    from schemaguru.measure import flbridge
+
+    monkeypatch.setattr(flbridge, "_attr", lambda module, name: None)
+    assert flbridge.count_claims("a\n\n  \nb # c \\\n") == 2  # non-blank lines: overcounts
+
+
 # --- privacy: every planted secret through every tool, masked and none ------------------------
 
 

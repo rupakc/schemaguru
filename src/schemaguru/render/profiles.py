@@ -55,6 +55,7 @@ class PlannerProfile:
         r = RANK[level]
         lines = [f"[{a.title}]" + (f" {a.description}" if a.description else "")]
         lines += warning_lines(a)
+        lines += [f"  {b}" for b in a.built_from]
         if a.answers:
             lines.append(f"  {a.answers}")
         if a.rows and r <= STANDARD_UP:

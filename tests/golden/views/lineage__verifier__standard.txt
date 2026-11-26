@@ -1,0 +1,17 @@
+--- analytics.revenue_daily
+TABLE analytics.revenue_daily
+LINEAGE analytics.revenue_daily <- shop.order_items, shop.orders, shop.payments, shop.refunds
+COLUMNS revenue NUMERIC
+COLUMN_LINEAGE analytics.revenue_daily.revenue <- shop.orders.amount, shop.refunds.amount aggregate
+
+--- shop.v_paid_orders
+TABLE shop.v_paid_orders
+LINEAGE shop.v_paid_orders <- shop.orders, shop.payments
+LINEAGE shop.v_paid_orders <- shop.orders, shop.payments, ext.raw_payments(unresolved)
+COLUMNS amount NUMERIC
+COLUMN_LINEAGE shop.v_paid_orders.amount <- shop.payments.amount copy
+
+--- shop.order_summary
+TABLE shop.order_summary
+LINEAGE shop.order_summary <- shop.orders
+COLUMNS n INTEGER

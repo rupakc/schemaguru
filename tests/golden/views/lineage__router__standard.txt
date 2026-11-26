@@ -1,0 +1,8 @@
+--- analytics.revenue_daily
+analytics.revenue_daily
+
+--- shop.v_paid_orders
+shop.v_paid_orders
+
+--- shop.order_summary
+shop.order_summary

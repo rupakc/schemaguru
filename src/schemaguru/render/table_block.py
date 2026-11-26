@@ -29,6 +29,7 @@ from schemaguru.knowledge.soft_delete import MISMATCH
 from schemaguru.model.detail import DetailLevel
 from schemaguru.model.facts import Fact, Provenance, Status, method_class
 from schemaguru.model.joins import JoinRef, join_verdict
+from schemaguru.model.lineage import source_label
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column
 from schemaguru.pii.mask import mask_free_text, mask_value
@@ -463,6 +464,7 @@ class Analysis:
     keys: list[str] = field(default_factory=list)
     columns: list[ColumnView] = field(default_factory=list)
     keyed: list[tuple[int, str]] = field(default_factory=list)
+    built_from: list[str] = field(default_factory=list)  # table-level lineage lines (LITE_UP)
     provenance: str = ""
     mode: str = "masked"
     masked: int = 0  # values and free-text hits masked while rendering (counted, never shown)
@@ -496,6 +498,24 @@ _KIND_WORDS = {
 }
 
 
+LINEAGE_CAP = 3
+
+
+def _src(source: str) -> str:
+    """A lineage source as rendered: an overlay path stays out of the view."""
+    label = source_label(source)
+    return "overlay" if label.startswith("overlay") else label
+
+
+def _marker(source: str) -> str:
+    return "parsed" if _src(source) == "view_definition" else "declared"
+
+
+def _capped(items: Sequence[str], cap: int) -> str:
+    more = len(items) - cap
+    return ", ".join(items[:cap]) + (f" (+{more} more)" if more > 0 else "")
+
+
 class _Analyser:
     def __init__(self, k: TableKnowledge) -> None:
         self.k = k
@@ -505,6 +525,7 @@ class _Analyser:
         self.cols = {c.ref.column: ColumnView(c, ident(c.ref.column or "")) for c in k.columns}
         self.used: list[Fact] = []
         self.markers: set[str] = set()
+        self.lineage_sources: list[str] = []
         self.mode = ValuePolicy.for_table(k.ref, self.cfg.sampling)
         self.a.mode = self.mode
         # any PII classification (measured shape, drafted or human) masks the whole column
@@ -572,6 +593,7 @@ class _Analyser:
         self.primary_key()
         self.soft_delete()
         self.joins()
+        self.lineage()
         for col in k.columns:
             name = col.ref.column
             assert name is not None
@@ -1231,6 +1253,41 @@ class _Analyser:
                 self.keyed(name, STANDARD_UP, f"NOTE {q} {note}")
                 self.used.append(f)
 
+    def lineage(self) -> None:
+        """Parsed or declared lineage, always marked unverified (spec 4.6). Lines name the
+        sources; they never say measured or verified."""
+        k, a = self.k, self.a
+        own = k.ref.canonical()
+        columns = {k.column_ref(n).canonical(): n for n in self.cols if n is not None}
+        notes: dict[str, list[str]] = {}
+        sources: set[str] = set()
+        for link in k.lineage.links:
+            if not (link.inputs or link.unresolved):
+                continue
+            refs = [*link.inputs, *(f"{u} (not in catalog)" for u in link.unresolved)]
+            keyed = [*link.inputs, *(f"{u}(unresolved)" for u in link.unresolved)]
+            if link.level == "table":
+                if link.subject != own:
+                    continue
+                src = ", ".join(f"{_src(s)} ({_marker(s)})" for s in link.sources)
+                a.built_from.append(
+                    f"Built from: {_capped(refs, LINEAGE_CAP)} · {src} · unverified"
+                )
+                self.keyed(None, LITE_UP, f"LINEAGE {a.title} <- {', '.join(keyed)}")
+            else:
+                col = columns.get(link.subject)
+                if col is None:
+                    continue
+                how = f" ({link.transform})" if link.transform else ""
+                notes.setdefault(col, []).append(f"{_capped(refs, LINEAGE_CAP)}{how}")
+                tr = f" {link.transform}" if link.transform else ""
+                text = f"COLUMN_LINEAGE {a.title}.{ident(col)} <- {', '.join(keyed)}{tr}"
+                self.keyed(col, STANDARD_UP, text)
+            sources.update(_src(s) for s in link.sources)
+        for col, parts in notes.items():
+            self.note(col, STANDARD_UP, "← " + "; ".join(parts))
+        self.lineage_sources = sorted(sources)
+
     def failures_and_contradictions(self) -> None:
         # stated elsewhere in the block (values, measurements, the live-rows filter line)
         skip = ("latest measurement failed", "measured contradiction", "declared values", MISMATCH)
@@ -1312,6 +1369,8 @@ class _Analyser:
         )
         if fracs:
             parts.append("sampled " + ", ".join(pct(fr) for fr in fracs))
+        if self.lineage_sources:
+            parts.append(f"lineage {', '.join(self.lineage_sources)} (unverified)")
         if not parts:
             parts.append("catalog only")
         self.a.provenance = "Provenance: " + " · ".join(parts)
@@ -1362,6 +1421,7 @@ def render_agent(k: TableKnowledge, level: DetailLevel) -> str:
     r = RANK[level]
     lines = [f"[{a.title}]" + (f" {a.description}" if a.description else "")]
     lines += warning_lines(a)
+    lines += [f"  {b}" for b in a.built_from]
     if a.answers and r <= STANDARD_UP:
         lines.append(f"  {a.answers}")
     lines += [f"  {h}" for h in a.hedges]

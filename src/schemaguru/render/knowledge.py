@@ -9,7 +9,7 @@ never on insertion order (spec 12.2).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from schemaguru._util.timeutil import require_aware
@@ -18,6 +18,8 @@ from schemaguru.knowledge.resolve import Effective, resolve
 from schemaguru.knowledge.soft_delete import MISMATCH, fact_mismatch
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
 from schemaguru.model.joins import JoinRef
+from schemaguru.model.kinds import LINEAGE_KINDS
+from schemaguru.model.lineage import LineageResolution, resolve_lineage
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column, Constraint, Table
 from schemaguru.store.protocol import Store
@@ -40,6 +42,8 @@ class TableKnowledge:
     facts: tuple[Fact, ...]
     now: datetime
     config: Config
+    # human-wins lineage of the table and its columns (never part of ``effective``)
+    lineage: LineageResolution = field(default_factory=lambda: LineageResolution((), (), ()))
 
     def get(self, kind: str, column: str | None = None) -> Effective | None:
         subject = self.ref if column is None else self.column_ref(column)
@@ -104,7 +108,9 @@ def collect(
     joins = store.facts_for(None, ["JOIN"]) if join_facts is None else join_facts
     touching = [f for f in joins if isinstance(f.subject, JoinRef) and _touches(f.subject, ref)]
     facts = sorted({f.id: f for f in (*own, *touching)}.values(), key=lambda f: f.id)
-    effective = resolve(facts, now=now, ttl_days=cfg.fact_ttl_days, waivers=waivers)
+    plain = [f for f in facts if f.kind.name not in LINEAGE_KINDS]
+    lineage = resolve_lineage(f for f in facts if f.kind.name in LINEAGE_KINDS)
+    effective = resolve(plain, now=now, ttl_days=cfg.fact_ttl_days, waivers=waivers)
     effective = _check_soft_delete(effective, ref, columns, facts, now, waivers)
     return TableKnowledge(
         ref=ref,
@@ -115,6 +121,7 @@ def collect(
         facts=tuple(facts),
         now=now,
         config=cfg,
+        lineage=lineage,
     )
 
 

@@ -1,0 +1,24 @@
+--- analytics.revenue_daily
+[analytics.revenue_daily]
+  Built from: shop.order_items, shop.orders, shop.payments (+1 more) · dbt:manifest (declared) · unverified
+  unmeasured: nothing here has been measured yet; figures are declared or drafted
+  Columns:
+    revenue  NUMERIC  ← shop.orders.amount, shop.refunds.amount (aggregate)
+  Provenance: lineage dbt:manifest (unverified)
+
+--- shop.v_paid_orders
+[shop.v_paid_orders]
+  Built from: shop.orders, shop.payments · dbt:manifest (declared) · unverified
+  Built from: shop.orders, shop.payments, ext.raw_payments (not in catalog) · view_definition (parsed) · unverified
+  unmeasured: nothing here has been measured yet; figures are declared or drafted
+  Columns:
+    amount  NUMERIC  ← shop.payments.amount (copy)
+  Provenance: lineage dbt:manifest, view_definition (unverified)
+
+--- shop.order_summary
+[shop.order_summary]
+  Built from: shop.orders · overlay (declared) · unverified
+  unmeasured: nothing here has been measured yet; figures are declared or drafted
+  Columns:
+    n  INTEGER
+  Provenance: lineage overlay (unverified)

@@ -58,6 +58,7 @@ _MODULE_EXTRAS = {
     "pymysql": "mysql",
     "MySQLdb": "mysql",
     "anthropic": "anthropic",
+    "sqlglot": "lineage",
     "openai": "openai",
     "numpy": "embeddings",
     "tiktoken": "tiktoken",
@@ -803,6 +804,7 @@ _EXTRAS: dict[str, str] = {
     "tiktoken": "tiktoken",
     "mcp": "mcp",
     "server": "starlette",
+    "lineage": "sqlglot",
 }
 _DRIVERS = {"duckdb", "bigquery", "snowflake", "redshift", "databricks", "postgres"} | {
     "clickhouse",

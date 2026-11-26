@@ -134,6 +134,37 @@ def sql_template(sql: str) -> str | None:
     return "".join(out)
 
 
+TEMPLATE_MAX_CHARS = 20_000
+
+# a numeric literal standing alone in code: not part of an identifier (``col2``, ``t1``) nor of a
+# dotted name; hex (``0x1F``), decimals, ``.5`` and exponents (``1e5``) included
+_NUMBER = re.compile(
+    r"(?<![\w.$@#])(?:0[xX][0-9a-fA-F]+|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?![\w$@#])"
+)
+
+
+def definition_template(sql: str) -> str | None:
+    """A view/model definition as it may be stored (0.2.0 spec 4.4): :func:`sql_template` (string
+    literals become ``?``, comments dropped) and numeric literals in code become ``?`` too.
+
+    ``None`` when unsure (the shared lexer disagrees on the input or on the template) or when the
+    result is longer than :data:`TEMPLATE_MAX_CHARS` (it bounds stored evidence).
+    """
+    templ = sql_template(sql)
+    if templ is None:
+        return None
+    lexed, ok = agreed_lex(templ)
+    if not ok or not lexed.terminated or lexed.bang:
+        return None
+    out: list[str] = []
+    for m in re.finditer(r"c+|[^c]+", lexed.kinds):
+        a, b = m.span()
+        text = templ[a:b]
+        out.append(_NUMBER.sub("?", text) if m.group().startswith("c") else text)
+    result = "".join(out)
+    return result if len(result) <= TEMPLATE_MAX_CHARS else None
+
+
 _SQL_KEYS = frozenset({"sql", "query", "rendered_sql"})
 
 

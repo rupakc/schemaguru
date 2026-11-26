@@ -47,6 +47,7 @@ server = ["starlette>=0.37", "uvicorn>=0.30"]
 langchain = ["langchain-core>=1.8"]
 llamaindex = ["llama-index-core>=0.14"]
 openai-agents = ["openai-agents>=0.26"]
+lineage = ["sqlglot>=30,<31"]
 all = [
   "google-cloud-bigquery>=3",
   "snowflake-connector-python>=3",
@@ -69,6 +70,7 @@ all = [
   "langchain-core>=1.8",
   "llama-index-core>=0.14",
   "openai-agents>=0.26",
+  "sqlglot>=30,<31",
 ]
 dev = [
   "pytest>=8",
@@ -88,6 +90,8 @@ dev = [
   "httpx>=0.27",
   # `mypy --strict src` type-checks the Postgres store (store/postgres.py imports psycopg)
   "psycopg[binary]>=3.1",
+  # the lineage parser (schemaguru.lineage) is unit-tested on every job
+  "sqlglot>=30,<31",
 ]
 docs = ["mkdocs-material", "mkdocstrings[python]"]
 

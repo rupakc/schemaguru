@@ -156,3 +156,17 @@ def test_atomic_write_mode_and_recheck(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.undo()
     assert "a human took this file" in target.read_text(encoding="utf-8")
     assert [p.name for p in tmp_path.glob(".*tmp")] == []
+
+
+def test_write_never_touches_process_umask(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    def boom(*a: object) -> int:
+        raise AssertionError("os.umask is process-global and must not be called")
+
+    f = Fact.make(FactKind.DESCRIPTION, ORD, {"text": "x"}, Provenance.DRAFTED, Status.UNVERIFIED)
+    monkeypatch.setattr(os, "umask", boom)
+    out = tmp_path / "a.yaml"
+    append_accepted([f], out)
+    append_accepted([f], out)
+    assert out.exists()

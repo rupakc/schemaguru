@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
+import uuid
 from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
@@ -191,24 +191,24 @@ def _dump(doc: dict[str, Any], header: str) -> str:
     return header + body
 
 
-def _target_mode(path: Path) -> int:
-    """An existing file keeps its mode; a new one gets 0o644 under the process umask."""
-    try:
-        return path.stat().st_mode & 0o7777
-    except OSError:
-        umask = os.umask(0)
-        os.umask(umask)
-        return 0o644 & ~umask
-
-
 def _atomic_write(path: Path, text: str, header: str) -> None:
+    """Write via a temp file and ``os.replace``.
+
+    An existing target keeps its mode; a new file is created 0o644 and the kernel applies the
+    current umask (no process-global umask call, which is unsafe under threads).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    mode = _target_mode(path)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        mode: int | None = path.stat().st_mode & 0o7777
+    except OSError:
+        mode = None
+    tmp = str(path.parent / f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
-        os.chmod(tmp, mode)
+        if mode is not None:
+            os.chmod(tmp, mode)
         _guard(path, header)  # re-check right before the replace: the file may have changed
         os.replace(tmp, path)
     except BaseException:

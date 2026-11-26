@@ -30,6 +30,7 @@ from schemaguru.measure import flbridge
 from schemaguru.model.facts import Fact, Provenance, Status
 from schemaguru.overlays.dbt import import_dbt as _import_dbt
 from schemaguru.overlays.writer import export_drafts as _export_drafts
+from schemaguru.overlays.writer import unwritable_kinds
 from schemaguru.store.open import is_postgres_dsn
 
 DEFAULT_STORE = os.path.join(".schemaguru", "default.db")
@@ -564,9 +565,15 @@ def export_drafts(args: argparse.Namespace, io: IO) -> int:
             path = _export_drafts(drafts, args.path)
         except SchemaGuruError as e:
             raise UsageError(str(e)) from None
+    skipped = unwritable_kinds(drafts)
+    lines = [f"wrote {len(drafts)} draft(s) to {path}"]
+    if skipped:
+        lines.append(
+            "not written (no overlay form): " + ", ".join(f"{k} x{n}" for k, n in skipped.items())
+        )
     io.emit(
-        {"path": str(path), "drafts": len(drafts)},
-        [f"wrote {len(drafts)} draft(s) to {path}"],
+        {"path": str(path), "drafts": len(drafts), "not_written": skipped},
+        lines,
         title="Export drafts",
     )
     return 0

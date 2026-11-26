@@ -105,3 +105,19 @@ def test_dbt_unreadable_manifest(store: SQLiteStore, tmp_path: Path) -> None:
     assert import_dbt(bad, store, diagnostics=bag) == []
     assert import_dbt(tmp_path / "none.json", store, diagnostics=bag) == []
     assert [d.code for d in bag] == ["SG209", "SG209"]
+
+
+def test_unique_count_includes_unresolvable(store: SQLiteStore, tmp_path: Path) -> None:
+    m = _manifest(
+        tmp_path,
+        {"u1": ("unique", "order_id"), "u2": ("unique", "no_such_column"),
+         "n": ("not_null", "order_id")},
+    )  # fmt: skip
+    assert _pks(store, m) == []  # a second unique test exists, even if it cannot be mapped
+
+
+def test_module_docstring() -> None:
+    import schemaguru.overlays.dbt as mod
+
+    doc = mod.__doc__ or ""
+    assert "DECLARED" in doc and "UNVERIFIED" in doc and "manifest" in doc

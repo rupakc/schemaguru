@@ -100,3 +100,22 @@ maps model and column descriptions to `DECLARED` descriptions, `relationships` t
 joins, `accepted_values` to expected values, and a single `unique` + `not_null` column to a
 primary key — all `DECLARED`, `UNVERIFIED` until measured. Only models and columns present in
 the store are mapped; an unreadable manifest is `SG209`.
+
+## Validation
+
+Loading never raises on data; every problem is a line-numbered diagnostic and the entry is
+skipped. A key written twice in one mapping is `SG208` naming both lines, and neither entry is
+applied. A waiver's `fact` must start with a registered fact kind (`SG208` otherwise) and its
+subject glob should match something in the store (`SG203`, a warning: the waiver still loads
+but can never apply). Glossary `maps_to` takes tables only; a column is `SG203`.
+
+## Known limits
+
+- A malformed overlay entry's previous facts are retracted on the next load: fix the entry and
+  reload. (A file that fails as a whole, unreadable or not YAML, keeps its previous facts.)
+- Join entries in an overlay are declarations. They carry a `cardinality` you vouch for and
+  nothing else; measured numbers (match rate, coverage) come only from measurement, never from
+  a human or a dbt file.
+- `export-drafts` and `accept --write-overlay` write only kinds that have an overlay form;
+  the others are left out and named in a warning (and printed by `export-drafts`).
+

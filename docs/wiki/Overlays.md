@@ -164,6 +164,14 @@ header:
 
 Writing to a path whose first line is not that writer's own header is refused.
 
+## Validation and known limits
+
+Duplicate keys in a mapping are `SG208` (neither entry is applied); a waiver needs a registered
+fact kind (`SG208`) and a subject glob that matches the store (`SG203`, warning); glossary
+`maps_to` takes tables only. A malformed entry's previous facts are retracted on the next
+load: fix the entry and reload. Joins in an overlay are declarations; measured numbers come only
+from measurement.
+
 ## See also
 
 - [[Waypoint-Rules]] - the `waypoints` and `chains` sections

@@ -9,6 +9,7 @@ from __future__ import annotations
 import difflib
 from collections.abc import Iterable, Sequence
 from datetime import date, datetime, timezone
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +18,8 @@ import yaml
 from schemaguru.diagnostics import Diagnostic, DiagnosticBag, Severity
 from schemaguru.model.chains import Chain, FilterStep, NoteStep, Step
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
-from schemaguru.model.joins import JoinRef
-from schemaguru.model.kinds import FactKind, KindSpec
+from schemaguru.model.joins import JoinRef, subject_key
+from schemaguru.model.kinds import FactKind, KindSpec, get_kind
 from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays import schema as S
 from schemaguru.overlays.schema import WaypointSpec
@@ -46,6 +47,7 @@ class _FileLoader:
         self.waypoints: list[WaypointSpec] = []
         self.waivers: list[Waiver] = []
         self._ctor = yaml.SafeLoader("")
+        self._subjects: set[str] | None = None
 
     # ----- diagnostics ----------------------------------------------------------------------
 
@@ -77,6 +79,34 @@ class _FileLoader:
         except Exception:  # malformed scalars are data errors, never crashes
             return None
 
+    def pairs(self, node: yaml.MappingNode, where: str) -> list[tuple[yaml.Node, yaml.Node]]:
+        """A mapping's (key, value) nodes, minus every key that appears twice (SG208 names both
+        lines): YAML would keep the last silently, and which one a person meant is unknowable,
+        so neither is applied until the file says it once."""
+        seen: dict[str, int] = {}
+        dup: set[str] = set()
+        for knode, _ in node.value:
+            if not isinstance(knode, yaml.ScalarNode):
+                continue
+            key = str(self.scalar(knode))
+            if key in seen:
+                if key not in dup:
+                    self.diag(
+                        "SG208",
+                        f"{where}: duplicate key {key!r} (line {seen[key]} and line "
+                        f"{self.line(knode)}); neither entry is applied",
+                        knode,
+                        hint="keep one entry and merge the content by hand",
+                    )
+                dup.add(key)
+            else:
+                seen[key] = self.line(knode)
+        return [
+            (k, v)
+            for k, v in node.value
+            if not (isinstance(k, yaml.ScalarNode) and str(self.scalar(k)) in dup)
+        ]
+
     def mapping(
         self, node: yaml.Node, allowed: Sequence[str], where: str
     ) -> dict[str, yaml.Node] | None:
@@ -87,7 +117,7 @@ class _FileLoader:
             self.diag("SG208", f"{where}: expected a mapping", node)
             return None
         out: dict[str, yaml.Node] = {}
-        for knode, vnode in node.value:
+        for knode, vnode in self.pairs(node, where):
             if not isinstance(knode, yaml.ScalarNode):
                 self.diag("SG208", f"{where}: keys must be plain strings", knode)
                 continue
@@ -253,7 +283,7 @@ class _FileLoader:
         if not isinstance(node, yaml.MappingNode):
             self.diag("SG208", "tables: expected a mapping of table -> entry", node)
             return
-        for knode, vnode in node.value:
+        for knode, vnode in self.pairs(node, "tables"):
             if not isinstance(knode, yaml.ScalarNode):
                 self.diag("SG208", "tables: keys must be plain strings", knode)
                 continue
@@ -316,7 +346,7 @@ class _FileLoader:
         if not isinstance(node, yaml.MappingNode):
             self.diag("SG208", f"{where}: expected a mapping of column -> entry", node)
             return
-        for knode, vnode in node.value:
+        for knode, vnode in self.pairs(node, where):
             if not isinstance(knode, yaml.ScalarNode):
                 self.diag("SG208", f"{where}: keys must be plain strings", knode)
                 continue
@@ -500,11 +530,9 @@ class _FileLoader:
             return
         maps: list[ObjectRef] = []
         for t in self.texts(m.get("maps_to"), "glossary.maps_to") or []:
-            ref, cands = self.store.resolve(t)
-            if ref is None:
-                self._fail(t, cands, m["maps_to"], "table")
-                continue
-            maps.append(ref)
+            ref = self.table(t, m["maps_to"])  # tables only: a column is SG203
+            if ref is not None:
+                maps.append(ref)
         self.add(
             FactKind.GLOSSARY,
             S.GLOBAL_SUBJECT,
@@ -556,11 +584,43 @@ class _FileLoader:
             )
             return
         try:
-            self.waivers.append(Waiver(pattern, reason, expires))
+            waiver = Waiver(pattern, reason, expires)
         except ValueError as e:
             self.diag(
                 "SG208", f"waivers: {e}", m["fact"], hint='e.g. fact: "VALUES shop.orders.status"'
             )
+            return
+        kind, _, subject = pattern.partition(" ")
+        try:
+            get_kind(kind)
+        except KeyError:
+            self.diag(
+                "SG208",
+                f"waiver for {pattern!r}: {kind!r} is not a registered fact kind; it is ignored",
+                m["fact"],
+                hint='e.g. fact: "VALUES shop.orders.status"',
+            )
+            return
+        if not any(fnmatchcase(s, subject.strip()) for s in self.stored_subjects()):
+            self.diag(
+                "SG203",
+                f"waiver for {pattern!r}: no table, column, join or fact in the store matches "
+                f"{subject.strip()!r}; the waiver can never apply",
+                m["fact"],
+                severity=Severity.WARNING,
+            )
+        self.waivers.append(waiver)
+
+    def stored_subjects(self) -> set[str]:
+        """Every canonical table/column ref and stored fact subject key (a waiver glob target)."""
+        if self._subjects is None:
+            subjects: set[str] = set()
+            for t in self.store.iter_tables(include_withdrawn=True):
+                subjects.add(t.ref.canonical())
+                subjects.update(c.ref.canonical() for c in self.store.columns(t.ref))
+            subjects.update(subject_key(f.subject) for f in self.store.iter_facts())
+            self._subjects = subjects
+        return self._subjects
 
     def parse_date(self, node: yaml.Node) -> date | None:
         v = self.scalar(node) if isinstance(node, yaml.ScalarNode) else None

@@ -393,3 +393,26 @@ def test_codes_registered() -> None:
     )
     for code in ("SG602", "SG603", "SG604", "SG605"):
         assert code in CODES and f"| {code} |" in doc
+
+
+def test_merged_requirements_capped() -> None:
+    half = [f"node(shop.t{i})" for i in range(10)]
+    specs = [
+        pair("events", "orders", require=half),
+        pair("events", "orders", require=[f"node(shop.u{i})" for i in range(10)]),
+    ]
+    assert validate_rules(specs) == []  # each rule is within the cap on its own
+    bag = DiagnosticBag()
+    auto = compile_rules(specs, t("events"), t("orders"), bag=bag)
+    assert [d.code for d in bag] == ["SG603"]
+    assert auto.is_empty() and "SG603" in (auto.why_empty() or "")
+    ok = compile_rules(specs[:1], t("events"), t("orders"), bag=DiagnosticBag())
+    assert not ok.is_empty()
+
+
+def test_quoted_paren_ref_accepted() -> None:
+    p = parse_predicate('shop."weird(name"')
+    assert p.kind == "node" and p.table is not None and p.table.table == "weird(name"
+    assert parse_predicate('node(shop."a)b")').kind == "node"
+    with pytest.raises(ValueError):
+        parse_predicate("shop.orders)")

@@ -137,6 +137,22 @@ def _split_outside_quotes(text: str, sep: str) -> list[str]:
     return parts
 
 
+def _has_paren(text: str) -> bool:
+    """A parenthesis outside double quotes (``shop."weird(name"`` has none)."""
+    return any(c in "()" for c in "".join(_split_outside_quotes_lenient(text)))
+
+
+def _split_outside_quotes_lenient(text: str) -> list[str]:
+    out: list[str] = []
+    quoted = False
+    for ch in text:
+        if ch == '"':
+            quoted = not quoted
+        elif not quoted:
+            out.append(ch)
+    return out
+
+
 def _columns(text: str) -> tuple[ObjectRef, ...]:
     return tuple(
         ObjectRef.parse(p.strip(), has_column=True) for p in _split_outside_quotes(text, ",")
@@ -151,7 +167,7 @@ def parse_predicate(token: str) -> Predicate:
     text = token.strip()
     if text == "any":
         return Predicate("any")
-    if text and "(" not in text and ")" not in text:
+    if text and not _has_paren(text):
         ref = ObjectRef.parse(text)
         if ref.column is not None:
             raise ValueError(f"a bare reference must name a table, not a column: {token!r}")
@@ -321,6 +337,7 @@ def compile_rules(
     require: list[Term] = []
     forbid: list[Predicate] = []
     broken: list[str] = []
+    sources: list[str] = []
     for spec in specs:
         out = _compile_one(spec)
         if isinstance(out, Diagnostic):
@@ -332,10 +349,30 @@ def compile_rules(
         if not _governs(spec, s, d):
             continue
         require += out.require
+        if out.require:
+            sources.append(spec.source)
         for f in out.forbid:
             if spec.scope == "node" and f.kind == "node" and f.table in (s, d):
                 continue  # withheld at a search endpoint
             forbid.append(f)
+    if len(require) > MAX_REQUIREMENTS:  # each rule is within the cap; together they are not
+        msg = (
+            f"SG603 at {', '.join(sources)}: the rules governing this search require "
+            f"{len(require)} things together; at most {MAX_REQUIREMENTS} are allowed"
+        )
+        if bag is not None:
+            bag.add(
+                Diagnostic(
+                    "SG603",
+                    Severity.ERROR,
+                    f"waypoint rules governing {s.canonical()} -> {d.canonical()} have "
+                    f"{len(require)} requirements merged; at most {MAX_REQUIREMENTS} are allowed",
+                    location=", ".join(sources),
+                    hint="split or trim the rules; the search is refused until then",
+                )
+            )
+        broken.append(msg)
+        require = []
     return RuleAutomaton(s, d, tuple(require), tuple(forbid), tuple(broken))
 
 

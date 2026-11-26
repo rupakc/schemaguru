@@ -101,18 +101,18 @@ Audited against `main` at `710e21f` (Task 1). Tasks 2–8 turn the `open` rows i
 | A5.25 | `subject_key` helper belongs in `model/` | fixed | test tests/unit/model/test_facts.py::test_subject_key_in_model |
 | A5.26 | `test_all_measured_retained_worst_warns` asserts nothing about warnings | fixed | test tests/unit/knowledge/test_resolve.py::test_all_measured_retained_worst_warns |
 | A5.27 | no test for a sampled extra also seen exactly | fixed | test tests/unit/knowledge/test_resolve.py::test_sampled_extra_seen_exactly |
-| A6.1 | waiver kind/subject not validated | open | Task 7 |
-| A6.2 | duplicate YAML keys not diagnosed (last one wins silently) | open | Task 7 |
-| A6.3 | glossary `maps_to` accepts column refs (now dropped as an unresolvable table, SG203 with a misleading message) | open | Task 7 |
-| A6.4 | `facts_to_overlay` drops non-overlay kinds silently | open | Task 7 |
-| A6.5 | list merge by equality duplicates changed joins | open | Task 7 |
-| A6.6 | `mkstemp` 0600 + check/replace window | open | Task 7 |
-| A6.7 | overlay JOIN values carry only cardinality | open | Task 7 |
-| A6.8 | an overlay entry error retracts its previous good fact (document or fix) | open | Task 7 |
-| A6.9 | dbt unique count only sees resolvable columns | open | Task 7 |
-| A6.10 | `overlays/dbt.py` module docstring missing | open | Task 7 |
-| A6.11 | rule requirements merged across rules uncapped | open | Task 7 |
-| A6.12 | bare rule ref with a quoted `(` rejected | open | Task 7 |
+| A6.1 | waiver kind/subject not validated | fixed | test tests/unit/overlays/test_loader.py::test_waiver_kind_and_subject_validated |
+| A6.2 | duplicate YAML keys not diagnosed (last one wins silently) | fixed | test tests/unit/overlays/test_loader.py::test_duplicate_keys_diagnosed |
+| A6.3 | glossary `maps_to` accepts column refs (now dropped as an unresolvable table, SG203 with a misleading message) | fixed | test tests/unit/overlays/test_loader.py::test_glossary_maps_to_tables_only |
+| A6.4 | `facts_to_overlay` drops non-overlay kinds silently | fixed | test tests/unit/overlays/test_writer.py::test_unwritable_kinds_reported |
+| A6.5 | list merge by equality duplicates changed joins | fixed | test tests/unit/overlays/test_writer.py::test_changed_join_replaces |
+| A6.6 | `mkstemp` 0600 + check/replace window | fixed | test tests/unit/overlays/test_writer.py::test_atomic_write_mode_and_recheck |
+| A6.7 | overlay JOIN values carry only cardinality | ruled out | a human join is a declaration and carries only the cardinality it vouches for; measured numbers come only from measurement (base spec 4.5) · docs: docs/guide/overlays.md |
+| A6.8 | an overlay entry error retracts its previous good fact (document or fix) | ruled out | a malformed entry's previous facts are retracted by design (the diagnostic says why); fix the entry and reload · docs: docs/guide/overlays.md |
+| A6.9 | dbt unique count only sees resolvable columns | fixed | test tests/unit/overlays/test_dbt.py::test_unique_count_includes_unresolvable |
+| A6.10 | `overlays/dbt.py` module docstring missing | fixed | test tests/unit/overlays/test_dbt.py::test_module_docstring |
+| A6.11 | rule requirements merged across rules uncapped | fixed | test tests/unit/graph/test_waypoints.py::test_merged_requirements_capped |
+| A6.12 | bare rule ref with a quoted `(` rejected | fixed | test tests/unit/graph/test_waypoints.py::test_quoted_paren_ref_accepted |
 | A7.1 | per-graph memo not thread-safe (shared `Graph` under the server) | open | Task 8 |
 | A7.2 | hop-limit naming capped at 2×hop_limit | open | Task 8 |
 | A7.3 | via-success search near the 1 s benchmark bound | open | Task 8 |

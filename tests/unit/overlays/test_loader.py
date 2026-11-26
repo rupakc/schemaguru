@@ -152,13 +152,13 @@ def test_chain_filter_and_note_steps(store: SQLiteStore, tmp_path: Path) -> None
 def test_waivers(store: SQLiteStore, tmp_path: Path) -> None:
     text = (
         "version: 1\nwaivers:\n"
-        "  - {fact: VALUES shop.a, reason: r}\n"
-        "  - {fact: VALUES shop.b, reason: r, expires: 2026-01-01}\n"
-        "  - {fact: VALUES shop.c, reason: r, expires: 2026-11-24}\n"
-        "  - {fact: VALUES shop.d, reason: r, expires: soon}\n"
+        "  - {fact: VALUES shop.orders.a, reason: r}\n"
+        "  - {fact: VALUES shop.orders.b, reason: r, expires: 2026-01-01}\n"
+        "  - {fact: VALUES shop.orders.status, reason: r, expires: 2026-11-24}\n"
+        "  - {fact: VALUES shop.orders.d, reason: r, expires: soon}\n"
     )
     *_, waivers, bag = load(store, tmp_path, text)
-    assert [w.fact_pattern for w in waivers] == ["VALUES shop.c"]
+    assert [w.fact_pattern for w in waivers] == ["VALUES shop.orders.status"]
     assert codes(bag) == ["SG206", "SG207", "SG206"]
     *_, bag = load(
         store,
@@ -220,3 +220,46 @@ def test_unquoted_numbers_keep_source_text(store: SQLiteStore, tmp_path: Path) -
     facts, *_, bag = load(store, tmp_path, text)
     assert list(bag) == []
     assert facts[0].value["values"] == ["01", "007", "1.10", "0x1F", "yes", "05", "2027-01-01"]
+
+
+def test_waiver_kind_and_subject_validated(store: SQLiteStore, tmp_path: Path) -> None:
+    text = (
+        "version: 1\nwaivers:\n"
+        "  - {fact: 'VALUSE shop.orders.status', reason: r, expires: 2030-01-01}\n"
+        "  - {fact: 'VALUES shop.nothing.*', reason: r, expires: 2030-01-01}\n"
+        "  - {fact: 'VALUES shop.orders.*', reason: r, expires: 2030-01-01}\n"
+    )
+    *_, waivers, bag = load(store, tmp_path, text)
+    got = [(d.code, d.severity.name) for d in bag]
+    assert got == [("SG208", "ERROR"), ("SG203", "WARNING")]
+    assert [w.fact_pattern for w in waivers] == ["VALUES shop.nothing.*", "VALUES shop.orders.*"]
+
+
+def test_duplicate_keys_diagnosed(store: SQLiteStore, tmp_path: Path) -> None:
+    text = (
+        "version: 1\ntables:\n  shop.orders:\n    description: first\n    description: second\n"
+        "    entity_type: order\n"
+    )
+    facts, *_, bag = load(store, tmp_path, text)
+    (d,) = list(bag)
+    assert d.code == "SG208" and "duplicate" in d.message
+    assert "line 4" in d.message and "line 5" in d.message
+    assert [f.kind.name for f in facts] == ["ENTITY_TYPE"]  # the duplicated entry is not applied
+    dup_table = (
+        "version: 1\ntables:\n  shop.orders:\n    entity_type: a\n"
+        "  shop.orders:\n    entity_type: b\n"
+    )
+    facts, *_, bag = load(store, tmp_path, dup_table)
+    assert codes(bag) == ["SG208"] and facts == []
+
+
+def test_glossary_maps_to_tables_only(store: SQLiteStore, tmp_path: Path) -> None:
+    text = (
+        "version: 1\nglossary:\n  - term: t\n    definition: d\n"
+        "    maps_to: [shop.orders.status, shop.customers]\n"
+    )
+    facts, *_, bag = load(store, tmp_path, text)
+    (d,) = list(bag)
+    assert d.code == "SG203" and "is a column, expected a table" in d.message
+    (g,) = facts
+    assert [m["table"] for m in g.value["maps_to"]] == ["customers"]

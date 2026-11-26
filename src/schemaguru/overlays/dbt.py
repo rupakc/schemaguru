@@ -1,3 +1,19 @@
+"""Import a dbt ``manifest.json`` as DECLARED, UNVERIFIED facts.
+
+What is imported, only for relations and columns already present in the store:
+
+* model/source/seed/snapshot and column descriptions -> ``DESCRIPTION``;
+* ``relationships`` tests -> ``JOIN`` (cardinality unknown: dbt asserts only that child values
+  exist in the parent);
+* ``accepted_values`` tests -> ``VALUES``;
+* a table's single ``unique`` test, on a column that also has ``not_null`` -> ``PRIMARY_KEY``
+  (every ``unique`` test on the table counts, even one whose column cannot be mapped).
+
+Everything is ``DECLARED`` and ``UNVERIFIED``: dbt states intent, it measures nothing here, so
+the numbers a measurement produces come only from measuring. An unreadable or hostile manifest
+is reported as ``SG209`` and yields no facts; it never raises.
+"""
+
 from __future__ import annotations
 
 import json
@@ -109,6 +125,7 @@ class _Importer:
 
     def tests(self) -> None:
         uniques: dict[ObjectRef, list[tuple[ObjectRef, str]]] = {}
+        unique_tests: dict[ObjectRef, int] = {}  # every unique test, resolvable or not
         not_null: set[ObjectRef] = set()
         for uid, test in self.nodes.items():
             if test.get("resource_type") != "test":
@@ -117,9 +134,13 @@ class _Importer:
             name, kw = meta.get("name"), _dict(meta.get("kwargs"))
             attached = test.get("attached_node")
             col_name = kw.get("column_name") or test.get("column_name")
-            if not isinstance(attached, str) or not isinstance(col_name, str):
+            if not isinstance(attached, str):
                 continue
             table = self.table_of(attached)
+            if name == "unique" and table is not None:
+                unique_tests[table] = unique_tests.get(table, 0) + 1
+            if not isinstance(col_name, str):
+                continue
             col = None if table is None else self.column_of(table, col_name)
             if table is None or col is None:
                 continue
@@ -149,7 +170,7 @@ class _Importer:
         # `unique` alone is not a key; it is PRIMARY_KEY only as the table's single unique test
         # on a column that is also not_null. (not_null itself is not imported.)
         for table, found in uniques.items():
-            if len(found) == 1 and found[0][0] in not_null:
+            if len(found) == 1 and unique_tests.get(table) == 1 and found[0][0] in not_null:
                 col, uid = found[0]
                 self.add(FactKind.PRIMARY_KEY, table, {"columns": [col.column]}, uid)
 

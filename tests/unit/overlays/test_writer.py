@@ -78,3 +78,81 @@ def test_each_writer_refuses_the_others_file(tmp_path: Path) -> None:
         acc.read_text(encoding="utf-8") == a_before
         and drafts.read_text(encoding="utf-8") == d_before
     )
+
+
+def test_unwritable_kinds_reported(caplog: pytest.LogCaptureFixture) -> None:
+    from schemaguru.overlays.writer import facts_to_overlay, unwritable_kinds
+
+    pk = [
+        Fact.make(FactKind.PRIMARY_KEY, ORD, {"columns": ["order_id"]}, Provenance.DRAFTED,
+                  Status.UNVERIFIED)
+        for _ in range(1)
+    ]  # fmt: skip
+    pk2 = Fact.make(
+        FactKind.PRIMARY_KEY, ObjectRef(None, "shop", "customers"), {"columns": ["customer_id"]},
+        Provenance.DRAFTED, Status.UNVERIFIED,
+    )  # fmt: skip
+    ok = Fact.make(FactKind.DESCRIPTION, ORD, {"text": "x"}, Provenance.DRAFTED, Status.UNVERIFIED)
+    with caplog.at_level("WARNING", logger="schemaguru.overlays.writer"):
+        facts_to_overlay([*pk, pk2, ok])
+    recs = [r for r in caplog.records if r.name == "schemaguru.overlays.writer"]
+    assert len(recs) == 1 and recs[0].levelname == "WARNING"
+    assert "PRIMARY_KEY" in recs[0].getMessage() and "2" in recs[0].getMessage()
+    assert unwritable_kinds([*pk, pk2, ok]) == {"PRIMARY_KEY": 2}
+    caplog.clear()
+    facts_to_overlay([ok])
+    assert not caplog.records
+
+
+def test_changed_join_replaces(tmp_path: Path) -> None:
+    from schemaguru.model.joins import JoinRef
+
+    j = JoinRef(
+        (ObjectRef(None, "shop", "orders", "customer_id"),),
+        (ObjectRef(None, "shop", "customers", "customer_id"),),
+    )
+    out = tmp_path / "accepted.yaml"
+    for card in ("N:1", "1:1"):
+        f = Fact.make(FactKind.JOIN, j, {"cardinality": card}, Provenance.HUMAN, Status.UNVERIFIED)
+        append_accepted([f], out)
+    import yaml
+
+    doc = yaml.safe_load(out.read_text(encoding="utf-8"))
+    assert doc["tables"]["shop.orders"]["joins"] == [
+        {"to": "shop.customers.customer_id", "from": "customer_id", "cardinality": "1:1"}
+    ]
+
+
+def test_atomic_write_mode_and_recheck(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+    import stat
+
+    f = Fact.make(FactKind.DESCRIPTION, ORD, {"text": "x"}, Provenance.DRAFTED, Status.UNVERIFIED)
+    old = os.umask(0o022)
+    try:
+        new = tmp_path / "new.yaml"
+        append_accepted([f], new)
+        assert stat.S_IMODE(new.stat().st_mode) == 0o644
+        existing = tmp_path / "existing.yaml"
+        append_accepted([f], existing)
+        existing.chmod(0o664)
+        append_accepted([f], existing)
+        assert stat.S_IMODE(existing.stat().st_mode) == 0o664
+    finally:
+        os.umask(old)
+    # the ownership header is re-checked right before the replace
+    target = tmp_path / "race.yaml"
+    append_accepted([f], target)
+    real_chmod = os.chmod
+
+    def racing_chmod(path: object, mode: int, *a: object, **k: object) -> None:
+        real_chmod(path, mode, *a, **k)  # type: ignore[arg-type]
+        if str(path).endswith(".tmp"):
+            target.write_text("version: 1\n# a human took this file\n", encoding="utf-8")
+
+    monkeypatch.setattr(os, "chmod", racing_chmod)
+    with pytest.raises(SchemaGuruError):
+        append_accepted([f], target)
+    monkeypatch.undo()
+    assert "a human took this file" in target.read_text(encoding="utf-8")
+    assert [p.name for p in tmp_path.glob(".*tmp")] == []

@@ -604,6 +604,11 @@ class _FileLoader:
                 self.diag("SG208", f"{where}: 'ignore' must be true or false", m["ignore"])
                 return
             ignore = raw
+        if ignore and "transform" in m:
+            self.diag(
+                "SG208", f"{where}: `transform` is meaningless on an ignore entry", m["transform"]
+            )
+            return
         transform: str | None = None
         if is_column and not ignore:
             transform = "unknown"
@@ -871,7 +876,33 @@ def load_overlays(
         chains += fl.chains
         waypoints += fl.waypoints
         waivers += fl.waivers
+    facts = _settle_across_files(facts, bag)
     return facts, chains, waypoints, waivers, bag
+
+
+def _settle_across_files(facts: list[Fact], bag: DiagnosticBag) -> list[Fact]:
+    """Lineage facts of different files that share an id but not a ``transform`` are reported
+    (SG208 naming both lines) and dropped, as within one file; identical ones stay (silent)."""
+    groups: dict[str, list[Fact]] = {}
+    for f in facts:
+        if f.kind.name in LINEAGE_KINDS:
+            groups.setdefault(f.id, []).append(f)
+    drop: set[int] = set()
+    for fs in groups.values():
+        if len({f.value.get("transform") for f in fs}) > 1:
+            where = [(f.source or "")[len(_SOURCE) :] for f in fs]
+            bag.add(
+                Diagnostic(
+                    "SG208",
+                    Severity.ERROR,
+                    f"lineage: {' and '.join(where)} declare the same column inputs with a "
+                    "different 'transform'; neither is applied",
+                    where[0],
+                    "keep one entry",
+                )
+            )
+            drop.update(id(f) for f in fs)
+    return [f for f in facts if id(f) not in drop]
 
 
 # crawl_state key recording the ids of the facts the last overlay load put in the store
@@ -895,18 +926,26 @@ def retract_removed(store: Store, loaded: Sequence[Fact], failed_files: Iterable
     candidates; measured, accepted and dbt facts are never touched. Returns how many went.
     """
     state = store.crawl_state_get(OVERLAY_STATE)
-    previous: dict[str, str] = {}
+    previous: dict[str, set[str]] = {}
     if state is None:  # first load with retraction: every stored overlay fact is a candidate
         for f in store.iter_facts():
             if (path := _source_file(f.source)) is not None:
-                previous[f.id] = path
+                previous[f.id] = {path}
     else:
         raw = state.get("facts")
-        previous = {str(i): str(p) for i, p in raw.items()} if isinstance(raw, dict) else {}
+        if isinstance(raw, dict):  # a path, or (since 0.2.0) every declaring path
+            for i, p in raw.items():
+                previous[str(i)] = {str(p)} if isinstance(p, str) else {str(x) for x in p}
     keep_files = set(failed_files)
-    current = {f.id: _source_file(f.source) or "" for f in loaded}
-    kept = {i: p for i, p in previous.items() if p in keep_files and i not in current}
-    stale = sorted(i for i, p in previous.items() if i not in current and p not in keep_files)
+    current: dict[str, set[str]] = {}
+    for f in loaded:
+        current.setdefault(f.id, set()).add(_source_file(f.source) or "")
+    # a failed file may still declare the fact: its recorded paths are carried forward
+    carried = {i: ps & keep_files for i, ps in previous.items() if ps & keep_files}
+    stale = sorted(i for i in previous if i not in current and i not in carried)
     removed = store.delete_facts(stale) if stale else 0
-    store.crawl_state_set(OVERLAY_STATE, {"facts": {**kept, **current}})
+    merged = {
+        i: sorted(current.get(i, set()) | carried.get(i, set())) for i in {*current, *carried}
+    }
+    store.crawl_state_set(OVERLAY_STATE, {"facts": merged})
     return removed

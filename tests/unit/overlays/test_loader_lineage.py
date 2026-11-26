@@ -312,3 +312,70 @@ def test_guru_load_overlays_reports_sg213(lstore: SQLiteStore, tmp_path: Path) -
     )
     g = Guru(store=lstore)
     assert [d.code for d in g.load_overlays(p)] == ["SG213"]
+
+
+ENTRY = "  - table: analytics.revenue_daily\n    upstream: [shop.orders]\n"
+COL = "  - column: analytics.revenue_daily.net_revenue\n    inputs: [shop.orders.amount]\n"
+
+
+@pytest.mark.parametrize("first_order", ["ba", "ab"])
+@pytest.mark.parametrize("second_order", ["ab", "ba"])
+def test_fact_declared_in_two_files_survives_one_dropping_and_one_failing(
+    lstore: SQLiteStore, tmp_path: Path, first_order: str, second_order: str
+) -> None:
+    a = _write(tmp_path, ENTRY, "a.yaml")
+    b = _write(tmp_path, ENTRY, "b.yaml")
+    paths = {"a": a, "b": b}
+    facts, *_, bag = load_overlays([paths[c] for c in first_order], lstore, today=TODAY)
+    lstore.put_facts(facts)
+    retract_removed(lstore, facts, bag.failed_files)
+    a.write_text("version: 1\nlineage:\n", encoding="utf-8")  # A drops the entry
+    b.write_text("version: [unclosed\n", encoding="utf-8")  # B is invalid YAML
+    facts, *_, bag = load_overlays([paths[c] for c in second_order], lstore, today=TODAY)
+    assert retract_removed(lstore, facts, bag.failed_files) == 0  # B still declares it
+    assert _edges(lstore) == ["shop.orders"]
+    b.write_text("version: 1\nlineage:\n", encoding="utf-8")  # B recovers, without the entry
+    facts, *_, bag = load_overlays([paths[c] for c in second_order], lstore, today=TODAY)
+    assert retract_removed(lstore, facts, bag.failed_files) == 1
+    assert _edges(lstore) == []
+
+
+def test_old_scalar_state_format_is_read(lstore: SQLiteStore, tmp_path: Path) -> None:
+    p = _write(tmp_path, ENTRY)
+    facts, *_ = load_overlays([p], lstore, today=TODAY)
+    lstore.put_facts(facts)
+    lstore.crawl_state_set("overlay_facts", {"facts": {facts[0].id: str(p)}})
+    p.write_text("version: 1\nlineage:\n", encoding="utf-8")
+    facts, *_, bag = load_overlays([p], lstore, today=TODAY)
+    assert retract_removed(lstore, facts, bag.failed_files) == 1
+
+
+def test_cross_file_transform_collision_is_reported_and_dropped(
+    lstore: SQLiteStore, tmp_path: Path
+) -> None:
+    a = _write(tmp_path, COL + "    transform: copy\n", "a.yaml")
+    b = _write(tmp_path, COL + "    transform: cast\n", "b.yaml")
+    for order in ([a, b], [b, a]):
+        facts, *_, bag = load_overlays(order, lstore, today=TODAY)
+        assert facts == []
+        d = list(bag)
+        assert [x.code for x in d] == ["SG208"]
+        assert f"{a}:3" in d[0].message and f"{b}:3" in d[0].message
+
+
+def test_cross_file_identical_duplicates_are_silent(lstore: SQLiteStore, tmp_path: Path) -> None:
+    a = _write(tmp_path, COL + "    transform: copy\n", "a.yaml")
+    b = _write(tmp_path, COL + "    transform: copy\n", "b.yaml")
+    facts, *_, bag = load_overlays([a, b], lstore, today=TODAY)
+    assert list(bag) == [] and len(facts) == 2 and len({f.id for f in facts}) == 1
+
+
+def test_ignore_with_transform_is_sg208(lstore: SQLiteStore, tmp_path: Path) -> None:
+    p = _write(tmp_path, COL + "    transform: copy\n    ignore: true\n")
+    facts, *_, bag = load_overlays([p], lstore, today=TODAY)
+    assert facts == []
+    d = list(bag)
+    assert [x.code for x in d] == ["SG208"]
+    assert "`transform` is meaningless on an ignore entry" in d[0].message
+    ok = _write(tmp_path, COL + "    ignore: true\n", "ok.yaml")
+    assert len(load_overlays([ok], lstore, today=TODAY)[0]) == 1

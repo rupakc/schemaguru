@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gc
+import os
 import subprocess
 import sys
 import textwrap
@@ -176,3 +178,103 @@ def test_worker_from_unguarded_script(tmp_path: Path) -> None:
     )
     assert done.returncode == 0
     assert done.stdout.strip() == "[((None, None, 'a'),)]"
+
+
+def test_blocked_write_is_a_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    # the child stops reading: a ~1 MB request blocks on the pipe and shares the request's cap
+    monkeypatch.chdir(REPO)
+    sql = "SELECT 1 FROM a WHERE x = '" + "y" * 990_000 + "'"
+    with ParserPool(timeout_s=0.5, command=[*HOSTILE, "noread"]) as pool:
+        start = time.monotonic()
+        out = pool.map([ExtractRequest(sql, "duckdb")])
+        elapsed = time.monotonic() - start
+        assert _plain(out) == ["timeout"]
+        assert pool.restarts == 1 and pool._proc is None
+    assert elapsed < 0.5 + 3.0
+
+
+def test_endless_reply_line_is_worker_died(hostile: ParserPool) -> None:
+    out = hostile.map([ExtractRequest("ENDLESS", "duckdb")])
+    assert _plain(out) in (["worker_died"], ["timeout"])  # bounded either way, never a hang
+    assert hostile.restarts == 1
+
+
+def test_endless_reply_line_is_cut_at_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(REPO)
+    monkeypatch.setattr("schemaguru.lineage.worker.MAX_REPLY_BYTES", 1 << 16)
+    with ParserPool(timeout_s=30, command=HOSTILE) as pool:
+        start = time.monotonic()
+        assert _plain(pool.map([ExtractRequest("ENDLESS", "duckdb")])) == ["worker_died"]
+        assert time.monotonic() - start < 15  # cut by size, not by the 30 s timeout
+        # negative control: an ordinary reply fits under the same limit
+        assert pool.map([ExtractRequest("SELECT 1 FROM b", "duckdb")]) == [((None, None, "b"),)]
+
+
+def test_reply_of_the_wrong_kind_is_worker_died(hostile: ParserPool) -> None:
+    out = hostile.map(
+        [ExtractRequest("WRONGKIND", "duckdb"), ExtractRequest("SELECT 1 FROM b", "duckdb")]
+    )
+    assert _plain(out) == ["worker_died", ((None, None, "b"),)]
+    assert hostile.restarts == 1
+
+
+def test_garbage_collected_pool_reaps_its_child() -> None:
+    pool = ParserPool()
+    pool.map([ExtractRequest("SELECT 1 FROM a", "duckdb")])
+    proc = pool._proc
+    assert proc is not None
+    del pool
+    gc.collect()
+    try:
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:  # never leave the child behind, even when the test fails
+            proc.kill()
+            proc.wait()
+    assert proc.returncode is not None
+
+
+def _alive(pid: int) -> bool:
+    try:
+        with open(f"/proc/{pid}/status", encoding="ascii") as fh:
+            return not any(line.startswith("State:\tZ") for line in fh)
+    except (FileNotFoundError, ProcessLookupError):  # gone, or went while being read
+        return False
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="parent-death signal is Linux-only"
+)
+def test_child_dies_with_its_parent(tmp_path: Path) -> None:
+    script = tmp_path / "parent.py"
+    script.write_text(
+        textwrap.dedent(
+            """\
+            import os, sys, threading, time
+            from schemaguru.lineage.worker import ExtractRequest, ParserPool
+
+            pool = ParserPool(command=[sys.executable, "-m", "tests.unit.lineage.hostile_worker"])
+            threading.Thread(
+                target=pool.map, args=([ExtractRequest("HANG", "duckdb")],), daemon=True
+            ).start()
+            while pool._proc is None:
+                time.sleep(0.01)
+            time.sleep(1.0)  # the child is inside HANG now
+            print(pool._proc.pid, flush=True)
+            os._exit(0)
+            """
+        ),
+        encoding="utf-8",
+    )
+    done = subprocess.run(
+        [sys.executable, str(script)], cwd=REPO, timeout=60, capture_output=True, text=True,
+        check=False,
+    )  # fmt: skip
+    pid = int(done.stdout.strip())
+    deadline = time.monotonic() + 10
+    while _alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    alive = _alive(pid)
+    if alive:
+        os.kill(pid, 9)
+    assert not alive

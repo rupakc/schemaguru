@@ -17,6 +17,7 @@ lineage) can take up to 2 x ``timeout_s``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -24,6 +25,8 @@ import queue
 import subprocess
 import sys
 import threading
+import time
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import IO, Any, get_args
@@ -45,6 +48,9 @@ DEFAULT_TIMEOUT_S = 5.0
 
 # Waiting for a new child's ready line is not a definition's time: it is bounded separately.
 STARTUP_TIMEOUT_S = 60.0
+
+# The longest reply line read from a child; a longer one is out of protocol (``worker_died``).
+MAX_REPLY_BYTES = 32 << 20
 
 _MEMORY_ENV = "SCHEMAGURU_LINEAGE_MEMORY_LIMIT"
 _REASONS: frozenset[str] = frozenset(get_args(FailureReason))
@@ -172,7 +178,7 @@ def _raw_name(x: Any) -> RawName:
     return (x[0], x[1], x[2])
 
 
-def _decode(line: bytes) -> WorkerResult:
+def _decode(line: bytes, op: str) -> WorkerResult:
     try:
         reply = json.loads(line)
     except ValueError:
@@ -184,7 +190,9 @@ def _decode(line: bytes) -> WorkerResult:
         if reason not in _REASONS:
             raise _Died
         return LineageFailure(reason)
-    if "tables" in reply and isinstance(reply["tables"], list):
+    if op == "extract":
+        if not isinstance(reply.get("tables"), list):
+            raise _Died
         return tuple(_raw_name(t) for t in reply["tables"])
     lin = reply.get("lineage")
     if not isinstance(lin, dict) or not isinstance(lin.get("columns"), list):
@@ -201,12 +209,62 @@ def _decode(line: bytes) -> WorkerResult:
 
 def _pump(stream: IO[bytes], lines: queue.Queue[bytes | None]) -> None:
     # A reader thread: ``Queue.get(timeout=...)`` is the one wait that works on Windows pipes.
+    # ``None`` ends the stream: EOF, a read error, or a line longer than MAX_REPLY_BYTES.
+    limit = MAX_REPLY_BYTES
     try:
-        for line in iter(stream.readline, b""):
+        while line := stream.readline(limit + 1):
+            if len(line) > limit:
+                break
             lines.put(line)
     except (OSError, ValueError):
         pass
     lines.put(None)
+
+
+def _send(stdin: IO[bytes], data: bytes, failed: threading.Event) -> None:
+    # A writer thread: a child that stops reading blocks this write, not the caller.
+    try:
+        stdin.write(data)
+        stdin.flush()
+    except (OSError, ValueError):  # BrokenPipeError included; ValueError: closed by a kill
+        failed.set()
+
+
+def _kill_and_reap(proc: subprocess.Popen[bytes]) -> None:
+    """Kill ``proc`` if it still runs, reap it and close its pipes (idempotent)."""
+    if proc.poll() is None:
+        with contextlib.suppress(OSError):
+            proc.kill()
+    proc.wait()
+    for stream in (proc.stdin, proc.stdout):
+        if stream is not None:
+            with contextlib.suppress(OSError, ValueError):
+                stream.close()
+
+
+def _parent_death_signal() -> Callable[[], None] | None:
+    """On Linux, a ``preexec_fn`` that has the kernel SIGKILL the child when its parent dies
+    (``prctl(PR_SET_PDEATHSIG)``); ``None`` elsewhere or when ``prctl`` is unavailable.
+
+    The signal follows the thread that started the child: if that thread ends first, the child
+    is killed and the pool replaces it on its next request, without blaming a definition."""
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        import ctypes
+        import signal
+
+        prctl = ctypes.CDLL(None, use_errno=True).prctl
+    except (OSError, AttributeError):
+        return None
+    parent = os.getpid()
+
+    def _arm() -> None:
+        prctl(1, signal.SIGKILL)  # 1 == PR_SET_PDEATHSIG
+        if os.getppid() != parent:  # the parent died before the signal was armed
+            os._exit(1)
+
+    return _arm
 
 
 class ParserPool:
@@ -230,6 +288,7 @@ class ParserPool:
             else [sys.executable, "-m", "schemaguru.lineage.worker"]
         )
         self._proc: subprocess.Popen[bytes] | None = None
+        self._reaper: weakref.finalize[Any, Any] | None = None
         self._lines: queue.Queue[bytes | None] = queue.Queue()
         self._restarts = 0
 
@@ -247,6 +306,9 @@ class ParserPool:
     def close(self) -> None:
         """Stop the worker (EOF, then a kill if it does not exit) and reap it."""
         proc, self._proc = self._proc, None
+        if self._reaper is not None:
+            self._reaper.detach()
+            self._reaper = None
         if proc is None:
             return
         try:
@@ -298,12 +360,15 @@ class ParserPool:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 env=env,
+                preexec_fn=_parent_death_signal(),
             )
         except OSError:
             self._restarts += 1
             return False
         assert proc.stdout is not None
         self._proc = proc
+        # a pool that is garbage-collected or alive at interpreter exit still reaps its child
+        self._reaper = weakref.finalize(self, _kill_and_reap, proc)
         self._lines = queue.Queue()
         threading.Thread(target=_pump, args=(proc.stdout, self._lines), daemon=True).start()
         try:
@@ -320,37 +385,40 @@ class ParserPool:
 
     def _discard(self) -> None:
         """Kill and reap the current worker; the next request starts a new one."""
-        proc, self._proc = self._proc, None
+        self._proc = None
         self._restarts += 1
-        if proc is None:
-            return
-        proc.kill()
-        proc.wait()
-        for stream in (proc.stdin, proc.stdout):
-            try:
-                if stream is not None:
-                    stream.close()
-            except OSError:
-                pass
+        if self._reaper is not None:
+            self._reaper()  # kill + reap; a blocked writer thread then fails with EPIPE
+            self._reaper = None
 
     def _ask(self, req: ExtractRequest | LineageRequest) -> WorkerResult:
+        """Send ``req`` and wait for its reply; writing and waiting share one deadline."""
         proc = self._proc
         assert proc is not None and proc.stdin is not None
-        try:
-            proc.stdin.write(_encode(req))
-            proc.stdin.flush()
-        except OSError:  # BrokenPipeError included
+        deadline = time.monotonic() + self._timeout_s
+        failed = threading.Event()
+        writer = threading.Thread(
+            target=_send, args=(proc.stdin, _encode(req), failed), daemon=True
+        )
+        writer.start()
+        writer.join(timeout=self._timeout_s)
+        if writer.is_alive():  # the child stopped reading
+            self._discard()
+            writer.join(timeout=5)
+            return LineageFailure("timeout")
+        if failed.is_set():
             self._discard()
             return LineageFailure("worker_died")
         try:
-            line = self._lines.get(timeout=self._timeout_s)
+            line = self._lines.get(timeout=max(0.0, deadline - time.monotonic()))
         except queue.Empty:
             self._discard()
             return LineageFailure("timeout")
+        op = "extract" if isinstance(req, ExtractRequest) else "lineage"
         try:
             if line is None:
                 raise _Died
-            return _decode(line)
+            return _decode(line, op)
         except _Died:
             self._discard()
             return LineageFailure("worker_died")

@@ -147,7 +147,9 @@ Two new built-in `FactKind`s, registered like the others (base §21):
   that view's `view_definition` lineage facts are *replaced* (old ones retracted, new
   ones written) in one transaction; a view the crawl finds dropped has its lineage
   facts retracted with the table. An unchanged definition hash skips re-parsing and
-  leaves the facts as they are.
+  leaves the facts as they are — only while the relation names the definition reads still
+  resolve as they did when it was parsed (same relation, same columns); otherwise the view
+  is re-parsed (final-review fix: an upstream entering scope or gaining a column).
 
 ### 4.3 View definitions (amends base §6.1, §6.2)
 - `ReaderCapabilities` gains `view_definitions: bool`. `CatalogReader` gains an optional

@@ -19,6 +19,7 @@ literal-free template; nothing logs or reports the text.
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import tempfile
 import threading
@@ -53,7 +54,7 @@ from schemaguru.lineage.parse import lineage_available
 from schemaguru.lineage.worker import ParserPool
 from schemaguru.model.facts import Fact, Provenance
 from schemaguru.model.kinds import LINEAGE_KINDS
-from schemaguru.model.lineage import VIEW_SOURCE
+from schemaguru.model.lineage import VIEW_SOURCE, RawName
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column, Constraint, Schema, Table
 from schemaguru.store.names import resolve_relation_names
@@ -210,6 +211,48 @@ def _unavailable_diagnostic(target: ObjectRef) -> Diagnostic:
         f"lineage could not be parsed for {target.canonical()}: definition_unavailable",
         location=target.canonical(),
     )
+
+
+def _resolution_fingerprint(store: Store, names: Sequence[RawName], target: ObjectRef) -> str:
+    """How ``names`` (a view's relation names, as written) resolve in ``store`` now: per name,
+    the stored relation it reaches and that relation's columns, or nothing (unresolved). A
+    name entering scope, leaving it, or an upstream gaining/losing a column changes it."""
+    resolved = resolve_relation_names(store, names, target)
+    rows = sorted(
+        json.dumps(
+            [list(n), *((r.ref, list(r.columns)) if (r := resolved.get(n)) else (None, None))]
+        )
+        for n in set(names)
+    )
+    return hashlib.sha256("\n".join(rows).encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def _encode_state(sha: str, names: Sequence[RawName], fingerprint: str) -> str:
+    """The ``lineage_state`` value: the definition's sha256, the relation names it reads and
+    the fingerprint of how they resolved when it was parsed."""
+    return json.dumps(
+        {"sha256": sha, "names": sorted(list(n) for n in set(names)), "resolution": fingerprint},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _state_current(store: Store, ref: ObjectRef, stored: str | None, sha: str | None) -> bool:
+    """Whether a view's stored lineage is still current: its definition is unchanged (``sha``
+    None: not known yet, so not judged) AND its relation names still resolve as they did. A
+    state from before 0.2.0's resolution fingerprint (a bare sha256) is never current: its
+    names are unknown, so the view is parsed once more and the new state written."""
+    if stored is None or not stored.startswith("{"):
+        return False
+    try:
+        state = json.loads(stored)
+        names: list[RawName] = [(n[0], n[1], n[2]) for n in state["names"]]
+        old_sha, old_fp = str(state["sha256"]), str(state["resolution"])
+    except (ValueError, KeyError, TypeError, IndexError):
+        return False
+    if sha is not None and old_sha != sha:
+        return False
+    return _resolution_fingerprint(store, names, ref) == old_fp
 
 
 def _retract_view_lineage(store: Store, views: Sequence[ObjectRef]) -> None:
@@ -562,12 +605,15 @@ class _Crawl:
     def _add_stored_views(self, index: LineageIndex | None, *, every: bool) -> None:
         """One streaming pass over the store's live views in scope: all of them after a resume
         (an earlier run may have written a changed view whose old hash is still stored; the hash
-        check skips the unchanged ones), otherwise those without a definition hash."""
+        check skips the unchanged ones), otherwise those without a current lineage state (no
+        definition hash, or relation names that no longer resolve as they did when parsed)."""
         chunk: list[ObjectRef] = []
 
         def flush() -> None:
             have = {} if every or index is None else index.lineage_state_get(chunk)
-            self.seen.add_views(r.canonical() for r in chunk if r not in have)
+            self.seen.add_views(
+                r.canonical() for r in chunk if not _state_current(self.store, r, have.get(r), None)
+            )
             chunk.clear()
 
         for t in self.store.iter_tables():
@@ -604,10 +650,12 @@ class _Crawl:
             )
             return
         stored = index.lineage_state_get(refs) if index is not None else {}
+        # skipped only when the definition is unchanged AND its names resolve as they did
         items = [
             DefinitionItem(r, texts[r], self.reader.dialect)
             for r in refs
-            if r in texts and stored.get(r) != definition_sha256(texts[r])
+            if r in texts
+            and not _state_current(self.store, r, stored.get(r), definition_sha256(texts[r]))
         ]
         # a view the reader returned no definition for: its old lineage is no longer known
         missing = [r for r in refs if r not in texts]
@@ -656,7 +704,9 @@ class _Crawl:
                     evidence=True,
                 )
             )
-            state[res.target] = res.sha256
+            state[res.target] = _encode_state(
+                res.sha256, res.names, _resolution_fingerprint(self.store, res.names, res.target)
+            )
             self.views_parsed += 1
         with self.store.transaction():  # replace: old view facts out, new in, hash recorded
             old = _view_lineage_facts(self.store, [*missing, *(r.target for r in results)])

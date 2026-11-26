@@ -35,8 +35,9 @@ The contracts that matter most (each one is relied on elsewhere):
   - `lineage_edges(keys, direction="upstream" | "downstream", level="table" | "column")` —
     `"upstream"` matches `downstream_key ∈ keys`, `"downstream"` matches `upstream_key ∈ keys`;
     sorted by `(downstream_key, upstream_key, fact_id)`; must run in an index.
-  - `lineage_state_get(refs)` / `lineage_state_set({ref: sha256 or None})` — the view-definition
-    hash per table (`None` deletes).
+  - `lineage_state_get(refs)` / `lineage_state_set({ref: state or None})` — an opaque string per
+    table (the crawl stores the view-definition sha256 with the relation names it reads and how
+    they resolved); `None` deletes. Store it verbatim.
   - The index holds *effective* lineage only (`resolve_lineage`: human wins), recomputed for every
     touched subject from all its `LINEAGE` / `COLUMN_LINEAGE` facts inside the same transaction as
     `put_facts` / `delete_facts`. Shipped stores keep it in `lineage_edges` (SQLite migration 3,

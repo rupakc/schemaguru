@@ -38,7 +38,9 @@ class DefinitionItem:
 
 @dataclass(frozen=True)
 class DefinitionResult:
-    """``parsed`` xor ``failure``; ``template`` is set only with ``parsed``."""
+    """``parsed`` xor ``failure``; ``template`` is set only with ``parsed``. ``names`` are the
+    relation names the definition reads (as written), set only with ``parsed``: a caller keeps
+    them to tell later whether those names still resolve the same way."""
 
     target: ObjectRef
     dialect: str
@@ -46,6 +48,7 @@ class DefinitionResult:
     parsed: ParsedLineage | None
     failure: FailureReason | None
     template: str | None
+    names: tuple[RawName, ...] = ()
 
 
 Resolver = Callable[[Sequence[RawName], ObjectRef], Mapping[RawName, ResolvedTable]]
@@ -70,12 +73,14 @@ def analyse_definitions(
     failures: dict[int, FailureReason] = {}
     pending: list[int] = []
     requests: list[LineageRequest] = []
+    names: dict[int, tuple[RawName, ...]] = {}
     for n, (item, ex) in enumerate(zip(items, extracted, strict=True)):
         if isinstance(ex, LineageFailure):
             failures[n] = ex.reason
             continue
         assert isinstance(ex, tuple)
         pending.append(n)
+        names[n] = tuple(ex)
         requests.append(LineageRequest(item.sql, item.dialect, resolve(ex, item.target), columns))
     parsed: dict[int, ParsedLineage] = {}
     for n, res in zip(pending, pool.map(requests), strict=True):
@@ -94,6 +99,7 @@ def analyse_definitions(
                 parsed=p,
                 failure=failures.get(n),
                 template=None if p is None else template(item.sql),
+                names=() if p is None else names.get(n, ()),
             )
         )
     return out

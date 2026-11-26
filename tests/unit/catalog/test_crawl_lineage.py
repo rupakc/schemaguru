@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import json
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -71,7 +72,9 @@ def test_views_get_lineage_facts(store: SQLiteStore) -> None:
     col = facts["shop.v_orders.amount"]
     assert col.value["inputs"] == ["shop.orders.amount"] and col.value["transform"] == "copy"
     assert set(facts) == {"shop.v_orders", "shop.v_orders.id", "shop.v_orders.amount"}
-    assert store.lineage_state_get([V]) == {V: sha(V_SQL)}
+    [state] = store.lineage_state_get([V]).values()
+    assert json.loads(state)["sha256"] == sha(V_SQL)
+    assert json.loads(state)["names"] == [[None, "shop", "orders"]]
 
 
 def test_unchanged_definition_not_reparsed(
@@ -328,3 +331,54 @@ def test_missing_definition_retracts_and_reports(store: SQLiteStore) -> None:
     assert report.lineage_diagnostics[0].message.endswith(": definition_unavailable")
     assert store.lineage_facts_under([V]) == []
     assert store.lineage_state_get([V]) == {}
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_upstream_entering_scope_reresolves_unchanged_view(
+    store: SQLiteStore, incremental: bool
+) -> None:
+    reader = ViewFakeReader(
+        {"shop.orders": ["id", "amount"], "analytics.paid": ["id", "amount"]},
+        {"analytics.paid": "CREATE VIEW analytics.paid AS SELECT id, amount FROM shop.orders"},
+        incremental=incremental,
+    )
+    paid = ObjectRef(None, "analytics", "paid")
+    crawl(reader, store, config=CrawlConfig(include=("analytics.*",)), now=lambda: NOW)
+    table = next(f for f in view_facts(store, paid) if f.kind.name == "LINEAGE")
+    assert table.value["upstream"] == [] and tuple(table.value["unresolved"]) == ("shop.orders",)
+    report = crawl(reader, store, now=lambda: NOW + timedelta(days=1))
+    assert report.views_parsed == 1
+    table = next(f for f in view_facts(store, paid) if f.kind.name == "LINEAGE")
+    assert table.value["upstream"] == ["shop.orders"] and not table.value["unresolved"]
+    assert store.lineage_edges(["shop.orders"], direction="downstream", level="table")
+    # resolution unchanged now: the next crawl skips the view again
+    assert crawl(reader, store, now=lambda: NOW + timedelta(days=2)).views_parsed == 0
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_star_view_reresolves_when_upstream_gains_a_column(
+    store: SQLiteStore, incremental: bool
+) -> None:
+    reader = ViewFakeReader(
+        {"shop.orders": ["id", "amount"], "shop.v_all": ["id", "amount"]},
+        {"shop.v_all": "CREATE VIEW shop.v_all AS SELECT * FROM shop.orders"},
+        incremental=incremental,
+    )
+    note = ObjectRef(None, "shop", "v_all", "note")
+    crawl(reader, store, now=lambda: NOW)
+    reader.relations["shop.orders"] = ["id", "amount", "note"]
+    reader.relations["shop.v_all"] = ["id", "amount", "note"]
+    reader.altered["shop.orders"] = NOW + timedelta(hours=1)
+    reader.altered["shop.v_all"] = NOW + timedelta(hours=1)  # its column list changed too
+    report = crawl(reader, store, now=lambda: NOW + timedelta(days=1))
+    assert report.views_parsed == 1
+    [col] = store.facts_for([note], LINEAGE_KINDS)
+    assert col.value["inputs"] == ["shop.orders.note"]
+
+
+def test_legacy_hash_only_state_is_reparsed_once(store: SQLiteStore) -> None:
+    reader = shop()
+    crawl(reader, store, now=lambda: NOW)
+    store.lineage_state_set({V: sha(V_SQL)})  # a 0.2.0-pre state: the bare definition hash
+    assert crawl(reader, store, now=lambda: NOW + timedelta(days=1)).views_parsed == 1
+    assert crawl(reader, store, now=lambda: NOW + timedelta(days=2)).views_parsed == 0

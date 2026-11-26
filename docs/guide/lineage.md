@@ -47,9 +47,12 @@ sources, all metadata views and never a data table:
 | Trino | `information_schema.views.view_definition` |
 
 A custom [catalog reader](../extending/catalog-reader.md) that does not implement
-`view_definitions` keeps working; the crawl never asks it. An unchanged definition (same sha256) is
-not parsed again, a re-crawled view's lineage is replaced in one transaction, and a dropped view's
-lineage goes with it.
+`view_definitions` keeps working; the crawl never asks it. A view is not parsed again while its
+definition is unchanged (same sha256) **and** the relation names it reads still resolve as they did
+(same stored relation, same columns). An upstream table entering the crawl's scope, leaving it, or
+gaining or losing a column re-parses the view, so `(not in catalog)` and `SELECT *` lineage catch
+up. A re-crawled view's lineage is replaced in one transaction, and a dropped view's lineage goes
+with it.
 
 ## The `lineage` extra
 
@@ -151,7 +154,8 @@ and one of its direct upstream tables are both in the view, the model's block sh
 ## Privacy of view SQL
 
 The raw definition text exists in memory only while it is parsed. The store keeps the lineage facts,
-the **sha256** of the definition (to skip an unchanged view next time) and, as evidence, a
+the **sha256** of the definition and the relation names it reads (to skip an unchanged view next
+time) and, as evidence, a
 **template with every literal replaced by a placeholder**. No raw definition is persisted, logged,
 rendered, put in a diagnostic or sent to an LLM; a diagnostic names a fixed failure category,
 never SQL text.

@@ -6,4 +6,4 @@
 -- another process wrote it. Only an insert can add a subject.
 CREATE SEQUENCE join_facts_version;
 CREATE FUNCTION bump_join_facts_version() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN PERFORM nextval(quote_ident(TG_TABLE_SCHEMA) || ''.join_facts_version''); RETURN NULL; END;';
-CREATE TRIGGER facts_join_inserted AFTER INSERT ON facts FOR EACH ROW WHEN (NEW.kind = 'JOIN') EXECUTE FUNCTION bump_join_facts_version();
+CREATE TRIGGER facts_join_inserted AFTER INSERT ON facts FOR EACH ROW WHEN (NEW.kind = 'JOIN') EXECUTE PROCEDURE bump_join_facts_version();

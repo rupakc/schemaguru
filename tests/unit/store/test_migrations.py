@@ -120,3 +120,17 @@ def test_readonly_v2_store_refused_until_migrated(tmp_path: Path) -> None:
     SQLiteStore(p).close()
     with SQLiteStore(p, readonly=True) as s:
         assert s.lineage_edges(["shop.v"], direction="upstream", level="table") == []
+
+
+def test_pg_migrations_avoid_execute_function() -> None:
+    """``EXECUTE FUNCTION`` in a trigger needs PostgreSQL 11; ``EXECUTE PROCEDURE`` works on every
+    version, and the store claims no minimum version of its own (docs/wiki/Store.md)."""
+    import re
+
+    import schemaguru.store as store_pkg
+
+    pg = Path(store_pkg.__file__).parent / "migrations" / "pg"
+    files = sorted(pg.glob("*.sql"))
+    assert files
+    hits = [f.name for f in files if re.search(r"EXECUTE\s+FUNCTION", f.read_text("utf-8"), re.I)]
+    assert hits == []

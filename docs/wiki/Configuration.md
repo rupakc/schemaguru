@@ -1,7 +1,7 @@
 # Configuration
 
 > Everything is configured through one frozen object, `sg.Config`, with sensible defaults; no config file is required.
-> It can be built in Python, from a YAML file (`Config.from_yaml`) or from `SCHEMAGURU_*` environment variables (`Config.from_env`), and unknown keys are an error, not a silent typo.
+> It can be built in Python, from a YAML file (`Config.from_yaml`) or from `SCHEMAGURU_*` environment variables (`Config.from_env`), and unknown keys are an error, not a silent typo (from the environment, a `SCHEMAGURU_*` name that is not a config field at all, such as `SCHEMAGURU_SERVER_TOKENS`, is another product variable and is ignored; a typo inside a section such as `SCHEMAGURU_SCOPE__SEED` still errors).
 > This page lists every setting, its default and what it changes.
 
 ## Three ways to configure

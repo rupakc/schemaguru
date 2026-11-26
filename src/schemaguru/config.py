@@ -168,13 +168,20 @@ class Config:
         """``PREFIX_FIELD`` sets a top-level field, ``PREFIX_SECTION__FIELD`` a nested one.
 
         Values are parsed as YAML scalars (``7`` -> int, ``true`` -> bool, ``none`` stays text).
+        Only names whose first part is a config field are read: other variables sharing the
+        prefix (``SCHEMAGURU_SERVER_TOKENS``, ``SCHEMAGURU_URL``, ``SCHEMAGURU_FORBID_SKIPS``, ...)
+        belong to other parts of the product and are ignored. A key inside a config section
+        (``SCHEMAGURU_SCOPE__TYPO``) is still checked, as is every key of a config file.
         """
         env = os.environ if environ is None else environ
+        top = {f.name for f in dataclasses.fields(cls)}
         data: dict[str, Any] = {}
         for key, raw in env.items():
             if not key.startswith(prefix):
                 continue
             path = key[len(prefix) :].lower().split("__")
+            if path[0] not in top:
+                continue
             node = data
             for part in path[:-1]:
                 node = node.setdefault(part, {})

@@ -159,8 +159,7 @@ def _config(args: argparse.Namespace) -> Config:
             return Config.from_yaml(args.config)
         except FileNotFoundError:
             raise UsageError(f"config file not found: {args.config}") from None
-    env = {k: v for k, v in os.environ.items() if k != "SCHEMAGURU_URL"}
-    return Config.from_env(environ=env)
+    return Config.from_env()  # reads config fields only (not SCHEMAGURU_URL, _SERVER_TOKENS)
 
 
 def _url(args: argparse.Namespace) -> str | None:

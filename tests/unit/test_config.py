@@ -49,8 +49,13 @@ def test_from_env() -> None:
     c = Config.from_env(environ=env)
     assert c.enum_max_distinct == 7 and c.budget.max_probes == 12
     assert c.sampling.llm_values == "none" and c.store_path == "/tmp/x.db"
+    # other SCHEMAGURU_* product variables are not config keys: ignored
+    other = {"SCHEMAGURU_NOPE": "1", "SCHEMAGURU_SERVER_TOKENS": "t:admin",
+             "SCHEMAGURU_FORBID_SKIPS": "1", "SCHEMAGURU_TEST__X": "1"}  # fmt: skip
+    assert Config.from_env(environ=other) == Config()
+    # a key inside a config section is still checked
     with pytest.raises(ConfigError, match="nope"):
-        Config.from_env(environ={"SCHEMAGURU_NOPE": "1"})
+        Config.from_env(environ={"SCHEMAGURU_SCOPE__NOPE": "1"})
 
 
 def test_from_yaml(tmp_path: Path) -> None:

@@ -36,7 +36,11 @@ guru.close()
   parsed as YAML scalars. Tuple fields take a list or comma-separated text.
 * `Config.from_yaml("schemaguru.config.yaml")` reads the same keys; `schemaguru init` writes a
   commented one. The CLI reads `--config`, else the environment.
-* An unknown key or a value of the wrong type raises `ConfigError` naming the key.
+* An unknown key or a value of the wrong type raises `ConfigError` naming the key. From the
+  environment, only names whose first part is a config field are read
+  (`SCHEMAGURU_SCOPE__TYPO` still raises): other variables that share the prefix
+  (`SCHEMAGURU_URL`, `SCHEMAGURU_SERVER_TOKENS`, `SCHEMAGURU_LINEAGE_MEMORY_LIMIT`, ...) belong to
+  other parts of SchemaGuru and are ignored.
 
 ## Every key
 

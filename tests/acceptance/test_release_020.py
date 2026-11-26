@@ -140,8 +140,8 @@ def test_l2_truthful(tmp_path: Path) -> None:
 def test_l3_agent_surfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from schemaguru.cli import main
 
-    # the CI skip switch shares the SCHEMAGURU_ prefix the CLI reads as config
-    monkeypatch.delenv("SCHEMAGURU_FORBID_SKIPS", raising=False)
+    # the CI skip switch shares the SCHEMAGURU_ prefix; the CLI must not read it as config
+    monkeypatch.setenv("SCHEMAGURU_FORBID_SKIPS", "1")
     with _lineage_warehouse(tmp_path) as guru:
         db = tmp_path / "g.db"
         assert guru.lineage("shop.v_orders").edges

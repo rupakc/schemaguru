@@ -446,6 +446,33 @@ def test_optional_surfaces_say_what_to_install(
     assert code == 2 and f"schemaguru[{extra}]" in err and out == ""
 
 
+def test_serve_reads_server_tokens_and_skip_switch_not_as_config(
+    run: Run, crawled: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import types
+
+    seen: list[Any] = []
+    fake = types.ModuleType("schemaguru.server")
+    fake.serve = lambda guru, *, host, port: seen.append((host, port))  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "schemaguru.server", fake)
+    # product variables that share the prefix but are not config keys
+    monkeypatch.setenv("SCHEMAGURU_SERVER_TOKENS", "admin-token-0123456789:admin")
+    monkeypatch.setenv("SCHEMAGURU_FORBID_SKIPS", "1")
+    monkeypatch.setenv("SCHEMAGURU_LINEAGE_MEMORY_LIMIT", "512")
+    code, _, err = run("serve", "--store", crawled, "--port", "8099")
+    assert code == 0, err
+    assert seen == [("127.0.0.1", 8099)]
+
+
+def test_unknown_key_in_config_file_still_errors(
+    run: Run, url: str, store: str, tmp_path: Path
+) -> None:
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("server_tokens: x\n", encoding="utf-8")
+    code, _, err = run("crawl", "--url", url, "--store", store, "--config", str(cfg))
+    assert code == 2 and "unknown config key: server_tokens" in err
+
+
 def test_worker_once(run: Run, crawled: str, url: str, fake_backend: Any) -> None:
     code, _, err = run("worker", "--once", "--url", url, "--store", crawled)
     assert code == 0 and "measured" in err
@@ -552,8 +579,12 @@ def test_exit_codes(run: Run, url: str, store: str, monkeypatch: pytest.MonkeyPa
     code, _, err = run("crawl", "--url", url, "--store", store)
     assert code == 2 and "seed_k" in err
     monkeypatch.delenv("SCHEMAGURU_SCOPE__SEED_K")
-    monkeypatch.setenv("SCHEMAGURU_NOPE", "1")
-    assert run("crawl", "--url", url, "--store", store)[0] == 2
+    monkeypatch.setenv("SCHEMAGURU_SCOPE__NOPE", "1")  # a typo inside a config section
+    code, _, err = run("crawl", "--url", url, "--store", store)
+    assert code == 2 and "scope.nope" in err
+    monkeypatch.delenv("SCHEMAGURU_SCOPE__NOPE")
+    monkeypatch.setenv("SCHEMAGURU_NOPE", "1")  # not a config key: another product variable
+    assert run("crawl", "--url", url, "--store", store)[0] == 0
     monkeypatch.delenv("SCHEMAGURU_NOPE")
     assert run("crawl", "--url", url, "--store", store)[0] == 0
     code, _, err = run("crawl", "--url", "not a url", "--store", store)

@@ -316,8 +316,9 @@ class _Ctx:
         self._cost: dict[Hop, float] = {}
         self._attr: dict[str, bool] = {}
         self._cost_i: list[float | None] = []
-        self._lower: dict[tuple[int, ...], list[float]] = {}
+        self._lower: dict[tuple[tuple[int, ...], int | None], list[float]] = {}
         self._attr_i: list[bool | None] = []
+        self._filled = 0  # hops [0, _filled) have their cost in _cost_i (see _fill_costs)
 
     def cost(self, hop: Hop) -> float:
         c = self._cost.get(hop)
@@ -333,13 +334,21 @@ class _Ctx:
             self._cost[hop] = c
         return c
 
-    def lower_bound(self, *dsts: int) -> list[float]:
+    def lower_bound(self, *dsts: int, radius: int | None = None) -> list[float]:
         """Cheapest cost from every table to the nearest of ``dsts``, every constraint relaxed.
 
         Admissible and consistent (a shortest-path metric over the same hop costs, 0 at every
         target), so A* with it still settles each target's exact optimum of the constrained search.
+
+        With ``radius`` (a search's hop limit) the cost is exact for every table at most
+        ``radius`` traversable hops from a target and ``inf`` for the rest: no route of at most
+        ``radius`` hops passes through those, so pruning them removes only states that can never
+        finish, and the search's result (ties included) is unchanged. The reverse Dijkstra stops
+        once every table within the radius is settled instead of walking the whole component.
         """
-        cache_key = tuple(sorted(set(dsts)))
+        if radius is not None and radius >= len(self.graph._refs):
+            radius = None  # every simple route fits: the whole component
+        cache_key = (tuple(sorted(set(dsts))), radius)
         h = self._lower.get(cache_key)
         if h is not None:
             return h
@@ -350,28 +359,60 @@ class _Ctx:
                 h = self._lower_bound_locked(cache_key)
         return h
 
-    def _lower_bound_locked(self, cache_key: tuple[int, ...]) -> list[float]:
+    def _hop_cost_i(self, costs: list[float | None], idx: int, hop: Hop) -> float:
+        c = costs[idx]
+        if c is None:
+            c = costs[idx] = self.cost(hop)
+        return c
+
+    def _ball(self, dsts: tuple[int, ...], radius: int, costs: list[float | None]) -> set[int]:
+        """Tables at most ``radius`` traversable (finite-cost) hops from one of ``dsts``."""
         g = self.graph
-        for t in cache_key:
+        ball = set(dsts)
+        frontier = list(dsts)
+        for _ in range(radius):
+            nxt: list[int] = []
+            for v in frontier:
+                for u, hop, idx in g.into(v):
+                    if u not in ball and self._hop_cost_i(costs, idx, hop) != math.inf:
+                        ball.add(u)
+                        nxt.append(u)
+            if not nxt:
+                break
+            frontier = nxt
+        return ball
+
+    def _lower_bound_locked(self, cache_key: tuple[tuple[int, ...], int | None]) -> list[float]:
+        g = self.graph
+        dsts, radius = cache_key
+        for t in dsts:
             g.arcs(t)  # builds the component
         costs = self._fill_costs()
+        ball = None if radius is None else self._ball(dsts, radius, costs)
+        left = 0 if ball is None else len(ball)  # tables within the radius not yet settled
         h = [math.inf] * len(g._refs)
         heap: list[tuple[float, int]] = []
-        for t in cache_key:
+        for t in dsts:
             h[t] = 0.0
             heap.append((0.0, t))
         while heap:
             d, v = heapq.heappop(heap)
             if d > h[v]:
                 continue
+            if ball is not None and v in ball:
+                left -= 1
+                if left == 0:
+                    break  # every table a route can use has its exact cost
             for u, hop, idx in g.into(v):
-                c = costs[idx]
-                if c is None:
-                    c = costs[idx] = self.cost(hop)
-                nd = d + c
+                nd = d + self._hop_cost_i(costs, idx, hop)
                 if nd < h[u]:
                     h[u] = nd
                     heapq.heappush(heap, (nd, u))
+        if ball is not None:
+            exact = h
+            h = [math.inf] * len(g._refs)
+            for i in ball:
+                h[i] = exact[i]
         if len(self._lower) >= _MAX_LOWER_BOUNDS:
             del self._lower[next(iter(self._lower))]  # oldest first
         self._lower[cache_key] = h
@@ -386,7 +427,10 @@ class _Ctx:
         unknown_fan = wf * (pen if worst is None else math.log1p(worst))
         indeg = g._indeg_by_id
         log, log1p, inf = math.log, math.log1p, math.inf
-        for idx, (hop, end) in enumerate(g._hops):
+        hops = g._hops
+        start, self._filled = self._filled, len(hops)  # hops are only ever appended
+        for idx in range(start, len(hops)):
+            hop, end = hops[idx]
             if costs[idx] is not None:
                 continue
             e = hop.edge
@@ -499,7 +543,9 @@ def _search(
     need_thin = mode.require_thin
     limit = mode.hop_limit
     assert not (multi and mode.require_thin)  # pass 2 is searched one target at a time
-    lower = ctx.lower_bound(*targets)  # admissible, consistent: A* stays exact per target
+    # admissible, consistent: A* stays exact per target; tables farther than the hop limit from
+    # every target are inf (pruned): no route of at most ``limit`` hops passes through them
+    lower = ctx.lower_bound(*targets, radius=limit)
     found: dict[int, list[Hop]] = {}
     best: dict[_Key, float] = {start: 0.0}
     back: dict[_Key, tuple[_Key, Hop]] = {}
@@ -671,8 +717,19 @@ def _hop_distance(ctx: _Ctx, src: ObjectRef, dst: ObjectRef) -> int | None:
     return None
 
 
-def _diagnose(ctx: _Ctx, src: ObjectRef, dst: ObjectRef, automaton: Automaton | None) -> PathResult:
-    """Relax exactly one mechanism at a time; the relaxed route only names the blocker."""
+def _diagnose(
+    ctx: _Ctx,
+    src: ObjectRef,
+    dst: ObjectRef,
+    automaton: Automaton | None,
+    *,
+    no_route_detail: bool = True,
+) -> PathResult:
+    """Relax exactly one mechanism at a time; the relaxed route only names the blocker.
+
+    ``no_route_detail=False`` skips the fewest-hops walk (unbounded by the hop limit) when it
+    could only word a ``NO_ROUTE`` explanation: without rules every remaining outcome is
+    ``NO_ROUTE``. With rules it still runs, since it decides between the two refusals."""
     cfg, graph = ctx.cfg, ctx.graph
     pair = f"{_name(src)} -> {_name(dst)}"
 
@@ -715,6 +772,10 @@ def _diagnose(ctx: _Ctx, src: ObjectRef, dst: ObjectRef, automaton: Automaton | 
             Refusal.HUB_PIVOT,
             f"every route {pair} {where} (fan-in > {cfg.attribution_fanin:g}): a cartesian hazard",
         )
+    if automaton is None and not no_route_detail:
+        return PathResult(
+            (), Refusal.NO_ROUTE, f"no route {pair} (not diagnosed further: no_route_detail=False)"
+        )
     need = _hop_distance(ctx, src, dst)
     if need is not None and need > cfg.hop_limit:
         return PathResult(
@@ -745,11 +806,14 @@ def find_paths(
     cfg: GraphConfig,
     automaton: Automaton | None = None,
     diagnose: bool = True,
+    no_route_detail: bool = True,
 ) -> PathResult:
     """Cheapest routes ``src`` -> ``dst`` (tables; columns are widened).
 
     Up to ``cfg.k_paths`` well-supported routes (pass 1), then up to ``cfg.k_paths`` routes that
-    each take a thin hop (pass 2), labelled ``provisional`` (spec 9.3).
+    each take a thin hop (pass 2), labelled ``provisional`` (spec 9.3). ``no_route_detail=False``
+    (for callers that use only the refusal kind of a plain ``NO_ROUTE``) leaves out the fewest-hops
+    count of its explanation, which walks the component past the hop limit.
     """
     s, d = src.table_ref(), dst.table_ref()
     if s == d:
@@ -793,7 +857,7 @@ def find_paths(
                 Refusal.NO_ROUTE,
                 f"no route {_name(s)} -> {_name(d)} (not diagnosed; diagnose=True names why)",
             )
-        return _diagnose(ctx, s, d, automaton)
+        return _diagnose(ctx, s, d, automaton, no_route_detail=no_route_detail)
     provisional = [p for p in paths if p.provisional]
     note = ""
     if provisional:

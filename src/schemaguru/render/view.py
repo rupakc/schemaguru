@@ -26,6 +26,7 @@ from schemaguru.knowledge.resolve import resolve
 from schemaguru.measure.catalog_bridge import StoreCatalog
 from schemaguru.model.detail import DetailLevel
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
+from schemaguru.model.joins import JoinRef
 from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays.schema import GLOBAL_SUBJECT
 from schemaguru.pii.mask import mask_free_text
@@ -168,8 +169,11 @@ class ViewRenderer:
         waivers: Sequence[Waiver] = (),
         dialect: str | None = None,
         rules: Callable[[ObjectRef, ObjectRef], Automaton | None] | None = None,
+        join_subjects: Mapping[ObjectRef, Sequence[JoinRef]] | None = None,
     ) -> None:
-        """``rules(src, dst)`` gives the waypoint automaton for a join-path search, if any."""
+        """``rules(src, dst)`` gives the waypoint automaton for a join-path search, if any.
+        ``join_subjects`` (see ``knowledge.join_subjects_by_table``) lets the renderer read a
+        table's JOIN facts by subject; without it every JOIN fact is read once per renderer."""
         self.store = store
         self.now = require_aware(now)
         self.cfg = cfg
@@ -178,6 +182,7 @@ class ViewRenderer:
         self.waivers = tuple(waivers)
         self.dialect = dialect
         self.rules = rules
+        self.join_subjects = join_subjects
         self._knowledge: dict[ObjectRef, TableKnowledge] = {}
         self._joins: list[Fact] | None = None
         self._globals: list[ViewBlock] | None = None
@@ -193,11 +198,15 @@ class ViewRenderer:
         ref = ref.table_ref()
         k = self._knowledge.get(ref)
         if k is None:
-            if self._joins is None:
-                self._joins = self.store.facts_for(None, ["JOIN"])
-            k = collect(
-                self.store, ref, self.now, self.cfg, join_facts=self._joins, waivers=self.waivers
-            )
+            joins: Sequence[Fact]
+            if self.join_subjects is not None:
+                subjects = self.join_subjects.get(ref, ())
+                joins = self.store.facts_for(subjects, ["JOIN"]) if subjects else []
+            else:
+                if self._joins is None:
+                    self._joins = self.store.facts_for(None, ["JOIN"])
+                joins = self._joins
+            k = collect(self.store, ref, self.now, self.cfg, join_facts=joins, waivers=self.waivers)
             self._knowledge[ref] = k
         return k
 
@@ -332,7 +341,10 @@ class ViewRenderer:
             for i, a in enumerate(shown):
                 for b in shown[i + 1 :]:
                     auto = None if self.rules is None else self.rules(a, b)
-                    res = find_paths(self.graph, a, b, cfg=gcfg, automaton=auto)
+                    # only hazard refusals are shown: a plain NO_ROUTE's hop count is never used
+                    res = find_paths(
+                        self.graph, a, b, cfg=gcfg, automaton=auto, no_route_detail=False
+                    )
                     if res.refusal in _HAZARD_REFUSALS:
                         why = res.explanation.replace(f"{a.canonical()} -> {b.canonical()} ", "", 1)
                         hazards.setdefault(why, []).append(f"{qname(a)} -> {qname(b)}")

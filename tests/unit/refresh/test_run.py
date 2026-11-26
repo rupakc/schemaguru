@@ -464,3 +464,25 @@ def test_carried_error_fact_is_superseded_not_missing() -> None:
     assert _carried_unmeasured([err], [err], due, True) == []
     ok = nr(Status.OBSERVED)
     assert len(_carried_unmeasured([ok], [ok], due, True)) == 1
+
+
+def test_refresh_diffs_the_snapshots_once(
+    store: SQLiteStore, conn: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One pass over both fact sets per refresh: the removals a narrow run did not look at come
+    out of the same comparison as the changes (a second full diff doubled the cost)."""
+    import importlib
+
+    diff_module = importlib.import_module("schemaguru.knowledge.diff")
+    go(store, conn)
+    calls = 0
+    real = diff_module._by_id
+
+    def counting(facts: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return real(facts)
+
+    monkeypatch.setattr(diff_module, "_by_id", counting)
+    go(store, conn)
+    assert calls == 2  # before and after, each indexed once

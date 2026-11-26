@@ -79,16 +79,31 @@ def diff(
     value and status both changed yields two changes (``value`` then ``status``). Output is sorted
     by (kind, subject, fact id, change kind).
     """
+    return diff_split(before, after, checks_run=checks_run)[0]
+
+
+def diff_split(
+    before: Sequence[Fact],
+    after: Sequence[Fact],
+    *,
+    checks_run: frozenset[str] | None = None,
+) -> tuple[list[Change], list[Change]]:
+    """:func:`diff` plus, in one pass, the removals it left out: facts that vanished while
+    their check did not run (sorted like :func:`diff`; empty when ``checks_run`` is ``None``)."""
     b, a = _by_id(before), _by_id(after)
     out: list[Change] = []
+    unlooked: list[Change] = []
     for fid in b.keys() | a.keys():
         old, new = b.get(fid), a.get(fid)
         if old is None and new is not None:
             out.append(Change(new.kind, new.subject, None, new, "added"))
         elif new is None and old is not None:
             check = _check_of(old)
+            gone = Change(old.kind, old.subject, old, None, "removed")
             if checks_run is None or check is None or check in checks_run:
-                out.append(Change(old.kind, old.subject, old, None, "removed"))
+                out.append(gone)
+            else:
+                unlooked.append(gone)
         elif old is not None and new is not None:
             if canonical_json(old.value) != canonical_json(new.value):
                 out.append(Change(new.kind, new.subject, old, new, "value"))
@@ -100,4 +115,4 @@ def diff(
         assert f is not None
         return (c.kind.name, subject_key(c.subject), f.id, _RANK[c.change])
 
-    return sorted(out, key=key)
+    return sorted(out, key=key), sorted(unlooked, key=key)

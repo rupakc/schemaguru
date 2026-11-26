@@ -88,6 +88,7 @@ from schemaguru.measure.scheduler import BackgroundDrainer, MeasureReport, Sched
 from schemaguru.model.chains import Chain, FilterStep
 from schemaguru.model.evidence import Evidence
 from schemaguru.model.facts import Fact, Provenance, Status, Waiver
+from schemaguru.model.joins import JoinRef
 from schemaguru.model.lineage import Level
 from schemaguru.model.refs import ObjectRef
 from schemaguru.overlays.dbt import apply_dbt
@@ -100,6 +101,7 @@ from schemaguru.refresh.run import refresh as _refresh
 from schemaguru.render.fingerprint import fingerprint_views as _fingerprint_views
 from schemaguru.render.formats import format_view
 from schemaguru.render.fragments import validate_filter
+from schemaguru.render.knowledge import join_subjects_by_table
 from schemaguru.render.view import ContextView, ViewRenderer
 from schemaguru.scope.expand import expand
 from schemaguru.scope.pipeline import NOT_SHOWN_PROBE, build_scope
@@ -242,6 +244,8 @@ class Guru:
         self._cache = _LRU(self._config.scope.cache_entries)
         self._graph_key: tuple[Any, ...] | None = None
         self._graph: Graph | None = None
+        # the JOIN subjects touching each table, read with the graph's facts (same key)
+        self._join_subjects: dict[ObjectRef, tuple[JoinRef, ...]] = {}
         self._rule_specs: list[WaypointSpec] = []  # raw overlay rules + compiled chains
         self._waypoints: list[WaypointSpec] = []
         self._chains: list[Chain] = []
@@ -797,6 +801,7 @@ class Guru:
             self._note(d)
             if sink is not None:
                 sink.append(d)
+        self._join_subjects = join_subjects_by_table(facts)
         self._graph, self._graph_key = graph, key
         return graph
 
@@ -868,15 +873,17 @@ class Guru:
     # ----- context ----------------------------------------------------------------------------
 
     def _renderer(self, profile: str) -> ViewRenderer:
+        graph = self._current_graph()
         return ViewRenderer(
             self.store,
             now=self._now(),
             cfg=self._config,
             profile=profile,
-            graph=self._current_graph(),
+            graph=graph,
             waivers=self._waivers,
             dialect=self.dialect,
             rules=self._rules,
+            join_subjects=self._join_subjects,
         )
 
     def context(

@@ -8,7 +8,7 @@ never on insertion order (spec 12.2).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
@@ -73,6 +73,23 @@ class TableKnowledge:
 
 def _touches(join: JoinRef, ref: ObjectRef) -> bool:
     return join.left[0].table_ref() == ref or join.right[0].table_ref() == ref
+
+
+def join_subjects_by_table(facts: Iterable[Fact]) -> dict[ObjectRef, tuple[JoinRef, ...]]:
+    """The JOIN subjects touching each table, from facts read once (e.g. for the join graph).
+
+    A renderer given this index reads a table's join facts by subject (an indexed read that
+    still verifies every id) instead of decoding every JOIN fact in the store per question.
+    """
+    found: dict[ObjectRef, dict[str, JoinRef]] = {}
+    for f in facts:
+        subj = f.subject
+        if f.kind.name != "JOIN" or not isinstance(subj, JoinRef):
+            continue
+        key = subj.identity_key()
+        for side in (subj.left[0].table_ref(), subj.right[0].table_ref()):
+            found.setdefault(side, {})[key] = subj
+    return {t: tuple(by_key[k] for k in sorted(by_key)) for t, by_key in found.items()}
 
 
 def collect(

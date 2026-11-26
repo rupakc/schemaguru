@@ -588,11 +588,15 @@ class SQLiteStore:
         kinds = sorted(LINEAGE_KINDS)
         out: dict[str, Fact] = {}
         for key in sorted(t.canonical() for t in wanted):
-            # a column key is the table key, a dot, then the column ("/" sorts right after ".")
+            # a column key is the table key, a dot, then the column ("/" sorts right after "."):
+            # one range on the subject index, named: without statistics SQLite prefers the kind
+            # index, i.e. a scan of every lineage fact per view. The range also holds keys of
+            # tables whose name extends this one with a character below "/"; the table check
+            # below drops them.
             for fid, data in self._q(
-                "SELECT id, data FROM facts WHERE (subject_key = ? OR "
-                f"(subject_key > ? AND subject_key < ?)) AND kind IN ({_marks(len(kinds))})",
-                (key, key + ".", key + "/", *kinds),
+                "SELECT id, data FROM facts INDEXED BY facts_subject_kind "
+                f"WHERE subject_key >= ? AND subject_key < ? AND kind IN ({_marks(len(kinds))})",
+                (key, key + "/", *kinds),
             ):
                 fact = Fact.from_dict(json.loads(data))
                 if isinstance(fact.subject, ObjectRef) and fact.subject.table_ref() in wanted:
@@ -752,9 +756,12 @@ class SQLiteStore:
             col_tokens.extend(name_tokens(c["ref"]["column"]))
             if c.get("comment"):
                 text.append(c["comment"])
-        # table-level and column-level meaning facts (column keys extend the table key by ".col")
+        # table-level and column-level meaning facts (column keys extend the table key by ".col"),
+        # by the subject index, named: without statistics SQLite picks the kind index (a scan of
+        # every meaning fact, once per reindexed table)
         for (fdata,) in conn.execute(
-            "SELECT data FROM facts WHERE subject_key >= ? AND subject_key < ? "
+            "SELECT data FROM facts INDEXED BY facts_subject_kind "
+            "WHERE subject_key >= ? AND subject_key < ? "
             f"AND kind IN ({_marks(len(MEANING_KINDS))})",
             (key, key + "/", *MEANING_KINDS),
         ):

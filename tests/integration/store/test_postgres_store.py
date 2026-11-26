@@ -403,3 +403,113 @@ def test_pg_v1_store_migrates(pg_schema: tuple[str, str], monkeypatch: pytest.Mo
             LineageEdge("shop.orders", "shop.v", "table", lin.id)
         ]
         assert [r for r, _ in s.search("order", 5)] == [tref("orders")]
+
+
+def test_reindex_reads_only_the_page_s_glossary_terms(pg_schema: tuple[str, str]) -> None:
+    """A page's search documents read the glossary terms that can name its tables (prefiltered
+    on the table name, as SQLite does), not every term in the store for every crawled page."""
+    from schemaguru.model.facts import Fact, Provenance, Status
+    from schemaguru.model.kinds import FactKind
+    from schemaguru.model.refs import ObjectRef
+    from schemaguru.store.postgres import PostgresStore
+    from schemaguru.store.search_docs import GLOSSARY
+
+    dsn, schema = pg_schema
+    glob = ObjectRef(None, None, "_global")
+
+    def term(name: str, table: str) -> Fact:
+        value = {"term": name, "definition": "d", "maps_to": [tref(table).to_dict()]}
+        return Fact.make(FactKind.GLOSSARY, glob, value, Provenance.HUMAN, Status.UNVERIFIED)
+
+    s = PostgresStore(dsn, schema=schema)
+    try:
+        s.put_facts([term(f"term {i}", f"other{i}") for i in range(300)])
+        s.put_facts([term("net revenue", "orders")])
+        read: list[int] = []
+        real = s._q
+
+        def counting(query: str, params: Any = ()) -> list[Any]:
+            rows = real(query, params)
+            if "FROM facts" in query and GLOSSARY in list(params or ()):
+                read.append(len(rows))
+            return rows
+
+        s._q = counting  # type: ignore[method-assign]
+        s.upsert_tables([tbl("orders")])
+        assert read and sum(read) == 1, read
+        assert [r.table for r, _ in s.search("net revenue", 3)] == ["orders"]
+    finally:
+        s.close()
+
+
+def test_lineage_facts_under_reads_by_the_subject_index(pg_schema: tuple[str, str]) -> None:
+    """A crawl reads each re-parsed batch's lineage facts by index ranges on the views' subject
+    keys, not by a scan of every lineage fact per batch (quadratic over a large crawl)."""
+    import psycopg
+
+    from schemaguru.model.facts import Provenance
+    from schemaguru.store.postgres import PostgresStore
+    from tests.unit.store.contract import _lin
+
+    dsn, schema = pg_schema
+    s = PostgresStore(dsn, schema=schema)
+    try:
+        facts = [
+            _lin(["shop.orders"], Provenance.CATALOG, "view_definition", subject=tref(f"v{i:05d}"))
+            for i in range(3000)
+        ]
+        s.put_facts(facts)
+        s.put_facts([_lin(["shop.orders"], Provenance.CATALOG, "x", subject=tref("v00007$1"))])
+        seen: list[tuple[str, Any]] = []
+        real = s._q
+
+        def recording(query: str, params: Any = ()) -> list[Any]:
+            seen.append((query, params))
+            return real(query, params)
+
+        s._q = recording  # type: ignore[method-assign]
+        got = s.lineage_facts_under([tref("v00007"), tref("v02000")])
+        assert sorted(f.subject.canonical() for f in got) == ["shop.v00007", "shop.v02000"]
+        (query, params), *_ = [(q, p) for q, p in seen if "FROM" in q and "facts" in q]
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            conn.execute(f'SET search_path TO "{schema}"')
+            conn.execute("ANALYZE facts")
+            plan = "\n".join(r[0] for r in conn.execute("EXPLAIN " + query, params).fetchall())
+        assert "facts_subject_kind" in plan, plan
+    finally:
+        s.close()
+
+
+def test_reindex_reads_meaning_facts_by_the_subject_index(pg_schema: tuple[str, str]) -> None:
+    """Rebuilding a page's search documents reads each table's meaning facts by an index range
+    on its subject key, not by a scan of every fact once per crawled page."""
+    import psycopg
+
+    from schemaguru.store.postgres import PostgresStore
+    from tests.unit.store.contract import _desc
+
+    dsn, schema = pg_schema
+    s = PostgresStore(dsn, schema=schema)
+    try:
+        s.put_facts([_desc(tref(f"t{i:05d}"), f"table {i}") for i in range(3000)])
+        seen: list[tuple[str, Any]] = []
+        real = s._q
+
+        def recording(query: str, params: Any = ()) -> list[Any]:
+            seen.append((query, params))
+            return real(query, params)
+
+        s._q = recording  # type: ignore[method-assign]
+        s.upsert_tables([tbl("t00007"), tbl("t02000")])
+        assert [r.table for r, _ in s.search("table 2000", 1)] == ["t02000"]
+        meaning = [(q, p) for q, p in seen if "subject_key >=" in q]
+        assert meaning
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            conn.execute(f'SET search_path TO "{schema}"')
+            conn.execute("ANALYZE facts")
+            for query, params in meaning:
+                rows = conn.execute("EXPLAIN " + query, params).fetchall()
+                plan = "\n".join(r[0] for r in rows)
+                assert "facts_subject_kind" in plan, plan
+    finally:
+        s.close()

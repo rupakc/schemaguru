@@ -202,3 +202,45 @@ def test_downstream_query_uses_index(store: SQLiteStore) -> None:
     (query,) = [q for q in seen if "lineage_edges" in q]
     plan = " ".join(str(r[-1]) for r in store._q("EXPLAIN QUERY PLAN " + query))
     assert "lineage_edges_upstream" in plan, plan
+
+
+def test_lineage_facts_under_query_uses_the_subject_index(store: SQLiteStore) -> None:
+    """A crawl replaces each re-parsed view's lineage facts: the read is an index range on the
+    view's subject key, never a scan of every lineage fact per view (quadratic at 500k tables:
+    the kind index alone was chosen)."""
+    store.put_facts([_lin(["shop.orders"], Provenance.CATALOG, "view_definition")])
+    # "shop.v$1" sorts inside the range ["shop.v", "shop.v/"): read, then dropped as not v's
+    other = _lin(["shop.orders"], Provenance.CATALOG, "view_definition", subject=tref("v$1"))
+    store.put_facts([other])
+    seen: list[str] = []
+    store._conn.set_trace_callback(seen.append)
+    try:
+        facts = store.lineage_facts_under([tref("v")])
+    finally:
+        store._conn.set_trace_callback(None)
+    assert [f.subject.canonical() for f in facts] == ["shop.v"]
+    queries = [q for q in seen if q.lstrip().upper().startswith("SELECT ID, DATA FROM FACTS")]
+    assert queries
+    for query in queries:
+        plan = " ".join(str(r[-1]) for r in store._q("EXPLAIN QUERY PLAN " + query))
+        assert "facts_subject_kind" in plan, plan
+
+
+def test_reindex_reads_meaning_facts_by_the_subject_index(store: SQLiteStore) -> None:
+    """Rebuilding a table's search document reads its own meaning facts by an index range on
+    its subject key, never every meaning fact in the store (once per crawled table)."""
+    from tests.unit.store.contract import _desc
+
+    store.put_facts([_desc(tref("orders"), "the orders")])
+    seen: list[str] = []
+    store._conn.set_trace_callback(seen.append)
+    try:
+        store.upsert_tables([tbl("orders")])
+    finally:
+        store._conn.set_trace_callback(None)
+    queries = [q for q in seen if "FROM facts" in q and "subject_key >=" in q]
+    assert queries
+    for query in queries:
+        plan = " ".join(str(r[-1]) for r in store._q("EXPLAIN QUERY PLAN " + query))
+        assert "facts_subject_kind" in plan, plan
+    assert [r.table for r, _ in store.search("the orders", 1)] == ["orders"]

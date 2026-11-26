@@ -10,7 +10,7 @@ from schemaguru.catalog.crawl import CrawlReport, crawl
 from schemaguru.catalog.protocol import CatalogReader
 from schemaguru.config import Config
 from schemaguru.diagnostics import Diagnostic, Severity
-from schemaguru.knowledge.diff import Change, diff, subject_key
+from schemaguru.knowledge.diff import Change, diff_split, subject_key
 from schemaguru.knowledge.resolve import resolve
 from schemaguru.knowledge.snapshot import take
 from schemaguru.measure.scheduler import MeasureReport, Scheduler
@@ -227,13 +227,9 @@ def refresh(
 
     # a fact that vanished while its check did not run was not looked at: diff leaves it out of
     # the removals, and it is reported NOT_MEASURED (never "fixed", base spec 15)
-    changes: list[Change] = diff(prev_facts, new_facts, checks_run=store.snapshot_checks_run(snap))
-    kept = {c.before.id for c in changes if c.change == "removed" and c.before is not None}
-    unlooked = [
-        c
-        for c in diff(prev_facts, new_facts)
-        if c.change == "removed" and c.before is not None and c.before.id not in kept
-    ]
+    changes, unlooked = diff_split(
+        prev_facts, new_facts, checks_run=store.snapshot_checks_run(snap)
+    )
     changes += [Change(TABLE_WITHDRAWN, r, None, None, "removed") for r in withdrawn]
     carried = _carried_unmeasured(
         prev_facts,

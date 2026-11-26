@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from schemaguru.knowledge.diff import diff
+from schemaguru.knowledge.diff import diff, diff_split
 from schemaguru.model.facts import Fact, Provenance, Status
 from schemaguru.model.kinds import FactKind
 from schemaguru.model.refs import ObjectRef
@@ -92,3 +92,21 @@ def test_unrun_checks_not_removed() -> None:
         ("NULL_RATE", "value"),
         ("ROW_COUNT", "added"),
     ]
+
+
+def test_diff_split_returns_the_left_out_removals() -> None:
+    """``diff_split``'s second list is exactly the removals ``diff`` reports without
+    ``checks_run`` but leaves out with it (one pass instead of two full diffs)."""
+    nr = _nr(0.1)
+    rows = Fact.make(FactKind.ROW_COUNT, TBL, {"rows": 3}, Provenance.CATALOG, Status.OBSERVED)
+    desc = Fact.make(
+        FactKind.DESCRIPTION, TBL, {"text": "orders"}, Provenance.HUMAN, Status.UNVERIFIED
+    )
+    before = [nr, rows, desc]
+    for ran in (frozenset(), frozenset({"CATALOG"}), frozenset({"NULL_RATE", "CATALOG"})):
+        changes, unlooked = diff_split(before, [rows], checks_run=ran)
+        assert changes == diff(before, [rows], checks_run=ran)
+        kept = {c.before.id for c in changes if c.change == "removed" and c.before}
+        every = [c for c in diff(before, [rows]) if c.change == "removed"]
+        assert unlooked == [c for c in every if c.before and c.before.id not in kept]
+    assert diff_split(before, [], checks_run=None)[1] == []

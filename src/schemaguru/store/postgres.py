@@ -702,19 +702,39 @@ class PostgresStore:
         )
         return [LineageEdge(str(up), str(down), level, str(fid)) for down, up, fid in rows]
 
+    def _under_keys(self, keys: Sequence[str], kinds: Sequence[str]) -> list[tuple[str, str, str]]:
+        """``(key, fact id, data)`` of the ``kinds`` facts whose subject key is in the range
+        ``[key, key + "/")`` of each key, ordered by key then id.
+
+        The range holds a table's own key and its columns' (the table key, a dot, the column;
+        "/" sorts right after "." in the "C" collation), plus keys of tables whose name extends
+        the key with a character below "/": callers check the table. Each key is its own index
+        range with its own bounds, so the planner sees a narrow range: a join against ``unnest``
+        (estimated at a third of the table per key) or a filter over every fact of the kinds
+        read the whole table once per batch, which made a large crawl quadratic."""
+        one = (
+            'SELECT %s::text, id, data FROM facts WHERE subject_key >= %s COLLATE "C" '
+            'AND subject_key < %s COLLATE "C" AND kind = ANY(%s)'
+        )
+        rows: list[tuple[str, str, str]] = []
+        for i in range(0, len(keys), 200):
+            chunk = keys[i : i + 200]
+            params: list[Any] = []
+            for k in chunk:
+                params += [k, k, k + "/", list(kinds)]
+            rows.extend(
+                (str(k), str(fid), str(data))
+                for k, fid, data in self._q(" UNION ALL ".join([one] * len(chunk)), params)
+            )
+        return sorted(rows, key=lambda r: (r[0], r[1]))
+
     def lineage_facts_under(self, tables: Sequence[ObjectRef]) -> list[Fact]:
         wanted = {t.table_ref() for t in tables}
         if not wanted:
             return []
         keys = sorted(t.canonical() for t in wanted)
-        # starts_with compares bytes, so the prefix test does not depend on the collation
-        rows = self._q(
-            "SELECT data FROM facts WHERE kind = ANY(%s) AND (subject_key = ANY(%s) OR "
-            "EXISTS (SELECT 1 FROM unnest(%s::text[]) AS p(k) "
-            "WHERE starts_with(facts.subject_key, p.k || '.'))) ORDER BY id",
-            [sorted(LINEAGE_KINDS), keys, keys],
-        )
-        facts = [Fact.from_dict(json.loads(r[0])) for r in rows]
+        found = {fid: data for _, fid, data in self._under_keys(keys, sorted(LINEAGE_KINDS))}
+        facts = [Fact.from_dict(json.loads(found[i])) for i in sorted(found)]
         return [
             f for f in facts if isinstance(f.subject, ObjectRef) and f.subject.table_ref() in wanted
         ]
@@ -863,15 +883,17 @@ class PostgresStore:
             cols.setdefault(ref, []).append(cdata)
         meaning: dict[str, list[str]] = {}
         # table-level and column-level meaning facts (column keys extend the table key by ".col")
-        for key, fdata in self._q(
-            "SELECT k.key, f.data FROM unnest(%s::text[]) AS k(key) JOIN facts f "
-            "ON f.subject_key >= k.key COLLATE \"C\" AND f.subject_key < (k.key || '/') "
-            'COLLATE "C" WHERE f.kind = ANY(%s) ORDER BY k.key, f.id',
-            (list(tables), list(MEANING_KINDS)),
-        ):
+        for key, _, fdata in self._under_keys(sorted(tables), sorted(MEANING_KINDS)):
             meaning.setdefault(key, []).append(fdata)
         terms: dict[str, list[str]] = {}  # glossary terms by the tables they map to
-        for (fdata,) in self._q("SELECT data FROM facts WHERE kind = %s ORDER BY id", (GLOSSARY,)):
+        # prefiltered on the page's table names in the term's JSON text (as SQLite does): a
+        # crawl reindexes page by page and must not read every term for every page
+        names = sorted({_dumps(json.loads(t)["ref"]["table"])[1:-1] for t in tables.values()})
+        for (fdata,) in self._q(
+            "SELECT data FROM facts WHERE kind = %s AND EXISTS (SELECT 1 FROM "
+            "unnest(%s::text[]) AS n(name) WHERE strpos(data, n.name) > 0) ORDER BY id",
+            (GLOSSARY, names),
+        ):
             g = json.loads(fdata)
             term = g["value"].get("term")
             if not isinstance(term, str):

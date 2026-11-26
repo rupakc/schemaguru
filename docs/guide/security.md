@@ -83,6 +83,14 @@ to those tables.
 
 ## Known limits
 
+- On hosts that take SQL text only (`execute(sql)`), for the backtick dialects (MySQL, BigQuery,
+  Databricks) a probe whose identifier contains `#`, `//` or `--` is refused (`SG104`), because
+  some of those dialects read them as comments. The metadata guard likewise refuses PostgreSQL's
+  `#>` / `#` operators and DuckDB's `//` operator in code; no shipped traffic sends them.
+- View definitions are read for [lineage](lineage.md) through the same metadata guard (catalog
+  views only, never a data table). The raw text stays in memory while it is parsed; the store keeps
+  a sha256 and a literal-free template, and nothing raw is logged, rendered, put in a diagnostic
+  or sent to an LLM.
 - The metadata guard refuses a `;` inside a backtick identifier (`` `a;b` ``), as FactLang's
   own metadata guard does: where backticks are not identifier quotes (Postgres, the ANSI
   default) that `;` separates statements. Plain backtick and bracket identifiers

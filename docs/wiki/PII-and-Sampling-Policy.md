@@ -159,6 +159,8 @@ Values are masked at every point where they could leave:
 6. **In every agent tool result.** Text and structured fields alike go through the policy of the
    tables they touch, then the sweep.
 
+View definitions read for [[Lineage]] are not values and never reach a model: the raw SQL is parsed in memory only, and the store keeps a sha256 and a template with every literal replaced by a placeholder.
+
 ## Practical advice
 
 - Leave the default (`masked`) on, and opt specific *tables* into `raw` when their values help the

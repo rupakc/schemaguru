@@ -112,6 +112,9 @@ environment in any form, set it to `none` — or keep it out of the crawl with a
 
 ## Known limits
 
+View definitions read for [lineage](lineage.md) are not values and never reach a model: the raw SQL
+is parsed in memory, and only a sha256 and a literal-free template are kept.
+
 Masking trades precision for recall: when a rule cannot tell a personal value from an ordinary
 one, it masks. What that means in practice:
 

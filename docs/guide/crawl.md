@@ -72,7 +72,11 @@ Known limits: the BigQuery incremental listing misses schema-only changes (a col
 without the table's `last_altered` moving), so run a periodic full crawl
 (`schemaguru.catalog.crawl(guru.reader, guru.store, incremental=False)`); Redshift has no
 incremental listing.
-Per-warehouse permissions and cost notes are in the project wiki's warehouse guides.
+Every shipped reader also implements `view_definitions` (`ReaderCapabilities.view_definitions`):
+the crawl reads each view's SQL from the engine's metadata views and parses it into
+[lineage](lineage.md) (needs the `lineage` extra; `CrawlReport.views_parsed` counts them and
+`lineage_diagnostics` carries `SG211`/`SG212`). A custom reader that lacks the method is never
+asked. Per-warehouse permissions and cost notes are in the project wiki's warehouse guides.
 
 A warehouse that is not listed needs a [custom reader](../extending/catalog-reader.md).
 

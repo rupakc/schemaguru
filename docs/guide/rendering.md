@@ -51,7 +51,10 @@ Different agents need different shapes. Four profiles ship (`profile=`); the set
 
 === "verifier"
 
-    Keyed, parseable lines (`COLUMNS`, `VALUES`, `JOIN`, `PK`, …) for a checker model.
+    Keyed, parseable lines (`COLUMNS`, `VALUES`, `JOIN`, `PK`, …) for a checker model. A table with
+    [lineage](lineage.md) may carry several `LINEAGE` lines, one per distinct link:
+    `LINEAGE <table> <- <ref>[, <ref>…]`, and `COLUMN_LINEAGE <table>.<column> <- <ref>[, <ref>…]
+    <transform>`. A ref the store does not hold is written `name(unresolved)`, with no space.
 
     ```text
     --8<-- "generated/profile_verifier.txt"
@@ -64,6 +67,10 @@ Different agents need different shapes. Four profiles ship (`profile=`); the set
     ```text
     --8<-- "generated/profile_router.txt"
     ```
+
+Lineage appears in two of them: the `agent` profile adds `Built from: …` under the description and
+`← input (transform)` after a column; `planner` carries the table-level line only; `router` is
+unchanged. Every lineage line says it is declared or parsed and unverified ([details](lineage.md#what-agents-see)).
 
 (Each is `guru.context("refund rate by month", profile=..., budget_tokens=1200)` on the
 measured shop with its overlay.)

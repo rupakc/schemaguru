@@ -25,6 +25,10 @@ statistics), facts (numbers, masked observed values, shape tokens, evidence with
 records (table, column, failure class and a count; **never the SQL text**). Drafting payloads
 are not stored. See [[Store]].
 
+View definitions (read for [[Lineage]]) are held in memory only while parsed; the store keeps a sha256 and a literal-free template, and nothing raw is logged, rendered, put in a diagnostic or sent to an LLM.
+
+Two guard limits to know: on hosts that take SQL text only, for the backtick dialects (MySQL, BigQuery, Databricks), a probe whose identifier contains `#`, `//` or `--` is refused (`SG104`); and the metadata guard refuses PostgreSQL's `#>` / `#` operators and DuckDB's `//` in code (no shipped traffic sends them).
+
 ## Where values are masked
 
 At storage, in evidence, in error messages, in rendered views (a final sweep in every profile),

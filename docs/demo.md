@@ -27,3 +27,11 @@ What you are looking at:
 * **Before and after** compares the common "paste the schema" prompt with the scoped view.
 
 Run the same thing locally: `python examples/duckdb_quickstart.py`.
+
+A note on the demo's graph: the shop fixture is built in DuckDB with primary keys only (its
+`_create` emits no `FOREIGN KEY` clauses), because its data is deliberately dirty (20 orphan
+customer keys, a broken child table) and an enforced foreign key would reject those rows. So the
+export has no *declared* edges, only measured ones: the explorer shows a coincidental
+primary-key-to-primary-key `child_id` join between `broken_child` and `ref_child`, and lacks the
+intended `parent_id` to `id` edges into `ref_parent`. This is an artefact of the fixture, not of SchemaGuru: a warehouse with
+declared foreign keys contributes them as declared edges.

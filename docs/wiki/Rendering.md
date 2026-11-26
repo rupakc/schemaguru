@@ -104,8 +104,10 @@ NULL: a dead-column warning).
 |---|---|---|
 | `agent` (default) | an agent that writes SQL | the full block above |
 | `planner` | a planning step | tables, use cases, keys and join targets, few columns, plus join paths |
-| `verifier` | a checking step or a parser | keyed lines: `TABLE`, `WARN`, `PITFALL`, `ROWS`, `PK`, `COLUMNS`, `VALUES`, `JOIN`, `NULLS`, `DISTINCT`, `TYPE`... |
+| `verifier` | a checking step or a parser | keyed lines: `TABLE`, `WARN`, `PITFALL`, `ROWS`, `PK`, `COLUMNS`, `VALUES`, `JOIN`, `NULLS`, `DISTINCT`, `TYPE`... and, for a table with [[Lineage]], `LINEAGE` / `COLUMN_LINEAGE` lines |
 | `router` | classifying a question | one line per table: name and description |
+
+A table with lineage shows `Built from: <ref>, <ref> · <source> · unverified` in the `agent` and `planner` views, and `← <input> (<transform>)` after a column in the `agent` view. In the `verifier` view the lines are keyed, one per distinct link (a table can carry several `LINEAGE` lines): `LINEAGE <table> <- <ref>[, <ref>…]` and `COLUMN_LINEAGE <table>.<column> <- <ref>[, <ref>…] <transform>`, where an unresolved ref is written `name(unresolved)` with no space.
 
 Choose one with `guru.context(q, profile="planner")` or `schemaguru context "..." --profile
 planner`. Real `router` output for "revenue by customer segment from paid orders":

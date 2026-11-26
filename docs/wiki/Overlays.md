@@ -173,13 +173,6 @@ fact kind (`SG208`) and a subject glob that matches the store (`SG203`, warning)
 load: fix the entry and reload. Joins in an overlay are declarations; measured numbers come only
 from measurement.
 
-## See also
-
-- [[Waypoint-Rules]] - the `waypoints` and `chains` sections
-- [[Concepts]] - why HUMAN beats DRAFTED and expectations are never replaced
-- [[Drafting]] - accepting LLM drafts into overlays
-- [[CLI]] - `init`, `lint`, `import-dbt`, `accept`
-
 ### Lineage
 
 ```yaml
@@ -197,3 +190,13 @@ lineage:
 A human entry replaces the parsed links of its subject and level; `ignore: true` hides them (all of
 them without a list, only an exactly equal list with one). Hidden facts stay in the store. An ignore
 that matches no parsed link is `SG213`.
+
+Where lineage comes from and what agents see: [[Lineage]].
+
+## See also
+
+- [[Waypoint-Rules]] - the `waypoints` and `chains` sections
+- [[Concepts]] - why HUMAN beats DRAFTED and expectations are never replaced
+- [[Drafting]] - accepting LLM drafts into overlays
+- [[CLI]] - `init`, `lint`, `import-dbt`, `accept`
+- [[Lineage]] - where lineage comes from, what agents see

@@ -74,6 +74,8 @@ the same hash on both sides of a join so the same keys are kept. [[Sampling]]
 
 **Ledger.** The store's record of every byte, token and query spent. [[Store]]
 
+**Lineage.** What a table or column is built from or feeds, from dbt, view definitions or overlays: `LINEAGE` (table) and `COLUMN_LINEAGE` (column) facts, always unverified and never a join path. [[Lineage]]
+
 **Match rate.** The forward direction of a join: the share of distinct child keys found in the
 parent. [[Measurement]]
 

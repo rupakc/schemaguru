@@ -119,8 +119,11 @@ pip install 'schemaguru[duckdb]'  # plus a warehouse driver (one extra per wareh
 | `clickhouse` | clickhouse-connect | `openai-agents` | OpenAI Agents SDK tools |
 | `mssql` | pyodbc (SQL Server, Synapse) | `embeddings` | numpy (embedding retriever) |
 | `oracle` | oracledb | `tiktoken` | tiktoken token counter |
-| `trino` | trino | `postgres-store` | Postgres knowledge store |
+| `trino` | trino | `postgres-store` | Postgres knowledge store (PostgreSQL 11+) |
 | `mysql` | PyMySQL (MySQL, MariaDB) | `all` | everything above |
+
+The `lineage` extra (`pip install 'schemaguru[lineage]'`, sqlglot) is what reads lineage out of view
+definitions and dbt SQL; see [Lineage](guide/lineage.md).
 
 The readers for PostgreSQL, MySQL, ClickHouse, SQL Server, Trino and DuckDB are tested
 against real engines in CI. The BigQuery, Snowflake, Redshift, Databricks and Oracle readers

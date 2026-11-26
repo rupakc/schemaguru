@@ -36,7 +36,7 @@ mypy --strict src
 |---|---|---|
 | 0 | `__about__`, `errors`, `diagnostics`, `_util/` | version, exception base, `Diagnostic`, stdlib helpers |
 | 1 | `model/` | `ObjectRef`, `Fact`, `FactKind`, `Status`, `JoinRef`, `Chain`, `Evidence` |
-| 2 | `store/`, `config.py` | `Store` protocol, SQLite / Postgres stores, migrations; `GuruConfig` |
+| 2 | `store/`, `config.py`, `lineage/` | `Store` protocol, SQLite / Postgres stores, migrations; `GuruConfig`; SQL lineage parsing (optional `sqlglot`, worker process; no store or catalog imports) |
 | 3 | `catalog/`, `pii/`, `overlays/` | catalog readers + crawl; shape detectors, masking, policy; human YAML overlays |
 | 4 | `measure/`, `knowledge/` | probe planner, budget, scheduler (FactLang seam); resolve, snapshot, diff |
 | 5 | `graph/`, `draft/` | edges, cost, path search, hub guard; LLM drafting pipeline + providers |

@@ -6,9 +6,88 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - UNRELEASED
+
+### Added
+- **Lineage** ([guide](docs/guide/lineage.md)): two fact kinds, `LINEAGE` (table) and
+  `COLUMN_LINEAGE` (column), always `UNVERIFIED`, from three sources: dbt manifests
+  (`depends_on`, and `compiled_code` for columns), view definitions read by the crawl, and
+  human overlays (`lineage:` entries with `upstream`, `inputs`, `transform` and `ignore`; a human
+  entry beats a parsed link). Parsing needs the new `lineage` extra (`pip install
+  'schemaguru[lineage]'`, sqlglot) and runs in a reused worker process with limits (definitions
+  over 1,000,000 characters are skipped, 5 s per parser request). Only a sha256 and a
+  literal-free template of a definition are stored.
+- **The `lineage` tool** in Python (`guru.lineage(ref, direction, depth, level)` returning a
+  `LineageResult`, async twin `alineage`), the CLI (`schemaguru lineage`), the HTTP server
+  (`GET /lineage`) and MCP / framework adapters (through `guru.tools()`). The `agent`, `planner`
+  and `verifier` views carry lineage lines. It is never a join path and never verified.
+- **`view_definitions`** on `CatalogReader` (`ReaderCapabilities.view_definitions`), implemented
+  by all eleven shipped readers from metadata views only; a custom reader without it is unchanged.
+- New diagnostics `SG211` to `SG215` and `SG705`; store migrations for the lineage index
+  (SQLite 3, Postgres 2) that apply on open.
+- **Scale benchmark** at 500,000 tables and 25,000,000 columns: harness in `benchmarks/`, committed
+  results `benchmarks/results/0.2.0.json`, a nightly regression workflow, and the
+  [Scale page](docs/guide/scale.md).
+
 ### Changed
-- Requires FactLang 0.1.4; Databricks inline timestamps are accepted (FactLang now spells them
-  with an explicit UTC zone).
+- Requires FactLang 0.1.4 (`factlang>=0.1.4,<0.2`); Databricks inline timestamps are accepted
+  (FactLang now spells them with an explicit UTC zone).
+- The Postgres store requires PostgreSQL 11 or later.
+- Bottlenecks the scale run found were fixed (crawl, join index, search, path search); see the
+  Scale page for what moved.
+
+### Fixed
+
+One line per area of the 0.2.0 hardening ledger
+(`docs/specs/2026-11-25-schemaguru-0.2.0-hardening-ledger.md`, which lists every item and its test).
+- **PII masking:** comma-joined (`Garcia,Maria`), initial-plus-surname, lower-case, cued unlisted
+  and possessive-surname names, addresses inside sentences, credentials glued to word characters,
+  and `password: varchar(255)` kept; the `<secret>` and `<address>` tokens are documented.
+- **Guards and inline hosts:** a file path in any `FROM` item, more file extensions, fullwidth
+  separators and look-alike quotes are refused; a raising `tzinfo` is `SG109`.
+- **Crawl and measurement:** resume re-checks the scope hash and crawls schemas created before the
+  cursor; temp-dir cleanup; scheduler crash and queue handling; budget refill and fused-probe
+  charging; sampled cardinality no longer reads as 1:1; no id-to-id join candidates.
+- **Readers:** Postgres `NOT VALID` foreign keys and unique indexes, Oracle partition and
+  materialized-view comments, Snowflake clustering and `SHOW` caps, BigQuery pseudo-columns,
+  cross-project storage and full-key foreign-key joins, Redshift per-page schema reads.
+- **Model, store and knowledge:** a stored fact id is verified on load; nested transactions use
+  savepoints; search index rebuilds and read-only warnings; one JSON encoder; unknown-age and
+  estimated facts go stale correctly; `diff` takes `checks_run`.
+- **Overlays and rules:** waivers and duplicate keys validated, glossary `maps_to` takes tables
+  only, `facts_to_overlay` names what it cannot write, changed joins replace rather than
+  duplicate, atomic writes keep their mode, dbt unique counts and capped rule requirements.
+- **Graph and search:** the shared graph's memo is thread-safe, hop-limit refusals are named, and
+  a via-success search does bounded work.
+- **Docs, CI and tests:** the BigQuery region default is documented, wiki-facts and layer-walker
+  negative controls run on real pages and trees, and the denylist job fails on `main` without its
+  secret.
+- **Connectors:** `check_fact` honours the claim cap; the inline-connector docstring names the
+  zone-explicit forms.
+
+### Known limits
+- **`guru.context` is slow at 500,000 tables: p95 28.6 s (p50 9.3 s) against the 200 ms target,
+  which is not met.** 87% of a call is the join-path search's exact lower bound; meeting the target
+  needs an architecture change (precomputed distance bounds, or a hazard scan that does not search
+  every candidate pair). At 2,000 tables p95 is 119 ms and at 20,000 tables 1.5 s. Join-path search
+  p95 is 1.2 s at 500,000 tables. See the [Scale page](docs/guide/scale.md). The benchmark's join
+  facts are synthetic.
+- Lineage: never a join path and never verified; an unaliased computed output has no column
+  lineage; a join written in parentheses as the whole `FROM` (DuckDB's stored-view form) gives
+  `unknown` columns; the parser worker's 1 GiB cap is Linux only; a deleted `JOIN` edge can stay in
+  the cached graph until the snapshot, generation or date changes
+  ([details](docs/guide/lineage.md#limits)).
+- Masking trades precision for recall ([PII guide](docs/guide/pii.md#known-limits)): a `00`-prefixed
+  digit string is masked as a phone, a four-part version as an IP address, a place or brand name
+  that shares a word with the name list as a name, and a hex segment of a path as a secret.
+- Guard ([Security](docs/guide/security.md#known-limits)): a `;` inside a backtick identifier is
+  refused by the metadata guard; on SQL-text-only hosts for backtick dialects a probe identifier
+  containing `#`, `//` or `--` is refused (`SG104`); `literal_refusal` stays a public name.
+- Overlays ([guide](docs/guide/overlays.md#known-limits)): a join entry carries only the
+  cardinality you vouch for, and a malformed entry's previous facts are retracted on the next
+  load.
+- The shop demo's fixture declares no foreign keys in DuckDB, so the site demo shows a coincidental
+  key-to-key join instead of the declared edges ([demo](docs/demo.md)).
 
 ## [0.1.1] - 2026-11-25
 

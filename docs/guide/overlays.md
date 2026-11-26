@@ -122,6 +122,8 @@ but can never apply). Glossary `maps_to` takes tables only; a column is `SG203`.
 
 ## Lineage entries
 
+Where lineage comes from, what agents see and its limits: [Lineage](lineage.md).
+
 ```yaml
 lineage:
   - table: analytics.revenue_daily

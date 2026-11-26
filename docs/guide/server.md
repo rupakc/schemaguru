@@ -20,7 +20,7 @@ schemaguru --store postgresql://sg@db/knowledge --url "$WAREHOUSE_URL" serve --p
 | `GET /search?q=&k=` | `search_tables` | reader |
 | `GET /tables/{ref}` | `describe_table` | reader |
 | `GET /paths?from=&to=` | `find_join_path` | reader |
-| `GET /lineage?ref=&direction=&depth=&level=` | `lineage` | reader |
+| `GET /lineage?ref=&direction=&depth=&level=` | `lineage` ([guide](lineage.md)); a custom store without the lineage index answers `SG705` (HTTP 501) | reader |
 | `GET /facts?subject=&kind=` | stored facts of one subject, masked by the tool surface's value policy | reader |
 | `POST /refresh` | `Guru.refresh` (JSON `label`), one at a time | admin |
 | `/mcp` | MCP over streamable HTTP (the same tools and `schema://tables/{ref}` resources as `schemaguru mcp`; JSON responses, stateful sessions); `501` (`SG812`) without the `mcp` extra | reader |
@@ -48,7 +48,7 @@ serve(guru, host="0.0.0.0", port=8080, tokens={"a-long-admin-token-123": "admin"
 
 ## Sharing a store
 
-`--store postgres://…` (extra `postgres-store`) opens a `PostgresStore`: the same schema as
+`--store postgres://…` (extra `postgres-store`; PostgreSQL 11 or later) opens a `PostgresStore`: the same schema as
 the SQLite store, with weighted `tsvector` full-text search. Several replicas can share it;
 refresh holds a Postgres advisory lock (`pg_try_advisory_lock`), so only one replica
 refreshes at a time and the others get `409`. With a SQLite store a process lock does the

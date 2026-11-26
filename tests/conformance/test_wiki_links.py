@@ -36,6 +36,7 @@ REQUIRED = frozenset(
         "Drafting",
         "PII-and-Sampling-Policy",
         "Overlays",
+        "Lineage",
         "Scoping",
         "Rendering",
         "Refresh-and-Drift",

@@ -28,7 +28,7 @@ pip install schemaguru            # core: FactLang + PyYAML
 pip install 'schemaguru[duckdb]'  # plus a warehouse driver (one extra per warehouse)
 ```
 
-Python 3.10 to 3.13. Every warehouse driver, LLM provider and agent framework is an optional
+Python 3.10 to 3.13 (the Postgres store needs PostgreSQL 11 or later). Every warehouse driver, LLM provider and agent framework is an optional
 extra:
 
 | Extra | Adds | Extra | Adds |
@@ -42,7 +42,7 @@ extra:
 | `clickhouse` | clickhouse-connect | `openai-agents` | OpenAI Agents SDK tools |
 | `mssql` | pyodbc (SQL Server, Synapse) | `embeddings` | numpy (embedding retriever) |
 | `oracle` | oracledb | `tiktoken` | tiktoken token counter |
-| `trino` | trino | `postgres-store` | Postgres knowledge store (teams, server) |
+| `trino` | trino | `postgres-store` | Postgres knowledge store (teams, server; PostgreSQL 11+) |
 | `mysql` | PyMySQL (MySQL, MariaDB) | `all` | everything above |
 
 ## Quickstart
@@ -78,6 +78,17 @@ Other warehouses connect by URL (`snowflake://…`, `postgresql://…`) or throu
 connection a host already holds: `sg.Guru(connector=conn)` accepts a DB-API connection, a
 SQLAlchemy engine, a BigQuery client or a plain `execute(sql)` function.
 
+### Lineage
+
+```python
+guru.import_dbt("target/manifest.json")   # or just crawl: view definitions are parsed too
+print(guru.handle_tool_call("lineage", {"ref": "analytics.revenue_daily", "depth": 2})["text"])
+```
+
+What a table or column is built from (or feeds, with `"direction": "downstream"`), declared or
+parsed and never measured or verified, and never a join path. Parsing SQL needs
+`pip install 'schemaguru[lineage]'`; see the [lineage guide](https://rupakc.github.io/schemaguru/guide/lineage/).
+
 ## Features
 
 | Feature | What it does |
@@ -85,12 +96,18 @@ SQLAlchemy engine, a BigQuery client or a plain `execute(sql)` function.
 | **Catalog crawl** | metadata only; paged, resumable and incremental; include/exclude globs; billed metadata bytes reported and capped (`Budget.crawl_bytes`) |
 | **Measurement** | join match in both directions, fan-out, uniqueness, null rates, observed enum values, freshness; every number carries its method and date; budgeted per probe and per period; large tables sampled by key hash and labelled `ESTIMATED`, never cut with `LIMIT` |
 | **Join graph** | measured and declared edges; path search returns thin joins labelled and refuses broken ones and row-multiplying hub pivots |
+| **Lineage** | table and column lineage from dbt manifests, view definitions (parsed in a limited worker process; only a hash and a literal-free template are stored) and overlays; the `lineage` tool for agents; declared or parsed, never a join path |
 | **Human overlays** | reviewable YAML for descriptions, enums, soft-delete rules, join recipes and waivers; humans always win over drafts; dbt manifests import |
 | **LLM drafting** | optional descriptions and pitfalls from Anthropic or OpenAI-compatible models, checked against measured facts and accepted through review |
 | **Scoped views** | a question-scoped, token-budgeted view per agent role, as text, Markdown or JSON; byte-deterministic, with fingerprints for prompt-drift checks in CI |
 | **Agent surface** | JSON tool specs and a dispatcher; an MCP server over stdio and streamable HTTP; LangChain, LlamaIndex, OpenAI Agents and Anthropic adapters |
 | **Refresh and drift** | re-crawl, re-measure, diff against the previous snapshot and classify each change; exit codes for CI |
 | **Server** | optional HTTP service over a shared Postgres store, with bearer tokens and one refresh at a time across replicas |
+
+At 500,000 tables and 25,000,000 columns a full crawl takes about 9.4 minutes in 63 MiB, but
+`context` is slow there: p95 28.6 s against a 200 ms target, which is **not met** (the cost is
+the join-path search). Numbers, machine and reasons: the
+[Scale page](https://rupakc.github.io/schemaguru/guide/scale/).
 
 Every statement carries its provenance (*catalog*, *declared*, *measured*, *drafted* or
 *human*). Unknown is shown as unknown, never as 0 or 100%.

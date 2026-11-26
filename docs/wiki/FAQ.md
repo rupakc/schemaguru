@@ -93,6 +93,10 @@ Yes, optionally: `schemaguru serve` (extra `server`) exposes the same operations
 bearer tokens, and replicas can share a Postgres store ([[Server]]). You do not need it: the
 library and the stdio MCP server (`schemaguru mcp`, [[Agent-Integration]]) work without one.
 
+### Does SchemaGuru know what a view is built from?
+
+Yes, as [[Lineage]]: from dbt manifests, view definitions (the crawl parses them; needs `pip install 'schemaguru[lineage]'`) and overlays. It is declared or parsed, never measured, and never a join path, so do not join two tables just because they share a source.
+
 ### Which Python versions?
 
 3.10 to 3.13, on Linux, macOS and Windows (all tested in CI).

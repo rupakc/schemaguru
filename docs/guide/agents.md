@@ -21,6 +21,8 @@ through the same value policy.
 | `explain_term` | a glossary term or metric and the tables it maps to |
 | `lineage` | what a table or column is built from (upstream) or feeds (downstream), from dbt manifests, view definitions and overlays; declared or parsed, never measured, never a join path. `nodes`, `edges` (each with `source` and `transform`), `cycles`, and `truncated` at 200 nodes |
 
+The `lineage` tool takes `ref`, `direction` (`upstream` or `downstream`), `depth` (1 to 5) and `level`; see [Lineage](lineage.md#what-agents-see).
+
 ```python
 import schemaguru as sg
 

@@ -20,7 +20,7 @@ Properties:
   Concurrent readers in the same process are safe; measurement writes go through the same
   connection.
 - **Full-text search** with SQLite FTS5 (BM25 over table name tokens, column names, comments,
-  descriptions, use cases and the glossary terms mapped to the table). If your Python's SQLite
+  descriptions, use cases and the glossary terms mapped to the table; only the glossary `term` is indexed, never its definition). If your Python's SQLite
   lacks FTS5, search falls back to a slower `LIKE` scan and diagnostic `SG701` is recorded.
   `schemaguru doctor` tells you which you have. The store remembers which of the two last wrote
   its index and rebuilds the index when that changes; a read-only store whose index is empty
@@ -106,7 +106,7 @@ processes can share one store:
   Agents and HTTP clients see only a fixed message, never the store's host, database or driver
   text.
 
-It is tested against a real PostgreSQL 16 server in the CI integration job, and both stores pass
+It needs **PostgreSQL 11 or later** (it uses `starts_with` and reads a unique index's key columns). It is tested against a real PostgreSQL 16 server in the CI integration job, and both stores pass
 one shared contract suite
 ([`tests/unit/store/contract.py`](https://github.com/rupakc/schemaguru/blob/main/tests/unit/store/contract.py)).
 

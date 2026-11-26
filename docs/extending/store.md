@@ -5,7 +5,7 @@ checkpoint, the budget ledger and the feedback queue. Two backends ship:
 
 * `SQLiteStore(path)` — the default; one file, WAL mode, FTS5 search (a `LIKE` fallback with
   `SG701` where FTS5 is missing).
-* `PostgresStore(dsn, schema=None)` (extra `postgres-store`) — the same schema, weighted
+* `PostgresStore(dsn, schema=None)` (extra `postgres-store`; needs PostgreSQL 11 or later) — the same schema, weighted
   `tsvector` search; for teams and [server mode](../guide/server.md).
 
 Migrations are numbered SQL files applied on open; a store written by a newer schema

@@ -36,6 +36,7 @@ measurement (see [[Measurement]]).
 | connect your warehouse | the `Warehouse-*` guides in the sidebar, then [[Catalog-and-Crawl]] |
 | plug it into an agent | [[Agent-Integration]] |
 | correct or add knowledge by hand | [[Overlays]] |
+| see what a table is built from | [[Lineage]] |
 | run it from a shell or CI | [[CLI]], [[Refresh-and-Drift]] |
 | tune it | [[Configuration]], [[Scale-and-Cost]] |
 | add a warehouse, store, detector... | the `Extending-*` pages |
@@ -43,7 +44,7 @@ measurement (see [[Measurement]]).
 
 ## Status of this release
 
-SchemaGuru is at version 0.1.0 (alpha). Everything described in this wiki exists on `main`
+SchemaGuru is at version 0.2.0 (in development, alpha). Everything described in this wiki exists on `main`
 unless the page says otherwise. Two things matter for what you can do today:
 
 - **Measurement needs FactLang.** SchemaGuru never writes measurement SQL itself; every number

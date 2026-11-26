@@ -11,7 +11,7 @@ as a whole (glossary terms, metrics):
 
 | Field | Meaning |
 |---|---|
-| `kind` | what is stated: `ROW_COUNT`, `NULL_RATE`, `DISTINCT`, `VALUES`, `JOIN`, `PRIMARY_KEY`, `FRESHNESS`, `TYPE_NOTE`, `SOFT_DELETE`, `PII`, `DESCRIPTION`, `USE_CASES`, `ENTITY_TYPE`, `PITFALL`, `GLOSSARY`, `METRIC`, `NEVER_QUERY`, `WAYPOINT_RULE` (an open registry: [add your own](../extending/fact-kind.md)) |
+| `kind` | what is stated: `ROW_COUNT`, `NULL_RATE`, `DISTINCT`, `VALUES`, `JOIN`, `PRIMARY_KEY`, `FRESHNESS`, `TYPE_NOTE`, `SOFT_DELETE`, `PII`, `DESCRIPTION`, `USE_CASES`, `ENTITY_TYPE`, `PITFALL`, `GLOSSARY`, `METRIC`, `NEVER_QUERY`, `WAYPOINT_RULE`, `LINEAGE`, `COLUMN_LINEAGE` (an open registry: [add your own](../extending/fact-kind.md)) |
 | `value` | the kind's payload; a field that is not known is `None`, never a default |
 | `provenance` | where it came from (below) |
 | `status` | how far it is established (below) |

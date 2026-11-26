@@ -97,6 +97,7 @@ nav:
       - Drafting with an LLM: guide/drafting.md
       - PII and value masking: guide/pii.md
       - Overlays (human YAML): guide/overlays.md
+      - Lineage: guide/lineage.md
       - Scoping: guide/scoping.md
       - Rendering views: guide/rendering.md
       - Refresh and drift: guide/refresh.md

@@ -108,6 +108,7 @@ Rules every reader follows:
 - **Read-only, checked.** Every metadata statement passes `check_metadata_sql` first: a single
   `SELECT`/`WITH`/`SHOW`/`DESCRIBE`, no `;`, no comments, no DML/DDL keyword, judged under
   several quoting conventions. A violation is `SG104`.
+- **View definitions for lineage.** Every shipped reader also implements `view_definitions` (reported in `ReaderCapabilities.view_definitions`), from the same metadata views and under the same guard. The crawl parses each view's SQL into [[Lineage]] (needs the `lineage` extra); a custom reader without the method is never asked.
 - **Unknown is `None`.** A row count the warehouse does not report stays `None`; it is never 0.
 
 ## Connecting

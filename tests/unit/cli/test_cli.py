@@ -103,6 +103,22 @@ def test_crawl(run: Run, url: str, store: str) -> None:
     assert Path(store).exists()
 
 
+def test_crawl_prints_lineage_diagnostics(
+    run: Run, url: str, store: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib
+
+    monkeypatch.setattr(
+        importlib.import_module("schemaguru.catalog.crawl"), "lineage_available", lambda: False
+    )
+    code, out, err = run("crawl", "--url", url, "--store", store, "--format", "json")
+    assert code == 0, err  # a lineage diagnostic is not a failed crawl
+    data = jloads(out)
+    assert data["views_parsed"] == 0
+    assert [d["code"] for d in data["lineage_diagnostics"]] == ["SG212"]
+    assert "SG212" in err
+
+
 def test_crawl_include_exclude(run: Run, url: str, store: str) -> None:
     code, out, _ = run(
         "crawl", "--url", url, "--store", store, "--include", "shop.orders", "--format", "json"

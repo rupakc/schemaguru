@@ -352,13 +352,17 @@ def crawl(args: argparse.Namespace, io: IO) -> int:
         "bytes_billed": r.bytes_billed,
         "duration_s": round(r.duration_s, 3),
         "errors": [d.to_dict() for d in r.errors],
+        "views_parsed": r.views_parsed,
+        "lineage_diagnostics": [d.to_dict() for d in r.lineage_diagnostics],
     }
     lines = [
         f"tables seen {r.tables_seen}, written {r.tables_written}, withdrawn {r.withdrawn}",
         f"{r.queries} catalog queries in {r.duration_s:.1f}s",
     ]
+    if r.views_parsed:
+        lines.append(f"{r.views_parsed} view definition(s) parsed into lineage")
     io.emit(data, lines, title="Crawl")
-    io.diagnostics(r.errors)
+    io.diagnostics([*r.errors, *r.lineage_diagnostics])
     return 3 if r.errors else 0
 
 

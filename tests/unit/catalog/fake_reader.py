@@ -123,3 +123,92 @@ class FakeReader:
             constraints=self.with_constraints,
             incremental=self.incremental,
         )
+
+
+class ViewFakeReader:
+    """Named tables and views (dialect ``duckdb``) with view definitions.
+
+    ``relations`` maps ``"schema.name"`` to column names; ``views`` maps some of those keys to
+    their definition. Mutate ``relations`` / ``views`` / ``altered`` between crawls.
+    """
+
+    dialect = "duckdb"
+
+    def __init__(
+        self,
+        relations: Mapping[str, Sequence[str]],
+        views: Mapping[str, str] | None = None,
+        *,
+        incremental: bool = False,
+        definitions: bool = True,
+        fail_definitions: bool = False,
+        interrupt_schema: str | None = None,
+    ) -> None:
+        self.relations = dict(relations)
+        self.views = dict(views or {})
+        self.incremental = incremental
+        self.definitions = definitions
+        self.fail_definitions = fail_definitions
+        self.interrupt_schema = interrupt_schema
+        self.altered: dict[str, datetime] = {k: BASE for k in self.relations}
+        self.definition_calls: list[list[str]] = []
+
+    @staticmethod
+    def _ref(key: str) -> ObjectRef:
+        schema, _, name = key.partition(".")
+        return ObjectRef(None, schema, name)
+
+    def list_catalogs(self) -> Iterator[str]:
+        return iter(())
+
+    def list_schemas(self, catalog: str | None, *, page_token: str | None) -> Page[Schema]:
+        names = sorted({k.partition(".")[0] for k in self.relations})
+        return Page([Schema(None, n) for n in names], None)
+
+    def list_tables(
+        self, schema: Schema, *, page_token: str | None, changed_since: datetime | None
+    ) -> Page[Table]:
+        if self.interrupt_schema == schema.name:
+            self.interrupt_schema = None
+            raise KeyboardInterrupt
+        items = [
+            Table(
+                self._ref(k),
+                "view" if k in self.views else "table",
+                last_altered=self.altered.get(k, BASE),
+            )
+            for k in sorted(self.relations)
+            if k.partition(".")[0] == schema.name
+            and (changed_since is None or self.altered.get(k, BASE) > changed_since)
+        ]
+        return Page(items, None)
+
+    def columns(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, list[Column]]:
+        out: dict[ObjectRef, list[Column]] = {}
+        for t in tables:
+            names = self.relations.get(f"{t.schema}.{t.table}", ())
+            out[t] = [
+                Column(ObjectRef(t.catalog, t.schema, t.table, c), n, "INT", "integer", True)
+                for n, c in enumerate(names, start=1)
+            ]
+        return out
+
+    def constraints(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, list[Constraint]]:
+        return {}
+
+    def view_definitions(self, tables: Sequence[ObjectRef]) -> Mapping[ObjectRef, str]:
+        keys = [f"{t.schema}.{t.table}" for t in tables]
+        self.definition_calls.append(keys)
+        if self.fail_definitions:
+            raise RuntimeError("driver said: SELECT secret_column FROM vault WHERE pin = 1234")
+        return {t: self.views[k] for t, k in zip(tables, keys, strict=True) if k in self.views}
+
+    def capabilities(self) -> ReaderCapabilities:
+        return ReaderCapabilities(
+            comments=False,
+            stats=False,
+            last_altered=self.incremental,
+            constraints=False,
+            incremental=self.incremental,
+            view_definitions=self.definitions,
+        )

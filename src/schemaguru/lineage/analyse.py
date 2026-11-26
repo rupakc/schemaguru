@@ -51,7 +51,8 @@ class DefinitionResult:
 Resolver = Callable[[Sequence[RawName], ObjectRef], Mapping[RawName, ResolvedTable]]
 
 
-def _sha256(sql: str) -> str:
+def definition_sha256(sql: str) -> str:
+    """The sha256 kept for a definition (to skip re-parsing an unchanged one)."""
     return hashlib.sha256(sql.encode("utf-8", "surrogatepass")).hexdigest()
 
 
@@ -89,7 +90,7 @@ def analyse_definitions(
             DefinitionResult(
                 target=item.target,
                 dialect=item.dialect,
-                sha256=_sha256(item.sql),
+                sha256=definition_sha256(item.sql),
                 parsed=p,
                 failure=failures.get(n),
                 template=None if p is None else template(item.sql),

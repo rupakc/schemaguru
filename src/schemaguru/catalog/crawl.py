@@ -9,6 +9,11 @@ last checkpoint intact, so a later ``crawl(..., resume=True)`` continues from it
 Memory is bounded by the page size and the number of *schemas*, never by the number of tables:
 the names seen this run live in a throw-away on-disk SQLite file, and the checkpoint is one small
 cursor (the schema in progress and its page token), not a growing list.
+
+After the walk, view definitions are parsed into lineage (0.2.0 spec 4.2-4.4) for the views
+written this run and the live views without a stored definition hash. The raw definition text
+lives in memory for one batch only: the store keeps the facts, the definition's sha256 and the
+literal-free template; nothing logs or reports the text.
 """
 
 from __future__ import annotations
@@ -22,21 +27,43 @@ from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from schemaguru._util.timeutil import to_iso, utcnow
 from schemaguru.catalog.filters import ScopeFilter
-from schemaguru.catalog.protocol import CatalogReader
+from schemaguru.catalog.protocol import (
+    CatalogReader,
+    ViewDefinitionReader,
+    reads_view_definitions,
+)
 from schemaguru.config import CrawlConfig
 from schemaguru.diagnostics import Diagnostic, Severity
+from schemaguru.lineage.analyse import (
+    DefinitionItem,
+    DefinitionResult,
+    analyse_definitions,
+    definition_sha256,
+    extra_missing_diagnostic,
+    failure_diagnostic,
+    lineage_facts,
+)
+from schemaguru.lineage.parse import lineage_available
+from schemaguru.lineage.worker import ParserPool
+from schemaguru.model.facts import Fact, Provenance
+from schemaguru.model.kinds import LINEAGE_KINDS
+from schemaguru.model.lineage import VIEW_SOURCE
 from schemaguru.model.refs import ObjectRef
 from schemaguru.model.structure import Column, Constraint, Schema, Table
-from schemaguru.store.protocol import Store
+from schemaguru.store.names import resolve_relation_names
+from schemaguru.store.protocol import LineageIndex, Store, lineage_index
 
 STATE_KEY = "crawl"
 LAST_KEY = "crawl_last"
 _NO_CATALOG = "\x00"
+_VIEW_KINDS = frozenset({"view", "materialized_view"})
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -49,6 +76,9 @@ class CrawlReport:
     bytes_billed: int | None = None
     bytes_billed_is_estimate: bool = False
     duration_s: float = 0.0
+    views_parsed: int = 0
+    lineage_s: float = 0.0
+    lineage_diagnostics: list[Diagnostic] = field(default_factory=list)
 
 
 class _OverCrawlBudget(Exception):
@@ -81,7 +111,7 @@ def _parse_ts(value: object) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else None
 
 
-def _chunks(items: Sequence[Table], n: int) -> list[Sequence[Table]]:
+def _chunks(items: Sequence[_T], n: int) -> list[Sequence[_T]]:
     return [items[i : i + n] for i in range(0, len(items), max(1, n))]
 
 
@@ -101,6 +131,8 @@ class _Seen:
         self._c.execute(
             "CREATE TABLE stored(cat TEXT, name TEXT, PRIMARY KEY(cat, name)) WITHOUT ROWID"
         )
+        # the views whose definitions the lineage phase reads (canonical refs)
+        self._c.execute("CREATE TABLE v(ref TEXT PRIMARY KEY)")
 
     def add_tables(self, hashes: Iterable[int]) -> None:
         self._c.execute("BEGIN")
@@ -139,8 +171,40 @@ class _Seen:
         ).fetchone()
         return row is not None
 
+    def add_views(self, refs: Iterable[str]) -> None:
+        self._c.execute("BEGIN")
+        self._c.executemany("INSERT OR IGNORE INTO v VALUES (?)", ((r,) for r in refs))
+        self._c.execute("COMMIT")
+
+    def views_after(self, last: str, n: int) -> list[str]:
+        rows = self._c.execute(
+            "SELECT ref FROM v WHERE ref > ? ORDER BY ref LIMIT ?", (last, max(1, n))
+        ).fetchall()
+        return [str(r[0]) for r in rows]
+
     def close(self) -> None:
         self._c.close()
+
+
+def _view_lineage_facts(store: Store, views: Sequence[ObjectRef]) -> list[Fact]:
+    """The ``view_definition`` lineage facts of ``views`` and of their stored columns."""
+    subjects: list[ObjectRef] = []
+    for v in views:
+        subjects.append(v)
+        subjects.extend(c.ref for c in store.columns(v))
+    return [f for f in store.facts_for(subjects, LINEAGE_KINDS) if f.source == VIEW_SOURCE]
+
+
+def _retract_view_lineage(store: Store, views: Sequence[ObjectRef]) -> None:
+    """Withdrawn views lose their parsed lineage and their stored definition hash."""
+    index = lineage_index(store)
+    for chunk in _chunks(views, 500):
+        with store.transaction():
+            old = _view_lineage_facts(store, chunk)
+            if old:
+                store.delete_facts(sorted({f.id for f in old}))
+            if index is not None:
+                index.lineage_state_set(dict.fromkeys(chunk))
 
 
 class _Crawl:
@@ -163,6 +227,8 @@ class _Crawl:
         self.caps = reader.capabilities()
         self.errors: list[Diagnostic] = []
         self.notes: list[Diagnostic] = []  # reader notes: reported, but not a failed crawl
+        self.lineage_diagnostics: list[Diagnostic] = []  # never a failed crawl
+        self.views_parsed = 0
         self._qlock = threading.Lock()
         self.queries = 0
         self.tables_seen = 0
@@ -409,6 +475,7 @@ class _Crawl:
             return
         self.store.upsert_tables(tables)
         self.tables_written += len(tables)
+        self.seen.add_views(t.ref.canonical() for t in tables if t.kind in _VIEW_KINDS)
         batches = _chunks(tables, self.cfg.column_batch)
         futures: list[Future[Any]] = [pool.submit(self._fetch, b, loc) for b in batches]
         for batch, fut in zip(batches, futures, strict=True):
@@ -426,19 +493,149 @@ class _Crawl:
         by name; a schema/catalog that vanished (or fell out of scope) is withdrawn whole; a
         schema whose listing failed or was resumed mid-way is left alone."""
         gone: list[ObjectRef] = []
+        gone_views: list[ObjectRef] = []
         for t in self.store.iter_tables():
             ref = t.ref
             state = self.seen.schema_state(ref.catalog, ref.schema or "")
             if state == 1:
-                if not self.seen.has_table(_h(ref)):
-                    gone.append(ref)
-            elif state is None and (
-                ref.catalog in self.complete_catalogs or ref.catalog not in self.listed_catalogs
+                if self.seen.has_table(_h(ref)):
+                    continue
+            elif state is not None or (
+                ref.catalog not in self.complete_catalogs and ref.catalog in self.listed_catalogs
             ):
-                gone.append(ref)
+                continue
+            gone.append(ref)
+            if t.kind in _VIEW_KINDS:
+                gone_views.append(ref)
         if gone:
             self.store.mark_withdrawn(gone, self.now())
+        if gone_views:
+            _retract_view_lineage(self.store, gone_views)
         return len(gone)
+
+    # -- view lineage (0.2.0 spec 4.2-4.4) ---------------------------------------------------
+
+    def lineage(self, parser_pool: ParserPool | None) -> None:
+        """Parse the definitions of the views written this run and of the live views the store
+        holds without a definition hash (a resumed crawl's earlier pages)."""
+        reader = self.reader
+        if not (reads_view_definitions(reader) and isinstance(reader, ViewDefinitionReader)):
+            return
+        if not lineage_available():  # no raw SQL is read for nothing
+            self.lineage_diagnostics.append(extra_missing_diagnostic())
+            return
+        index = lineage_index(self.store)
+        if index is not None:
+            self._add_views_without_state(index)
+        pool = parser_pool if parser_pool is not None else ParserPool()
+        try:
+            last = ""
+            while True:
+                keys = self.seen.views_after(last, self.cfg.column_batch)
+                if not keys:
+                    return
+                last = keys[-1]
+                self._lineage_batch(reader, [ObjectRef.parse(k) for k in keys], index, pool)
+        finally:
+            if parser_pool is None:
+                pool.close()
+
+    def _add_views_without_state(self, index: LineageIndex) -> None:
+        """One streaming pass over the store's live views in scope."""
+        chunk: list[ObjectRef] = []
+
+        def flush() -> None:
+            have = index.lineage_state_get(chunk)
+            self.seen.add_views(r.canonical() for r in chunk if r not in have)
+            chunk.clear()
+
+        for t in self.store.iter_tables():
+            if t.kind in _VIEW_KINDS and self.filter.allows(t.ref):
+                chunk.append(t.ref)
+                if len(chunk) >= max(1, self.cfg.column_batch):
+                    flush()
+        if chunk:
+            flush()
+
+    def _lineage_batch(
+        self,
+        reader: ViewDefinitionReader,
+        refs: list[ObjectRef],
+        index: LineageIndex | None,
+        pool: ParserPool,
+    ) -> None:
+        from schemaguru.pii.mask import definition_template  # pii is not below catalog
+
+        self._admit()
+        try:
+            self._count()
+            texts = dict(reader.view_definitions(refs))
+        except Exception as e:
+            # a driver's message can quote SQL or bind values: only the exception type is kept
+            self.errors.append(
+                Diagnostic(
+                    "SG102",
+                    Severity.ERROR,
+                    f"crawl skipped the view definitions of {len(refs)} view(s): "
+                    f"{type(e).__name__} (its message is not shown)",
+                    location="view_definitions",
+                )
+            )
+            return
+        stored = index.lineage_state_get(refs) if index is not None else {}
+        items = [
+            DefinitionItem(r, texts[r], self.reader.dialect)
+            for r in refs
+            if r in texts and stored.get(r) != definition_sha256(texts[r])
+        ]
+        texts.clear()
+        if not items:
+            return
+        try:
+            results = analyse_definitions(
+                items,
+                resolve=partial(resolve_relation_names, self.store),
+                pool=pool,
+                template=definition_template,
+            )
+        except Exception:  # the pool broke its contract; its message is not kept either
+            results = [
+                DefinitionResult(i.target, i.dialect, definition_sha256(i.sql), None,
+                                 "worker_died", None)
+                for i in items
+            ]  # fmt: skip
+        items.clear()  # the raw texts end here
+        observed = self.now()
+        facts: list[Fact] = []
+        state: dict[ObjectRef, str | None] = {}
+        for res in results:
+            if res.parsed is None:  # retried next crawl; stale facts are retracted below
+                self.lineage_diagnostics.append(
+                    failure_diagnostic(res.target, res.failure or "parse_error")
+                )
+                state[res.target] = None
+                continue
+            cols = sorted(self.store.columns(res.target), key=lambda c: c.ordinal)
+            facts.extend(
+                lineage_facts(
+                    res,
+                    target_columns=[c.ref.column for c in cols if c.ref.column is not None],
+                    provenance=Provenance.CATALOG,
+                    source=VIEW_SOURCE,
+                    observed_at=observed,
+                    evidence=True,
+                )
+            )
+            state[res.target] = res.sha256
+            self.views_parsed += 1
+        with self.store.transaction():  # replace: old view facts out, new in, hash recorded
+            old = _view_lineage_facts(self.store, [r.target for r in results])
+            if old:
+                self.store.delete_facts(sorted({f.id for f in old}))
+            if facts:
+                self.store.put_facts(facts)
+            if index is not None:
+                index.lineage_state_set(state)
 
 
 def crawl(
@@ -450,6 +647,8 @@ def crawl(
     incremental: bool = True,
     now: Callable[[], datetime] = utcnow,
     crawl_bytes: int | None = None,
+    lineage: bool = True,
+    parser_pool: ParserPool | None = None,
 ) -> CrawlReport:
     """Crawl ``reader`` into ``store``.
 
@@ -470,6 +669,14 @@ def crawl(
     listing query the bytes billed so far are compared with the cap; once it is reached the
     crawl stops between pages with a ``SG110`` warning and keeps its checkpoint, so the next
     ``crawl()`` resumes where it stopped. A reader that reports no bytes is not counted.
+
+    ``lineage`` parses view definitions into ``LINEAGE`` / ``COLUMN_LINEAGE`` facts (source
+    ``view_definition``) when the reader reads them (``capabilities().view_definitions``); a
+    view's facts are replaced in one transaction when its definition hash changed and left as
+    they are otherwise; a withdrawn view's are retracted. Parse failures (``SG211``) and a
+    missing ``lineage`` extra (``SG212``, once) go to ``lineage_diagnostics``, which never
+    blocks the incremental baseline. ``parser_pool`` is used and left open; without one the
+    crawl starts its own and closes it before returning.
     """
     cfg = config or CrawlConfig()
     t0 = time.monotonic()
@@ -489,6 +696,13 @@ def crawl(
                     withdrawn = run.run(pool)
                 except _OverCrawlBudget:
                     stopped, withdrawn = True, 0  # an incomplete listing withdraws nothing
+            lineage_t0 = time.monotonic()
+            if lineage and not stopped:
+                try:
+                    run.lineage(parser_pool)
+                except _OverCrawlBudget:
+                    stopped = True
+            lineage_s = time.monotonic() - lineage_t0
         finally:
             seen.close()
     run.drain_reader_diagnostics()
@@ -528,4 +742,7 @@ def crawl(
         bytes_billed=bytes_billed,
         bytes_billed_is_estimate=getattr(reader, "bytes_billed_is_lower_bound", False) is True,
         duration_s=time.monotonic() - t0,
+        views_parsed=run.views_parsed,
+        lineage_s=lineage_s,
+        lineage_diagnostics=list(run.lineage_diagnostics),
     )

@@ -13,6 +13,8 @@ on:
       - "site-playground/**"
       - "scripts/**"
       - "tests/site/**"
+      - "tests/conftest.py"
+      - "pyproject.toml"
       - "mkdocs.yml"
       - "src/**"
       - ".github/workflows/site-browsers.yml"

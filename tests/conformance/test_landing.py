@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,9 @@ from schemaguru.catalog import registry
 
 from .test_docs_generated import EMAIL, HEX32, ROOT, _load
 
-PII_EXAMPLE_IN = "Ask jane.doe@example.com about order 42"
+PII_EXAMPLE_IN = _load("gen_docs").PII_EXAMPLE_IN
+HOME = ROOT / "docs" / "overrides" / "home.html"
+INDEX = ROOT / "docs" / "index.md"
 
 
 @pytest.fixture(scope="module")
@@ -86,9 +89,33 @@ def test_landing_scale_comes_from_the_benchmark(landing: dict[str, Any]) -> None
         "tables": result["size"]["tables"],
         "context_p95_s": round(result["metrics"]["context_p95_ms"] / 1000, 1),
     }
-    claim = _load("gen_docs").scale_claim()
+    gen = _load("gen_docs")
+    claim = gen.scale_claim()
     assert f"{landing['scale']['context_p95_s']:,.1f} s" in claim and "guide/scale.md" in claim
     assert f"{landing['scale']['tables']:,}" in claim
+    # the target is read from the benchmark's own known limit, and pinned here
+    assert gen.context_target_ms() == 200 and "its 200 ms target" in claim
+
+
+def test_context_target_missing_from_the_benchmark_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    gen = _load("gen_docs")
+    monkeypatch.setattr(gen, "_benchmark", lambda: {"known_limits": ["context is slow"]})
+    with pytest.raises(ValueError, match="target"):
+        gen.context_target_ms()
+
+
+def test_trap_evidence_is_checked_against_its_own_result() -> None:
+    gen = _load("gen_docs")
+    traps = [
+        {"id": "hub", "evidence": "pivots through hub"},
+        {"id": "broken_join", "evidence": "broken joins are refused"},
+    ]
+    own = {"hub": "every route pivots through hub x", "broken_join": "broken joins are refused"}
+    gen.check_trap_evidence(traps, own)
+    # negative control: the hub's evidence present only in the broken pair's result is rejected
+    swapped = {"hub": "broken joins are refused", "broken_join": "pivots through hub x"}
+    with pytest.raises(ValueError, match="hub"):
+        gen.check_trap_evidence(traps, swapped)
 
 
 def test_landing_holds_no_raw_identifying_values(
@@ -113,3 +140,95 @@ def test_on_env_without_landing_warns(
     (tmp_path / "landing.json").write_text('{"question": "q"}', encoding="utf-8")
     hooks.on_env(env, None, None)
     assert env.globals["landing"] == {"question": "q"}
+
+
+# ----- the home template and the integration tabs ------------------------------------------
+
+
+def strip_jinja_tags_and_attrs(html: str) -> str:
+    """The visible copy a template author typed: no Jinja, no <style>/<svg>, no tags."""
+    text = re.sub(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}", " ", html, flags=re.S)
+    text = re.sub(r"<(style|svg|script)\b.*?</\1>", " ", text, flags=re.S | re.I)
+    return re.sub(r"<[^>]*>", " ", text)
+
+
+def test_home_template_has_no_literal_numbers() -> None:
+    text = strip_jinja_tags_and_attrs(HOME.read_text(encoding="utf-8"))
+    assert not re.search(r"\d{2,}|\d[.,]\d|%", text), "numbers must come from landing.json"
+
+
+def test_negative_control_literal_number() -> None:
+    assert re.search(r"\d{2,}", strip_jinja_tags_and_attrs("<p>saves 42 tokens</p>"))
+    assert not re.search(r"\d{2,}", strip_jinja_tags_and_attrs("<p>{{ landing.x }} rows</p>"))
+
+
+def test_home_sections_in_order() -> None:
+    ids = re.findall(r'<section[^>]*id="([^"]+)"', HOME.read_text(encoding="utf-8"))
+    assert ids == [
+        "sg-hero",
+        "sg-before-after",
+        "sg-benefits",
+        "sg-how",
+        "sg-warehouses",
+        "sg-trust",
+        "sg-cta",
+    ]
+
+
+def test_home_sections_are_labelled_reveals() -> None:
+    html = HOME.read_text(encoding="utf-8")
+    sections = re.findall(r"<section\b[^>]*>", html)
+    assert len(sections) == 7
+    for tag in sections:
+        assert 'class="sg-section sg-reveal' in tag and "aria-labelledby=" in tag, tag
+    for target in re.findall(r'aria-labelledby="([^"]+)"', " ".join(sections)):
+        assert f'id="{target}"' in html, target
+
+
+def test_home_ctas_and_install_chip() -> None:
+    html = HOME.read_text(encoding="utf-8")
+    assert "{{ 'playground/' | url }}" in html and "Try the playground" in html
+    assert "{{ 'getting-started/' | url }}" in html and "Get started" in html
+    assert re.search(r'<button[^>]*data-copy="pip install schemaguru"', html)
+    assert "{{ 'guide/scale/' | url }}" in html
+
+
+def test_home_draws_traps_and_readers_from_landing() -> None:
+    html = HOME.read_text(encoding="utf-8")
+    assert 'data-trap="{{ line.trap }}"' in html and "landing.after_lines" in html
+    assert "landing.before" in html and "landing.traps" in html
+    assert "landing.before_tokens" in html and "landing.after_tokens" in html
+    assert "landing.readers" in html and 'class="sg-badge' in html
+    svg = re.search(r'<svg class="sg-flow"[^>]*>.*?</svg>', html, re.S)
+    assert svg and 'role="img"' in svg.group(0) and "<title" in svg.group(0)
+
+
+def test_no_token_saving_claim() -> None:
+    """The measured view is larger than a raw dump on the shop: the pitch is correctness."""
+    saving = re.compile(
+        r"(sav|fewer|less|reduc|cut|smaller|cheaper)\w*\W+(\w+\W+){0,4}tokens?", re.I
+    )
+    for page in (HOME, INDEX):
+        assert not saving.search(page.read_text(encoding="utf-8")), page.name
+    assert saving.search("it saves you tokens")  # negative control
+
+
+def test_index_integration_tabs() -> None:
+    text = INDEX.read_text(encoding="utf-8")
+    assert re.search(r"^template: home\.html$", text, re.M)
+    labels = re.findall(r'<button[^>]*role="tab"[^>]*>([^<]+)</button>', text)
+    assert labels == [
+        "Python",
+        "MCP",
+        "CLI",
+        "LangChain / LlamaIndex / OpenAI Agents",
+        "HTTP server",
+    ]
+    for tab in re.findall(r'<button[^>]*role="tab"[^>]*>', text):
+        assert "aria-selected=" in tab and "aria-controls=" in tab, tab
+    for panel in re.findall(r'aria-controls="([^"]+)"', text):
+        assert re.search(rf'<div[^>]*id="{panel}"[^>]*role="tabpanel"', text), panel
+    assert re.search(r'role="tablist"[^>]*aria-label="', text)
+    assert "```python" in text and "## Install" in text
+    for command in (" mcp", " context ", " path ", " serve"):
+        assert command in text, command

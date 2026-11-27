@@ -1,105 +1,122 @@
-# SchemaGuru
+---
+template: home.html
+title: SchemaGuru
+hide:
+  - navigation
+  - toc
+---
 
-**Schema intelligence for AI agents on data warehouses.** SchemaGuru crawls a warehouse's
-catalog, *measures* what really joins and which values really occur, refuses join paths that
-multiply rows, lets people correct it in reviewable YAML, and hands an agent a
-question-scoped, token-budgeted view of all of it — as prompt text, tool calls, an MCP
-server or framework adapters.
+<section class="sg-section sg-integrations" aria-labelledby="use-it-from" markdown>
+
+## Use it from
+
+<p class="sg-lead">One knowledge store, every surface: each calls the same <code>Guru</code>
+methods and the same tools, so an agent sees the same view wherever it runs.</p>
+
+<div class="sg-tabs" markdown>
+
+<div role="tablist" aria-label="Ways to use SchemaGuru">
+<button type="button" role="tab" id="sg-tab-python" aria-selected="true" aria-controls="sg-panel-python">Python</button>
+<button type="button" role="tab" id="sg-tab-mcp" aria-selected="false" aria-controls="sg-panel-mcp" tabindex="-1">MCP</button>
+<button type="button" role="tab" id="sg-tab-cli" aria-selected="false" aria-controls="sg-panel-cli" tabindex="-1">CLI</button>
+<button type="button" role="tab" id="sg-tab-frameworks" aria-selected="false" aria-controls="sg-panel-frameworks" tabindex="-1">LangChain / LlamaIndex / OpenAI Agents</button>
+<button type="button" role="tab" id="sg-tab-http" aria-selected="false" aria-controls="sg-panel-http" tabindex="-1">HTTP server</button>
+</div>
+
+<div id="sg-panel-python" role="tabpanel" aria-labelledby="sg-tab-python" tabindex="0" markdown>
 
 ```python
 import schemaguru as sg
-guru = sg.Guru.connect("duckdb:///warehouse.duckdb")
-print(guru.context("monthly revenue by customer segment"))
+
+guru = sg.Guru.connect("duckdb:///warehouse.duckdb")  # crawls the catalog: metadata only
+guru.measure(all=True)                                # what the data says: joins, values, nulls
+guru.load_overlays("schemaguru.yaml")                 # what people know, in reviewable YAML
+print(guru.context("monthly revenue by customer segment").text)
+
+refused = guru.find_path("shop.orders", "shop.events")
+print(refused.refusal, "-", refused.explanation)      # a route through a hub is refused
+guru.close()
 ```
 
-!!! note "Status: alpha (0.2.0)"
-    Measurement runs through [FactLang](https://github.com/rupakc/factlang) (0.1.4 or later,
-    installed with SchemaGuru). Every output on this site was produced by the real library on
-    the test **shop** warehouse; the measured numbers in the generated pages come from the test
-    suite's backend, which computes them with plain SQL on that warehouse, so the pages are
-    reproducible byte for byte. The cloud warehouse readers (BigQuery, Snowflake, Redshift,
-    Databricks, Oracle) are tested against recorded metadata, not yet validated live.
+This block runs as written in the docs test, on the shop warehouse. More in
+[Getting started](getting-started.md).
 
-## The problem: a wrong guess does not error
+</div>
 
-An agent that writes SQL against a warehouse knows what the names tell it. Names mislead in
-at least three common ways, and each returns a plausible, wrong number instead of an error.
-These three come from the shop warehouse SchemaGuru is tested on; the row counts are
-counted with plain SQL on that warehouse.
+<div id="sg-panel-mcp" role="tabpanel" aria-labelledby="sg-tab-mcp" tabindex="0" markdown>
 
-### 1. The wrong join
-
---8<-- "generated/story_hub.md"
-
-### 2. The soft-delete flag that is never FALSE
-
---8<-- "generated/story_soft_delete.md"
-
-### 3. The enum that drifted in case
-
---8<-- "generated/story_case_drift.md"
-
-## How SchemaGuru catches them
-
-| Trap | What SchemaGuru does | Read more |
-|---|---|---|
-| Row-multiplying join | measures every candidate join in **both directions** (match rate, reverse coverage, fan-in); refuses a route that arrives at a hub on one many-to-one edge and leaves on another (`HUB_PIVOT`) | [Join graph](guide/graph.md) |
-| TRUE/NULL flag | measures observed values *and* the null rate; shows the human's live-rows predicate next to them | [Measure](guide/measure.md) |
-| Case drift | keeps a declared enum as an *expectation*, never rewrites it; reports what measurement saw beyond it | [Overlays](guide/overlays.md) |
-| Narrow join | a thin but correct join is returned **labelled** with its coverage; only broken joins are refused | [Join graph](guide/graph.md) |
-| Stale knowledge | refresh re-measures, diffs against the previous snapshot and classifies each change | [Refresh](guide/refresh.md) |
-
-Every statement carries its provenance — *catalog*, *declared*, *measured*, *drafted* (by an
-LLM) or *human* — and every measured number carries its method and date. Unknown is shown as
-unknown, never as 0 or 100%. A view that shows a warning also says that the absence of a
-warning is not verification.
-
-## Before and after
-
-What an agent often gets is the schema pasted into the prompt: every table, names and
-types, nothing about what joins.
-
-```text
---8<-- "generated/schema_dump.txt"
+```bash
+pip install 'schemaguru[mcp,duckdb]'
+schemaguru --url duckdb:///warehouse.duckdb --store .schemaguru/shop.db mcp
 ```
 
-What it gets from `guru.context("monthly revenue by customer segment")` once the shop is
-measured and its overlay loaded: the tables the question needs, with what was measured.
+Serves the tools, plus a `schema://tables/{ref}` resource per table, over stdio. Client
+configuration: [Agents, tools and MCP](guide/agents.md#mcp).
 
-```text
---8<-- "generated/quickstart_after.txt"
+</div>
+
+<div id="sg-panel-cli" role="tabpanel" aria-labelledby="sg-tab-cli" tabindex="0" markdown>
+
+```bash
+pip install 'schemaguru[duckdb]'
+export SCHEMAGURU_URL=duckdb:///warehouse.duckdb
+schemaguru crawl
+schemaguru measure --all
+schemaguru context "monthly revenue by customer segment"
+schemaguru path shop.orders shop.events    # exit 1: the route pivots through a hub
 ```
 
-Try more questions, the join-graph explorer and this comparison in the [demo](demo.md).
+Every command: [CLI reference](reference/cli.md).
 
-## Where it shines
-
-<div class="sg-grid" markdown>
-<div markdown>
-**Agents on huge warehouses.** Metadata-only, paged, resumable crawls; search runs in the
-store's full-text index, so a view is scoped without loading every table. Lazy, budgeted
-measurement: an agent's question never spends warehouse money by itself.
-</div>
-<div markdown>
-**Onboarding analysts.** `schemaguru context "<question>"` prints what a newcomer needs:
-which tables answer it, which joins are measured, which columns hold traps.
-</div>
-<div markdown>
-**Data-contract CI.** Declare enums, joins and soft-delete rules in YAML; `schemaguru
-refresh` exits `1` when a change needs review, and view fingerprints detect prompt drift.
-</div>
-<div markdown>
-**Migration audits.** Measure the same joins before and after a move; the refresh report
-says which verdicts changed, judged relative to the previous snapshot.
-</div>
 </div>
 
-Measured on the developer's machine (hardware-dependent): lexical table search over a
-synthetic 500,000-table store had a p95 of about 167 ms (`tests/benchmark/`, a worst-case
-vocabulary where one word matches a third of all tables); graph expansion over 50,000 joins
-took a median of about 0.48 s (`benchmarks/bench_expand.py`). The whole `context` call at
-500,000 tables is much slower (p95 28.6 s, a documented known limit): see
-[Scale](guide/scale.md).
+<div id="sg-panel-frameworks" role="tabpanel" aria-labelledby="sg-tab-frameworks" tabindex="0" markdown>
+
+```py
+from schemaguru.agent.adapters import langchain as sg_langchain
+
+tools = sg_langchain.tools(guru)            # StructuredTools; results are JSON text
+agent_model = chat_model.bind_tools(tools)
+retriever = sg_langchain.retriever(guru, k=4)   # describe_table documents per hit
+```
+
+```py
+from schemaguru.agent.adapters import llamaindex as sg_llamaindex
+
+tools = sg_llamaindex.tool_spec(guru)       # FunctionTools
+```
+
+```py
+from agents import Agent
+
+from schemaguru.agent.adapters import openai_agents as sg_openai
+
+agent = Agent(name="analyst", instructions=guru.prompt_block(),
+              tools=sg_openai.function_tools(guru))
+```
+
+One extra each (`langchain`, `llamaindex`, `openai-agents`). See
+[Framework adapters](guide/agents.md#framework-adapters).
+
+</div>
+
+<div id="sg-panel-http" role="tabpanel" aria-labelledby="sg-tab-http" tabindex="0" markdown>
+
+```bash
+pip install 'schemaguru[server,duckdb]'
+export SCHEMAGURU_SERVER_TOKENS="$READER_TOKEN:reader"
+schemaguru --url duckdb:///warehouse.duckdb --store .schemaguru/shop.db serve --port 8080
+
+curl -s http://127.0.0.1:8080/context \
+  -H "Authorization: Bearer $READER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"question": "monthly revenue by customer segment"}'
+```
+
+Routes, roles and a shared Postgres store: [Server mode](guide/server.md).
+
+</div>
+
+</div>
 
 ## Install
 
@@ -122,13 +139,7 @@ pip install 'schemaguru[duckdb]'  # plus a warehouse driver (one extra per wareh
 | `trino` | trino | `postgres-store` | Postgres knowledge store |
 | `mysql` | PyMySQL (MySQL, MariaDB) | `all` | everything above |
 
-The `lineage` extra (`pip install 'schemaguru[lineage]'`, sqlglot) is what reads lineage out of view
-definitions and dbt SQL; see [Lineage](guide/lineage.md).
+The `lineage` extra (`pip install 'schemaguru[lineage]'`, sqlglot) reads lineage out of view
+definitions and dbt SQL; see [Lineage](guide/lineage.md). SchemaGuru needs Python 3.10+.
 
-The readers for PostgreSQL, MySQL, ClickHouse, SQL Server, Trino and DuckDB are tested
-against real engines in CI. The BigQuery, Snowflake, Redshift, Databricks and Oracle readers
-are built from the documented system views and tested on recorded metadata, but **not yet
-validated against live accounts**.
-
-Next: [Getting started](getting-started.md) · [Concepts](guide/concepts.md) ·
-[Demo](demo.md)
+</section>

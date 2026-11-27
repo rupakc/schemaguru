@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import tempfile
 from collections.abc import Mapping
@@ -108,6 +109,18 @@ def _benchmark() -> dict[str, Any]:
     return data
 
 
+_TARGET = re.compile(r"^context_p95_ms:.*?misses the ([\d,]+) ms target")
+
+
+def context_target_ms() -> int:
+    """The ``context`` p95 target, as the benchmark's own known-limit note states it."""
+    for note in _benchmark().get("known_limits", []):
+        m = _TARGET.search(note)
+        if m:
+            return int(m.group(1).replace(",", ""))
+    raise ValueError(f"{BENCHMARK.name} states no context_p95_ms target in known_limits")
+
+
 def scale_claim() -> str:
     """One sentence stating the published ``context`` p95 at the benchmark size."""
     result = _benchmark()
@@ -115,8 +128,16 @@ def scale_claim() -> str:
     tables = result["size"]["tables"]
     return (
         f"At {tables:,} tables the `context` call has a p95 of {seconds:,.1f} s, which misses "
-        "its 200 ms target; this is a known limit, see [Scale](../guide/scale.md).\n"
+        f"its {context_target_ms():,} ms target; this is a known limit, see "
+        "[Scale](../guide/scale.md).\n"
     )
+
+
+def check_trap_evidence(traps: list[dict[str, Any]], own_result: Mapping[str, str]) -> None:
+    """Each trap's evidence must be in the output of the call that shows that trap."""
+    for t in traps:
+        if t["evidence"] not in own_result[t["id"]]:
+            raise ValueError(f"trap {t['id']}: {t['evidence']!r} is not in its own result")
 
 
 def landing_data(shop: ShopGuru) -> dict[str, Any]:
@@ -183,9 +204,15 @@ def landing_data(shop: ShopGuru) -> dict[str, Any]:
             "source": "find_join_path",
         },
     ]
-    for t in traps:
-        source = {"context": after, "find_join_path": hub["text"] + "\n" + broken["text"]}
-        assert t["evidence"] in source[t["source"]], t["id"]
+    check_trap_evidence(
+        traps,
+        {
+            "hub": hub["text"],
+            "soft_delete": after,
+            "case_drift": after,
+            "broken_join": broken["text"],
+        },
+    )
     bench = _benchmark()
     return {
         "question": q,

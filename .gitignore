@@ -6,7 +6,7 @@ venv/
 .schemaguru/
 dist/
 build/
-site/
+/site/
 .superpowers/
 .pytest_cache/
 .mypy_cache/

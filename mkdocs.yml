@@ -95,6 +95,7 @@ plugins:
 
 nav:
   - Home: index.md
+  - Features: features.md
   - Getting started: getting-started.md
   - Demo: demo.md
   - Playground: playground.md

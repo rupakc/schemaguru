@@ -129,7 +129,7 @@ def scale_claim() -> str:
     return (
         f"At {tables:,} tables the `context` call has a p95 of {seconds:,.1f} s, which misses "
         f"its {context_target_ms():,} ms target; this is a known limit, see "
-        "[Scale](../guide/scale.md).\n"
+        "[Scale](guide/scale.md).\n"
     )
 
 

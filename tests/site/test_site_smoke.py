@@ -336,3 +336,19 @@ def test_playground_layout(pg_page: Any, base: str, width: int) -> None:
     if shots:
         page.locator("#sg-pg-tab-ask").click()
         page.screenshot(path=str(Path(shots) / f"playground-{width}.png"), full_page=True)
+
+
+def test_features_diagram_both_themes(page: Any, base: str) -> None:
+    strokes = {}
+    for scheme in ("light", "dark"):
+        page.emulate_media(color_scheme=scheme)
+        page.goto(base + "features/")
+        page.evaluate("localStorage.clear()")  # Material remembers a toggled palette
+        page.goto(base + "features/")
+        strokes[scheme] = page.evaluate(
+            "getComputedStyle(document.querySelector('svg.sg-arch rect')).stroke"
+        )
+    assert strokes["light"] != strokes["dark"]
+    page.set_viewport_size({"width": 360, "height": 780})
+    page.goto(base + "features/")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

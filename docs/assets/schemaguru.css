@@ -337,3 +337,12 @@
 .sg-out pre code { white-space: pre-wrap; }
 .md-typeset .sg-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); }
 .md-typeset .sg-grid > div { border: 1px solid var(--md-default-fg-color--lightest); border-radius: .4rem; padding: .2rem 1rem; }
+
+/* -- Architecture diagram (features page); colours only through theme tokens ---------- */
+
+.sg-arch-scroll { overflow-x: auto; margin: 1rem 0; }
+.sg-arch { display: block; min-width: 720px; width: 100%; height: auto; color: var(--sg-fg-muted); }
+.sg-arch rect { fill: var(--sg-surface); stroke: var(--sg-indigo); stroke-width: 1.5; }
+.sg-arch line { stroke: currentColor; stroke-width: 1.5; }
+.sg-arch text { fill: var(--sg-fg); font: 600 14px var(--md-text-font-family, system-ui, sans-serif); }
+.sg-arch text.sub { fill: var(--sg-fg-muted); font-weight: 400; font-size: 12px; }

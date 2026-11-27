@@ -232,3 +232,38 @@ def test_index_integration_tabs() -> None:
     assert "```python" in text and "## Install" in text
     for command in (" mcp", " context ", " path ", " serve"):
         assert command in text, command
+
+
+FEATURES = ROOT / "docs" / "features.md"
+
+
+def test_features_link_every_core_guide() -> None:
+    links = set(re.findall(r"\]\((guide/[a-z-]+\.md)", FEATURES.read_text()))
+    wanted = [
+        *("crawl", "measure", "sampling", "graph", "pii", "overlays", "lineage"),
+        *("scoping", "rendering", "refresh", "feedback", "agents", "server", "drafting"),
+    ]
+    assert {f"guide/{g}.md" for g in wanted} <= links
+    assert "extending/index.md" in FEATURES.read_text()
+
+
+def test_features_diagram_is_accessible_and_theme_safe() -> None:
+    match = re.search(r"<svg.*?</svg>", FEATURES.read_text(), re.S)
+    assert match is not None
+    svg = match.group(0)
+    assert 'role="img"' in svg and "<title" in svg and "<desc" in svg and "aria-labelledby" in svg
+    assert not re.search(r'(fill|stroke)="#[0-9a-fA-F]{3,6}"', svg)  # colours only via CSS vars
+    assert not re.search(r"(fill|stroke):\s*#[0-9a-fA-F]{3,6}", svg)
+
+
+def test_features_scale_claim_is_generated() -> None:
+    text = FEATURES.read_text()
+    assert '--8<-- "generated/scale_claim.md"' in text
+    assert "28.6" not in text  # never hand-typed
+
+
+def test_features_carries_the_stories_and_the_trap_table() -> None:
+    text = FEATURES.read_text()
+    for story in ("story_hub", "story_soft_delete", "story_case_drift"):
+        assert f'--8<-- "generated/{story}.md"' in text
+    assert "HUB_PIVOT" in text

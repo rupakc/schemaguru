@@ -147,7 +147,7 @@ installed with SchemaGuru.
 ## Documentation
 
 - Documentation site: <https://rupakc.github.io/schemaguru/> (guides, API reference,
-  interactive demo)
+  in-browser playground)
 - Wiki: <https://github.com/rupakc/schemaguru/wiki> (concepts, each component, warehouse
   guides, extending, FAQ)
 - Changelog: [CHANGELOG.md](https://github.com/rupakc/schemaguru/blob/main/CHANGELOG.md)

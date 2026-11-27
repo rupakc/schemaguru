@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+- The interactive demo is replaced by an in-browser playground ([playground](docs/playground.md))
+  built from the same commit by the docs workflow.
+
 ## [0.2.0] - 2026-11-26
 
 ### Added
@@ -93,7 +97,7 @@ One line per area of the 0.2.0 hardening ledger
   cardinality you vouch for, and a malformed entry's previous facts are retracted on the next
   load.
 - The shop demo's fixture declares no foreign keys in DuckDB, so the site demo shows a coincidental
-  key-to-key join instead of the declared edges ([demo](docs/demo.md)).
+  key-to-key join instead of the declared edges ([playground](docs/playground.md)).
 
 ## [0.1.1] - 2026-11-25
 

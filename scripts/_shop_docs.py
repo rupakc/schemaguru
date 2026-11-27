@@ -1,8 +1,7 @@
 """The shop fixture's knowledge, built the way a user would build it (docs generators only).
 
-Shared by ``scripts/build_demo_export.py`` (the site demo's JSON), ``scripts/gen_docs.py``
-(the rendered outputs quoted on the documentation pages) and
-``scripts/build_playground_store.py`` (the playground's store, with extra views). All must
+Shared by ``scripts/gen_docs.py`` (the rendered outputs quoted on the documentation pages)
+and ``scripts/build_playground_store.py`` (the playground's store, with extra views). All must
 show *real* output, never hand-written text, so all build the same thing here:
 
 1. the shop warehouse (``tests/fixtures/shop``) as a DuckDB file;

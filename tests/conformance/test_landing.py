@@ -267,3 +267,31 @@ def test_features_carries_the_stories_and_the_trap_table() -> None:
     for story in ("story_hub", "story_soft_delete", "story_case_drift"):
         assert f'--8<-- "generated/{story}.md"' in text
     assert "HUB_PIVOT" in text
+
+
+def test_no_demo_consumers() -> None:
+    """The retired demo leaves no link, path or script reference (prose may say "demo")."""
+    import subprocess
+
+    names = subprocess.run(
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    pattern = re.compile(r"site-demo|shop_export\.json|build_demo_export|\bdemo\.md")
+    me = Path(__file__).resolve().relative_to(ROOT).as_posix()
+    hits = []
+    for name in names:
+        if name == me or name.startswith("docs/specs/") or not (ROOT / name).is_file():
+            continue
+        try:
+            text = (ROOT / name).read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if pattern.search(text) or "demo" in name.lower().split("/")[-1].split("."):
+            hits.append(name)
+    assert not hits, f"files still tied to the retired demo: {hits}"
+
+
+def test_negative_control_demo_consumer_pattern() -> None:
+    pattern = re.compile(r"site-demo|shop_export\.json|build_demo_export|\bdemo\.md")
+    assert pattern.search("[demo](docs/demo.md)")
+    assert not pattern.search("an interactive demo, in prose")

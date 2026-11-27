@@ -1,6 +1,6 @@
 name: Docs
 
-# Builds the documentation site (mkdocs-material + mkdocstrings) and the interactive demo,
+# Builds the documentation site (mkdocs-material + mkdocstrings) and the in-browser playground,
 # and publishes it to the gh-pages branch. The repository's Pages source must be set to the
 # gh-pages branch once (Settings -> Pages).
 
@@ -24,18 +24,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build the wheel and install it
+      - name: Install the build tools
+        run: pip install build "mkdocs-material" "mkdocstrings[python]"
+      - name: Build the schemaguru wheel from this commit
+        run: python -m build --wheel --outdir build/playground
+      - name: Install it (with the extras the docs and the store need)
+        run: pip install "$(ls build/playground/schemaguru-*.whl)[duckdb,lineage]"
+      - name: Fetch the factlang wheel the playground installs (the pinned release)
         run: |
-          pip install build
-          python -m build --wheel
-          pip install dist/*.whl
-          pip install "duckdb>=1.0" "mkdocs-material" "mkdocstrings[python]"
-      - name: Export the shop knowledge for the demo
-        run: python scripts/build_demo_export.py
+          pip download "factlang==$(python -c 'import importlib.metadata as m; print(m.version("factlang"))')" \
+            --no-deps --only-binary=:all: -d build/playground
+      - name: Build the playground store
+        run: python scripts/build_playground_store.py --out build/playground
+      - name: Smoke-test the glue in a clean venv (the wheels only, no extras)
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install build/playground/*.whl
+          cd /tmp && /tmp/smoke/bin/python -I "$GITHUB_WORKSPACE/site-playground/glue.py" "$GITHUB_WORKSPACE/build/playground"
       - name: Check the generated pages are current
         run: |
           python scripts/gen_docs.py
-          git diff --exit-code -- docs/ site-demo/
+          git diff --exit-code -- docs/
       - name: Build the site
         run: mkdocs build --strict
         env:

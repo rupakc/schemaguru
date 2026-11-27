@@ -1,8 +1,9 @@
 """The shop fixture's knowledge, built the way a user would build it (docs generators only).
 
-Shared by ``scripts/build_demo_export.py`` (the site demo's JSON) and ``scripts/gen_docs.py``
-(the rendered outputs quoted on the documentation pages). Both must show *real* output, never
-hand-written text, so both build the same thing here:
+Shared by ``scripts/build_demo_export.py`` (the site demo's JSON), ``scripts/gen_docs.py``
+(the rendered outputs quoted on the documentation pages) and
+``scripts/build_playground_store.py`` (the playground's store, with extra views). All must
+show *real* output, never hand-written text, so all build the same thing here:
 
 1. the shop warehouse (``tests/fixtures/shop``) as a DuckDB file;
 2. a :class:`schemaguru.Guru` over it that crawls the catalog;
@@ -19,7 +20,7 @@ This module needs a repository checkout (it imports ``tests``); it is not part o
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -80,12 +81,23 @@ def build_db(directory: Path) -> tuple[Path, Any]:
 
 
 @contextmanager
-def shop_guru(directory: Path) -> Iterator[ShopGuru]:
-    """Build the shop, crawl, measure everything and load the overlay; yields a ShopGuru."""
+def shop_guru(directory: Path, *, views: Sequence[str] = ()) -> Iterator[ShopGuru]:
+    """Build the shop, crawl, measure everything and load the overlay; yields a ShopGuru.
+
+    Each SQL string in ``views`` runs on a writable connection after the shop is built and
+    before the crawl (the playground's ``analytics`` layer); the default adds nothing.
+    """
     import duckdb
     from tests.unit.measure.fake_backend import FakeBackend
 
     path, facts = build_db(directory)
+    if views:
+        writer = duckdb.connect(str(path))
+        try:
+            for sql in views:
+                writer.execute(sql)
+        finally:
+            writer.close()
     conn = duckdb.connect(str(path), read_only=True)
 
     def clock() -> datetime:

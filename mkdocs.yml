@@ -24,6 +24,7 @@ theme:
   custom_dir: docs/overrides
   font: false
   favicon: assets/favicon.svg
+  logo: assets/favicon.svg
   features:
     - content.code.copy
     - navigation.sections

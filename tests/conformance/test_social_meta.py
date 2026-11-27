@@ -43,3 +43,18 @@ def test_negative_control_png_size_reader(tmp_path: Path) -> None:
     bad = tmp_path / "x.png"
     bad.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 8 + struct.pack(">II", 1200, 600))
     assert _png_size(bad) != (1200, 630)
+
+
+def test_the_mascot_is_on_the_site_and_the_readme() -> None:
+    logo = (ROOT / "docs" / "assets" / "logo.svg").read_text(encoding="utf-8")
+    assert 'role="img"' in logo and "<title" in logo
+    icon = (ROOT / "docs" / "assets" / "favicon.svg").read_text(encoding="utf-8")
+    assert 'aria-label="SchemaGuru"' in icon
+    mkdocs = (ROOT / "mkdocs.yml").read_text(encoding="utf-8")
+    assert "favicon: assets/favicon.svg" in mkdocs and "logo: assets/favicon.svg" in mkdocs
+    home = (OVERRIDES / "home.html").read_text(encoding="utf-8")
+    hero = home[home.index('id="sg-hero"') : home.index('id="sg-hero-title"')]
+    guru = r'<img class="sg-guru" src="{{ \'assets/logo.svg\' \| url }}"[^>]*alt="[^"]+"'
+    assert re.search(guru, hero)
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert readme.index("assets/logo.svg") < readme.index("# SchemaGuru")

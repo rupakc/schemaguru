@@ -42,6 +42,11 @@
         radial-gradient(30rem 18rem at 75% 20%, color-mix(in srgb, var(--sg-teal) 14%, transparent), transparent 70%);
     }
     .sg-hero > *:not(.sg-hero__glow) { position: relative; z-index: 1; }
+    .sg-guru { display: block; width: clamp(160px, 26vw, 240px); height: auto; margin: 0 auto 1.2rem; }
+    @media (prefers-reduced-motion: no-preference) {
+      .sg-guru { animation: sg-guru-float 6s ease-in-out infinite; }
+      @keyframes sg-guru-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+    }
     .sg-pill {
       display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem;
       padding: 0.3rem 0.9rem; border: 1px solid var(--sg-border); border-radius: 999px;
@@ -197,6 +202,8 @@
 
   <section id="sg-hero" class="sg-section sg-reveal sg-hero" aria-labelledby="sg-hero-title">
     <div class="sg-hero__glow" aria-hidden="true"></div>
+    <img class="sg-guru" src="{{ 'assets/logo.svg' | url }}" width="240" height="240"
+         alt="The SchemaGuru mascot: a smiling guru meditating cross-legged on a cushion, thinking about two joined tables">
     <span class="sg-pill"><span class="sg-pill__dot" aria-hidden="true"></span>v{{ landing.schemaguru_version }} &middot; alpha &middot; open source</span>
     <h1 id="sg-hero-title">Your agent reads the names. <span class="sg-grad">SchemaGuru reads the data.</span></h1>
     <p class="sg-lead">

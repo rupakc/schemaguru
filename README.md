@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://rupakc.github.io/schemaguru/assets/logo.svg" width="200" alt="The SchemaGuru mascot: a smiling guru meditating, thinking about two joined tables">
+</p>
+
 # SchemaGuru
 
 [![CI](https://github.com/rupakc/schemaguru/actions/workflows/ci.yml/badge.svg)](https://github.com/rupakc/schemaguru/actions/workflows/ci.yml)

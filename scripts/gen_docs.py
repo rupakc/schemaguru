@@ -18,6 +18,7 @@ import sys
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -87,6 +88,124 @@ def shop_snippets(shop: ShopGuru) -> dict[str, str]:
         out[f"profile_{name}.txt"] = view.text
     out["search_refunds.txt"] = guru.handle_tool_call("search_tables", {"query": "refunds"})["text"]
     return {k: v if v.endswith("\n") else v + "\n" for k, v in out.items()}
+
+
+# ----- landing page data --------------------------------------------------------------------
+
+LANDING_QUESTION = "monthly revenue by customer segment"
+PII_EXAMPLE_IN = "Ask jane.doe@example.com about order 42"
+BENCHMARK = ROOT / "benchmarks" / "results" / "0.2.0.json"
+# the after view's lines that carry a trap, found by their text (evidence is checked in tests)
+_TRAP_LINES = (
+    ("soft_delete", "live rows:"),
+    ("case_drift", "WAIVED until"),
+    ("case_drift", "case drift:"),
+)
+
+
+def _benchmark() -> dict[str, Any]:
+    data: dict[str, Any] = json.loads(BENCHMARK.read_text(encoding="utf-8"))
+    return data
+
+
+def scale_claim() -> str:
+    """One sentence stating the published ``context`` p95 at the benchmark size."""
+    result = _benchmark()
+    seconds = result["metrics"]["context_p95_ms"] / 1000
+    tables = result["size"]["tables"]
+    return (
+        f"At {tables:,} tables the `context` call has a p95 of {seconds:,.1f} s, which misses "
+        "its 200 ms target; this is a known limit, see [Scale](../guide/scale.md).\n"
+    )
+
+
+def landing_data(shop: ShopGuru) -> dict[str, Any]:
+    """Everything the landing page shows as SchemaGuru output, produced by the real library."""
+    from schemaguru.__about__ import __version__
+    from schemaguru.catalog.registry import dialects
+    from schemaguru.config import Config
+    from schemaguru.pii.mask import mask_free_text
+    from schemaguru.render import profile_names
+
+    guru = shop.guru
+    n = naive_counts(shop.conn)
+    q = LANDING_QUESTION
+    after = guru.context(q).text
+    before = shop.before.context(q).text
+    hub = guru.handle_tool_call("find_join_path", {"from": "shop.orders", "to": "shop.events"})
+    broken = guru.handle_tool_call(
+        "find_join_path", {"from": "shop.broken_child", "to": "shop.ref_parent"}
+    )
+    child_rows = int(shop.conn.execute("SELECT COUNT(*) FROM shop.broken_child").fetchone()[0])
+    joined_rows = int(
+        shop.conn.execute(
+            "SELECT COUNT(*) FROM shop.broken_child c JOIN shop.ref_parent p ON c.parent_id = p.id"
+        ).fetchone()[0]
+    )
+    blow_up = n["orders_x_accounts_x_events"] / n["orders"]
+    after_lines = []
+    for line in after.splitlines():
+        trap = next((t for t, needle in _TRAP_LINES if needle in line), None)
+        after_lines.append({"text": line, "trap": trap})
+    traps = [
+        {
+            "id": "hub",
+            "title": "A hub join that multiplies rows",
+            "naive": (
+                f"{n['orders_x_accounts_x_events']:,} rows for {n['orders']:,} orders "
+                f"({blow_up:,.1f}x)"
+            ),
+            "evidence": "pivots through hub shop.accounts",
+            "source": "find_join_path",
+        },
+        {
+            "id": "soft_delete",
+            "title": "A soft-delete flag that is TRUE or NULL",
+            "naive": f"WHERE NOT deleted returns {n['not_deleted']:,} rows; {n['live']:,} are live",
+            "evidence": "live rows: (deleted IS NULL OR NOT deleted)",
+            "source": "context",
+        },
+        {
+            "id": "case_drift",
+            "title": "An enum that drifted in case",
+            "naive": (
+                f"status = 'paid' counts {n['status_paid_exact']:,}; "
+                f"{n['status_paid_any_case']:,} are paid"
+            ),
+            "evidence": "case drift: 'paid'/'PAID' differ only in case",
+            "source": "context",
+        },
+        {
+            "id": "broken_join",
+            "title": "A join that is declared but almost never matches",
+            "naive": f"{joined_rows:,} of {child_rows:,} child rows find a parent",
+            "evidence": "broken joins are refused",
+            "source": "find_join_path",
+        },
+    ]
+    for t in traps:
+        source = {"context": after, "find_join_path": hub["text"] + "\n" + broken["text"]}
+        assert t["evidence"] in source[t["source"]], t["id"]
+    bench = _benchmark()
+    return {
+        "question": q,
+        "before": before,
+        "after_lines": after_lines,
+        "before_tokens": guru.counter.count(before),
+        "after_tokens": guru.counter.count(after),
+        "schema_dump_tokens": guru.counter.count(schema_dump(guru)),
+        "traps": traps,
+        "readers": dialects(),
+        "tools": [t["name"] for t in guru.tools()],
+        "profiles": profile_names(),
+        "value_policy": Config().sampling.llm_values,
+        "pii_example": {"in": PII_EXAMPLE_IN, "out": mask_free_text(PII_EXAMPLE_IN)[0]},
+        "scale": {
+            "tables": bench["size"]["tables"],
+            "context_p95_s": round(bench["metrics"]["context_p95_ms"] / 1000, 1),
+        },
+        "schemaguru_version": __version__,
+    }
 
 
 # ----- reference pages ----------------------------------------------------------------------
@@ -239,6 +358,10 @@ def generate() -> dict[str, str]:
     }
     with tempfile.TemporaryDirectory() as d, shop_guru(Path(d)) as shop:
         out.update({f"generated/{k}": v for k, v in shop_snippets(shop).items()})
+        out["generated/landing.json"] = (
+            json.dumps(landing_data(shop), indent=1, sort_keys=True, ensure_ascii=False) + "\n"
+        )
+    out["generated/scale_claim.md"] = scale_claim()
     return out
 
 

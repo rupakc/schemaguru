@@ -1,0 +1,245 @@
+{
+ "after_lines": [
+  {
+   "text": "Legend:",
+   "trap": null
+  },
+  {
+   "text": "  ⚠ a hazard: measured, declared by a person, or drafted (then marked (draft)).",
+   "trap": null
+  },
+  {
+   "text": "  ≈ / ≥ estimated from a sample of a large table; never verified.",
+   "trap": null
+  },
+  {
+   "text": "  (draft) written by a language model and not checked.",
+   "trap": null
+  },
+  {
+   "text": "  measured <date> an observed number; verified <date> a claim that passed its check.",
+   "trap": null
+  },
+  {
+   "text": "  (human, unchecked) / (declared, unchecked) stated by a person or a declaration; not yet checked against the data.",
+   "trap": null
+  },
+  {
+   "text": "  Absence of a warning is not verification.",
+   "trap": null
+  },
+  {
+   "text": "",
+   "trap": null
+  },
+  {
+   "text": "Glossary:",
+   "trap": null
+  },
+  {
+   "text": "  active customer: ordered in the last 90 days [tables: shop.orders, shop.customers]",
+   "trap": null
+  },
+  {
+   "text": "",
+   "trap": null
+  },
+  {
+   "text": "[shop.customers]",
+   "trap": null
+  },
+  {
+   "text": "  1,000 rows (measured 2026-11-24)",
+   "trap": null
+  },
+  {
+   "text": "  Columns:",
+   "trap": null
+  },
+  {
+   "text": "    customer_id  INTEGER  PK (unique, measured 2026-11-24); ← shop.orders.customer_id (coverage 100%, measured 2026-11-24); distinct 1,000 (measured 2026-11-24)",
+   "trap": null
+  },
+  {
+   "text": "    email        VARCHAR  distinct 1,000 (measured 2026-11-24)",
+   "trap": null
+  },
+  {
+   "text": "    phone        VARCHAR  null 10% (measured 2026-11-24); distinct 900 (measured 2026-11-24)",
+   "trap": null
+  },
+  {
+   "text": "    segment      VARCHAR  values: 'retail' (334), 'vip' (333), 'wholesale' (333) (measured 2026-11-24); distinct 3 (measured 2026-11-24)",
+   "trap": null
+  },
+  {
+   "text": "  Provenance: measured 2026-11-24",
+   "trap": null
+  },
+  {
+   "text": "",
+   "trap": null
+  },
+  {
+   "text": "[shop.orders] One row per order placed on the storefront.",
+   "trap": null
+  },
+  {
+   "text": "  ⚠ Pitfall: Refunds are a second row with negative amount. — fix: Filter amount > 0 for gross revenue.",
+   "trap": null
+  },
+  {
+   "text": "  ⚠ WAIVED until 2027-01-31 (legacy upper-case rows being migrated): status: declared values 'paid','refunded','cancelled' — observed also 'PAID' (412 rows)",
+   "trap": "case_drift"
+  },
+  {
+   "text": "  ⚠ status: case drift: 'paid'/'PAID' differ only in case — compare case-insensitively",
+   "trap": "case_drift"
+  },
+  {
+   "text": "  ⚠ created_at: stored as VARCHAR, holds ISO-8601 date text (100% of values, measured 2026-11-24) — CAST before comparing",
+   "trap": null
+  },
+  {
+   "text": "  Answers: revenue by month; average basket size",
+   "trap": null
+  },
+  {
+   "text": "  10,000 rows (measured 2026-11-24)",
+   "trap": null
+  },
+  {
+   "text": "  live rows: (deleted IS NULL OR NOT deleted) (human, unchecked)",
+   "trap": "soft_delete"
+  },
+  {
+   "text": "  Columns:",
+   "trap": null
+  },
+  {
+   "text": "    order_id     INTEGER  PK (unique, measured 2026-11-24); ← shop.order_items.order_id (coverage 100%, measured 2026-11-24), ← shop.payments.order_id (coverage 5%, measured 2026-11-24); distinct 10,000 (measured 2026-11-24)",
+   "trap": null
+  },
+  {
+   "text": "    customer_id  INTEGER  → shop.customers.customer_id N:1, match 98.04% (measured 2026-11-24); distinct 1,020 (measured 2026-11-24)",
+   "trap": null
+  },
+  {
+   "text": "    account_id   INTEGER  → shop.accounts.account_id N:1, match 100%, coverage 40% (measured 2026-11-24); distinct 40 (measured 2026-11-24)",
+   "trap": null
+  },
+  {
+   "text": "    status       VARCHAR  values: 'paid','refunded','cancelled' (+ observed 'PAID'); distinct 4 (measured 2026-11-24); Payment state of the order.",
+   "trap": null
+  },
+  {
+   "text": "    created_at   VARCHAR  text holding ISO-8601 date text (see warning); note: ISO-8601 timestamp stored as STRING (human, unchecked); distinct 10,000 (measured 2026-11-24)",
+   "trap": null
+  },
+  {
+   "text": "    deleted      BOOLEAN  values: TRUE (300) (measured 2026-11-24); null 97% (measured 2026-11-24); distinct 1 (measured 2026-11-24)",
+   "trap": null
+  },
+  {
+   "text": "  Provenance: human overlay · measured 2026-11-24",
+   "trap": null
+  },
+  {
+   "text": "",
+   "trap": null
+  },
+  {
+   "text": "Join paths (join keys, advisory; support = the weakest hop's match or coverage):",
+   "trap": null
+  },
+  {
+   "text": "  shop.customers → shop.orders · support 100%",
+   "trap": null
+  },
+  {
+   "text": "    orders.customer_id = customers.customer_id (N:1)",
+   "trap": null
+  },
+  {
+   "text": "",
+   "trap": null
+  },
+  {
+   "text": "Not shown: no other candidate tables.",
+   "trap": null
+  }
+ ],
+ "after_tokens": 753,
+ "before": "[shop.customers]\n  unmeasured: nothing here has been measured yet; figures are declared or drafted\n  1,000 rows (catalog stats)\n  Columns:\n    customer_id  INTEGER  PK (declared, enforced)\n    email        VARCHAR\n    phone        VARCHAR\n    segment      VARCHAR\n  Provenance: catalog only\n\n[shop.orders]\n  unmeasured: nothing here has been measured yet; figures are declared or drafted\n  10,000 rows (catalog stats)\n  Columns:\n    order_id     INTEGER  PK (declared, enforced)\n    customer_id  INTEGER\n    account_id   INTEGER\n    status       VARCHAR\n    created_at   VARCHAR\n    deleted      BOOLEAN\n  Provenance: catalog only\n\nNot shown: no other candidate tables.",
+ "before_tokens": 168,
+ "pii_example": {
+  "in": "Ask jane.doe@example.com about order 42",
+  "out": "Ask <email> about order 42"
+ },
+ "profiles": [
+  "agent",
+  "planner",
+  "router",
+  "verifier"
+ ],
+ "question": "monthly revenue by customer segment",
+ "readers": [
+  "bigquery",
+  "clickhouse",
+  "databricks",
+  "duckdb",
+  "mysql",
+  "oracle",
+  "postgres",
+  "redshift",
+  "snowflake",
+  "trino",
+  "tsql"
+ ],
+ "scale": {
+  "context_p95_s": 28.6,
+  "tables": 500000
+ },
+ "schema_dump_tokens": 287,
+ "schemaguru_version": "0.2.0",
+ "tools": [
+  "schema_context",
+  "search_tables",
+  "describe_table",
+  "find_join_path",
+  "column_values",
+  "explain_term",
+  "lineage"
+ ],
+ "traps": [
+  {
+   "evidence": "pivots through hub shop.accounts",
+   "id": "hub",
+   "naive": "3,335,000 rows for 10,000 orders (333.5x)",
+   "source": "find_join_path",
+   "title": "A hub join that multiplies rows"
+  },
+  {
+   "evidence": "live rows: (deleted IS NULL OR NOT deleted)",
+   "id": "soft_delete",
+   "naive": "WHERE NOT deleted returns 0 rows; 9,700 are live",
+   "source": "context",
+   "title": "A soft-delete flag that is TRUE or NULL"
+  },
+  {
+   "evidence": "case drift: 'paid'/'PAID' differ only in case",
+   "id": "case_drift",
+   "naive": "status = 'paid' counts 5,000; 5,412 are paid",
+   "source": "context",
+   "title": "An enum that drifted in case"
+  },
+  {
+   "evidence": "broken joins are refused",
+   "id": "broken_join",
+   "naive": "10 of 1,000 child rows find a parent",
+   "source": "find_join_path",
+   "title": "A join that is declared but almost never matches"
+  }
+ ],
+ "value_policy": "masked"
+}

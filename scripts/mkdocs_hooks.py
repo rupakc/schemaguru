@@ -7,6 +7,8 @@ them without copying files into ``docs/``.
 
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,8 @@ from mkdocs.structure.files import File, Files
 
 DEMO = Path(__file__).resolve().parent.parent / "site-demo"
 DEST = "demo-assets"
+LANDING = Path(__file__).resolve().parent.parent / "docs" / "generated" / "landing.json"
+log = logging.getLogger("mkdocs.hooks.schemaguru")
 
 
 def on_files(files: Files, config: Any) -> Files:
@@ -21,3 +25,12 @@ def on_files(files: Files, config: Any) -> Files:
         if path.is_file() and path.suffix in {".js", ".css", ".json"}:
             files.append(File.generated(config, f"{DEST}/{path.name}", abs_src_path=str(path)))
     return files
+
+
+def on_env(env: Any, config: Any, files: Any) -> Any:
+    """Hand the generated landing data to the templates (``landing``); warn if it is missing."""
+    if not LANDING.is_file():
+        log.warning("%s is missing; run python scripts/gen_docs.py", LANDING)
+        return env
+    env.globals["landing"] = json.loads(LANDING.read_text(encoding="utf-8"))
+    return env

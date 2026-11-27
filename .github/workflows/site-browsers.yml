@@ -1,0 +1,61 @@
+name: Site browsers
+
+# The built site and the in-browser playground in Chromium, Firefox and WebKit (Safari's engine):
+# tests/site/test_site_smoke.py against a site built exactly as docs.yml builds it. It does not
+# gate the deploy (docs.yml); it reports whether the published page works in each engine.
+# SCHEMAGURU_FORBID_SKIPS=1 turns a skip (browser missing, playground did not start) into a failure.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "site-playground/**"
+      - "scripts/**"
+      - "tests/site/**"
+      - "mkdocs.yml"
+      - "src/**"
+      - ".github/workflows/site-browsers.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: site-browsers-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the build and test tools
+        run: pip install build "mkdocs-material" "mkdocstrings[python]" pytest playwright
+      - name: Build the schemaguru wheel from this commit and install it
+        run: |
+          python -m build --wheel --outdir build/playground
+          pip install "$(ls build/playground/schemaguru-*.whl)[duckdb,lineage]"
+      - name: Fetch the pinned factlang wheel and build the playground store
+        run: |
+          pip download "factlang==$(python -c 'import importlib.metadata as m; print(m.version("factlang"))')" \
+            --no-deps --only-binary=:all: -d build/playground
+          python scripts/build_playground_store.py --out build/playground
+      - name: Build the site
+        run: mkdocs build --strict
+        env:
+          NO_MKDOCS_2_WARNING: "1"
+      - name: Install ${{ matrix.engine }}
+        run: python -m playwright install --with-deps ${{ matrix.engine }}
+      - name: Smoke-test the site in ${{ matrix.engine }}
+        run: pytest -m integration tests/site -q -rs -p no:cacheprovider
+        env:
+          SG_BROWSER: ${{ matrix.engine }}
+          SCHEMAGURU_FORBID_SKIPS: "1"

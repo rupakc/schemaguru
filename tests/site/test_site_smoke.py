@@ -1,6 +1,7 @@
 """The built landing page in a real browser: narrow, dark, reduced motion, keyboard tabs.
 
-Needs a built site (``mkdocs build``) and Playwright with Chromium; skipped otherwise. The site
+Needs a built site (``mkdocs build``) and Playwright with a browser; skipped otherwise. Runs in
+Chromium; ``SG_BROWSER=firefox`` or ``SG_BROWSER=webkit`` (Safari's engine) picks another. The site
 is served from ``site/`` on a random local port; nothing leaves the machine.
 """
 
@@ -43,13 +44,18 @@ def base() -> Iterator[str]:
         server.server_close()
 
 
+ENGINE = os.environ.get("SG_BROWSER", "chromium")  # chromium | firefox | webkit (Safari's engine)
+
+
 @pytest.fixture(scope="module")
 def browser() -> Iterator[Any]:
+    if ENGINE not in ("chromium", "firefox", "webkit"):
+        pytest.fail(f"SG_BROWSER={ENGINE!r}: use chromium, firefox or webkit")
     with sync_api.sync_playwright() as pw:
         try:
-            b = pw.chromium.launch()
+            b = getattr(pw, ENGINE).launch()
         except Exception as e:  # no browser binary installed
-            pytest.skip(f"Chromium is not available: {e}")
+            pytest.skip(f"{ENGINE} is not available: {e}")
         yield b
         b.close()
 

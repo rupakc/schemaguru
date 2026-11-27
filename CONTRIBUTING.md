@@ -69,13 +69,22 @@ The browser unpacks the wheels without installing their dependencies and loads o
 and `pyyaml`, so anything else the glue imports must come from the wheels. `docs.yml` smoke-tests
 that with `pip install --no-deps build/playground/*.whl PyYAML` in a clean venv.
 
-The browser tests in `tests/site` drive the built `site/` in Chromium. They are local-only (the CI
-integration job does not run them): after `mkdocs build --strict`,
+The browser tests in `tests/site` drive the built `site/` in Chromium, or in Firefox or WebKit
+(Safari's engine) with `SG_BROWSER=firefox|webkit`. The CI integration job does not run them;
+`.github/workflows/site-browsers.yml` runs them in all three engines on each docs change on
+`main` (it does not gate the deploy). Locally, after `mkdocs build --strict`:
 
 ```bash
-pip install playwright && playwright install chromium
+pip install playwright && playwright install chromium   # or firefox / webkit
 pytest tests/site -m integration -q
+SG_BROWSER=webkit pytest tests/site -m integration -q
 ```
+
+A playground that does not start (no network for the CDN) skips its tests; set
+`SCHEMAGURU_FORBID_SKIPS=1` to make that a failure, as the workflow does.
+
+To change the link-preview image, edit `scripts/social_card/card.html` and run
+`python3 scripts/render_social_card.py`; the PNG (`docs/assets/social-card.png`) is committed.
 
 The "which readers are tested live" statement is generated (`docs/generated/readers_tested.md`,
 from the integration job's engine list in `ci.yml`); the README and the wiki carry a verbatim

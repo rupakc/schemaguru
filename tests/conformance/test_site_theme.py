@@ -54,6 +54,49 @@ def test_text_tokens_meet_aa(scheme: str, fg: str, bg: str) -> None:
     assert contrast(tokens[fg], tokens[bg]) >= 4.5
 
 
+_INKS = ["--sg-teal-ink", "--sg-amber-ink", "--sg-sky-ink", "--sg-rose-ink"]
+
+
+@pytest.mark.parametrize("scheme", ["default", "slate"])
+@pytest.mark.parametrize("bg", ["--sg-bg", "--sg-surface", "--sg-code-bg"])
+@pytest.mark.parametrize("ink", _INKS)
+def test_accent_ink_text_meets_aa(scheme: str, bg: str, ink: str) -> None:
+    tokens = scheme_tokens(CSS_PATH.read_text(encoding="utf-8"), scheme)
+    assert contrast(tokens[ink], tokens[bg]) >= 4.5
+
+
+@pytest.mark.parametrize("scheme", ["default", "slate"])
+@pytest.mark.parametrize("bg", ["--sg-bg", "--sg-surface", "--sg-code-bg"])
+def test_focus_outline_meets_non_text_contrast(scheme: str, bg: str) -> None:
+    tokens = scheme_tokens(CSS_PATH.read_text(encoding="utf-8"), scheme)
+    assert contrast(tokens["--sg-focus"], tokens[bg]) >= 3.0
+
+
+@pytest.mark.parametrize("scheme", ["default", "slate"])
+@pytest.mark.parametrize("fg", ["--sg-header-fg", "--sg-header-fg-muted"])
+def test_header_text_meets_aa(scheme: str, fg: str) -> None:
+    tokens = scheme_tokens(CSS_PATH.read_text(encoding="utf-8"), scheme)
+    assert contrast(tokens[fg], tokens["--sg-header-bg"]) >= 4.5
+
+
+def test_header_maps_material_text_to_header_tokens() -> None:
+    css = CSS_PATH.read_text(encoding="utf-8")
+    assert "--md-primary-bg-color: var(--sg-header-fg)" in css
+    assert "--md-primary-bg-color--light: var(--sg-header-fg-muted)" in css
+
+
+def test_reveal_hidden_state_is_gated_on_js() -> None:
+    css = CSS_PATH.read_text(encoding="utf-8")
+    for selector, body in re.findall(r"([^{}]+)\{([^}]*)\}", css):
+        if ".sg-reveal" in selector and re.search(r"opacity:\s*0\b", body):
+            assert ".sg-js" in selector and ":not(.is-visible)" in selector, selector
+
+
+def test_js_sets_sg_js_class() -> None:
+    js = (ROOT / "docs" / "assets" / "schemaguru.js").read_text(encoding="utf-8")
+    assert 'classList.add("sg-js")' in js
+
+
 def test_negative_control_contrast() -> None:
     assert contrast("#777777", "#888888") < 4.5
     assert contrast("#000000", "#ffffff") == pytest.approx(21)

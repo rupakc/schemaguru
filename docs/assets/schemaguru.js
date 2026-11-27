@@ -1,6 +1,7 @@
 /* SchemaGuru docs behaviour: scroll reveal, copy chips, accessible tabs. No dependencies. */
 (function () {
   "use strict";
+  document.documentElement.classList.add("sg-js");
 
   function reveal() {
     var items = document.querySelectorAll(".sg-reveal");

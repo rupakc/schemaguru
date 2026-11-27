@@ -6,6 +6,10 @@
     number typed into this template. docs/index.md supplies the integration tabs and Install,
     rendered by `{{ super() }}` in the content block. -#}
 
+{% block htmltitle %}
+  <title>SchemaGuru: schema intelligence for AI agents on data warehouses</title>
+{% endblock %}
+
 {% block extrahead %}
   {{ super() }}
   <meta property="og:title" content="SchemaGuru: schema intelligence for AI agents on data warehouses">

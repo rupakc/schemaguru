@@ -16,15 +16,31 @@ import re
 import shutil
 import sys
 import tempfile
+from dataclasses import replace
 from datetime import datetime
 
 import schemaguru as sg
 from schemaguru.pii.mask import mask_free_text
+from schemaguru.pii.sweep import sweep_detail
+from schemaguru.render.table_block import predicate_text
 from schemaguru.store.sqlite import SEARCH_BACKEND_KEY
 
 SG_VERSION = sg.__version__
 _CODE = re.compile(r"^(SG\d{3})\b")
-_state = {"guru": None}
+_state = {"guru": None, "base": None, "user": None}
+PROFILES = ("agent", "planner", "verifier", "router")
+MAX_QUESTION, MAX_MASK_TEXT, MAX_OVERLAY = 500, 10_000, 20_000
+MASK_MODES = ("masked", "none")
+
+
+def _error(code, message):
+    # ``generic``: the code is this glue's or a Python exception's, not a SchemaGuru
+    # diagnostic code (SGnnn), so the page must not present it as one
+    text = f"{code} {message}"
+    generic = not _CODE.match(code)
+    return json.dumps(
+        {"error": {"code": code, "message": message, "generic": generic}, "text": text}
+    )
 
 
 def _envelope(exc):
@@ -35,7 +51,15 @@ def _envelope(exc):
         code = m.group(1) if m else type(exc).__name__
     if message.startswith(code + " "):
         message = message[len(code) + 1 :]
-    return json.dumps({"error": {"code": code, "message": message}, "text": f"{code} {message}"})
+    return _error(code, message)
+
+
+def _check_question(question):
+    if not isinstance(question, str) or not question.strip():
+        return _error("empty", "the question is empty")
+    if len(question) > MAX_QUESTION:
+        return _error("too_large", f"the question is over {MAX_QUESTION} characters")
+    return None
 
 
 def _guru():
@@ -53,6 +77,12 @@ def sg_open(store_path, manifest_json):
     """Open the store offline and load the base overlay that sits next to it."""
     try:
         manifest = json.loads(manifest_json)
+        if manifest.get("schemaguru_version") != SG_VERSION:
+            return _error(
+                "version_mismatch",
+                f"the store was built by schemaguru {manifest.get('schemaguru_version')}, "
+                f"this wheel is {SG_VERSION}",
+            )
         now = datetime.fromisoformat(manifest["now"])
         if _state["guru"] is not None:
             _state["guru"].close()
@@ -65,8 +95,9 @@ def sg_open(store_path, manifest_json):
             now=lambda: now,
         )
         _state["guru"] = guru
-        overlay = os.path.join(os.path.dirname(store_path), manifest["overlay"])
-        guru.load_overlays(overlay)
+        _state["base"] = os.path.join(os.path.dirname(store_path), manifest["overlay"])
+        _state["user"] = os.path.join(os.path.dirname(store_path), "user_overlay.yaml")
+        guru.load_overlays(_state["base"])
         tables = sorted(t.ref.canonical() for t in guru.store.iter_tables())
         return json.dumps(
             {
@@ -81,6 +112,11 @@ def sg_open(store_path, manifest_json):
 
 
 def sg_context(question, profile="agent", budget_tokens=4000):
+    bad = _check_question(question)
+    if bad:
+        return bad
+    if profile not in PROFILES:
+        return _error("bad_profile", f"profile must be one of {', '.join(PROFILES)}")
     try:
         view = _guru().context(question, profile=profile, budget_tokens=int(budget_tokens))
         return json.dumps(
@@ -98,13 +134,24 @@ def sg_context(question, profile="agent", budget_tokens=4000):
 
 def _tool(name, args):
     try:
-        return json.dumps(_guru().handle_tool_call(name, args))
+        out = _guru().handle_tool_call(name, args)
+        err = out.get("error")
+        if isinstance(err, dict) and "generic" not in err:
+            err["generic"] = not _CODE.match(str(err.get("code", "")))
+        return json.dumps(out)
     except Exception as exc:
         return _envelope(exc)
 
 
 def sg_path(a, b):
-    return _tool("find_join_path", {"from": a, "to": b})
+    """The library's own find_join_path output. The library has no public renderer for a path's
+    SQL (only context views carry snippets), so none is made up here: ``sql`` stays null and
+    ``sql_note`` tells the page where snippets appear."""
+    out = json.loads(_tool("find_join_path", {"from": a, "to": b}))
+    if "error" not in out:
+        out["sql"] = None
+        out["sql_note"] = "SQL snippets appear in the context view"
+    return json.dumps(out)
 
 
 def sg_lineage(ref, direction="upstream", depth=2):
@@ -112,11 +159,89 @@ def sg_lineage(ref, direction="upstream", depth=2):
 
 
 def sg_mask(text, mode="masked"):
+    if mode not in MASK_MODES:
+        return _error("bad_mode", f"mode must be one of {', '.join(MASK_MODES)}")
+    if not isinstance(text, str) or not text.strip():
+        return _error("empty", "the text is empty")
+    if len(text) > MAX_MASK_TEXT:
+        return _error("too_large", f"the text is over {MAX_MASK_TEXT} characters")
     try:
-        if mode != "masked":
-            raise ValueError(f"unknown mask mode {mode!r}")
         masked, hits = mask_free_text(text)
-        return json.dumps({"mode": mode, "text": masked, "hits": hits})
+        categories = sorted(set(sweep_detail(text)[1]))
+        if hits > len(sweep_detail(text)[1]):
+            categories = sorted({*categories, "name"})
+        if mode == "none":
+            masked, literals = predicate_text(masked, "none")
+            hits += literals
+            if literals:
+                categories = sorted({*categories, "literal"})
+        return json.dumps(
+            {
+                "mode": mode,
+                "text": masked,
+                "hits": hits,
+                "categories": categories,
+                "table_block": _table_block(mode),
+            }
+        )
+    except Exception as exc:
+        return _envelope(exc)
+
+
+def _table_block(mode):
+    """``describe_table shop.customers`` under ``sampling.llm_values=mode`` (config restored)."""
+    guru = _guru()
+    cfg = guru.config
+    guru.config = replace(cfg, sampling=replace(cfg.sampling, llm_values=mode))
+    try:
+        return guru.handle_tool_call("describe_table", {"table": "shop.customers"})["text"]
+    finally:
+        guru.config = cfg
+
+
+def _view(question):
+    v = _guru().context(question)
+    return {"text": v.text, "fingerprint": v.fingerprint}
+
+
+def sg_override(overlay_yaml, question):
+    """Load a user overlay on top of the base one; ephemeral, ``sg_reset`` drops it."""
+    bad = _check_question(question)
+    if bad:
+        return bad
+    if not isinstance(overlay_yaml, str) or len(overlay_yaml) > MAX_OVERLAY:
+        return _error("too_large", f"the overlay is over {MAX_OVERLAY} characters")
+    try:
+        guru = _guru()
+        # the base overlay's own findings are not the user's: report only what the YAML adds
+        known = {(d.code, d.message) for d in guru.load_overlays(_state["base"])}
+        before = _view(question)
+        with open(_state["user"], "w", encoding="utf-8") as f:
+            f.write(overlay_yaml)
+        diags = guru.load_overlays(_state["base"], _state["user"])
+        after = _view(question)
+        return json.dumps(
+            {
+                "diagnostics": [
+                    {"code": d.code, "severity": d.severity.value, "message": d.message}
+                    for d in diags
+                    if (d.code, d.message) not in known
+                ],
+                "before": before,
+                "after": after,
+            }
+        )
+    except Exception as exc:
+        return _envelope(exc)
+
+
+def sg_reset(question):
+    bad = _check_question(question)
+    if bad:
+        return bad
+    try:
+        _guru().load_overlays(_state["base"])
+        return json.dumps(_view(question))
     except Exception as exc:
         return _envelope(exc)
 
@@ -154,6 +279,16 @@ def smoke(playground_dir):
             raise RuntimeError("sg_lineage: no upstream nodes")
         if _ok(sg_mask("write to jane.doe@example.org"), "sg_mask")["hits"] < 1:
             raise RuntimeError("sg_mask: the e-mail was not masked")
+        q = manifest["questions"][0]
+        masked = _ok(sg_mask(manifest["privacy_examples"][0]["text"], "none"), "sg_mask")
+        if not masked["table_block"]:
+            raise RuntimeError("sg_mask: no table block")
+        first = _ok(sg_reset(q), "sg_reset")["fingerprint"]
+        over = _ok(sg_override(manifest["override_example"], q), "sg_override")
+        if over["after"]["fingerprint"] == over["before"]["fingerprint"]:
+            raise RuntimeError("sg_override: the override changed nothing")
+        if _ok(sg_reset(q), "sg_reset")["fingerprint"] != first:
+            raise RuntimeError("sg_reset: the base view was not restored")
         return f"ok {SG_VERSION} {opened['search_backend']}"
     finally:
         if _state["guru"] is not None:

@@ -107,6 +107,20 @@ SNIPPET_DIAGS = sorted({f"{d.code} {d.message}" for d in _v.diagnostics if d.cod
   const m = show("sg_mask", await timed("sg_mask", () => glue.sg_mask("write to jane.doe@example.org")));
   console.log("sg_mask", JSON.stringify(m.text), "hits", m.hits);
 
+  const q0 = manifest.questions[0];
+  const mn = show("sg_mask", await timed("sg_mask none", () =>
+    glue.sg_mask(manifest.privacy_examples.at(-1).text, "none")));
+  console.log("sg_mask none", JSON.stringify(mn.text), "categories", mn.categories.join(","),
+    "table_block chars", mn.table_block.length);
+  const ov = show("sg_override", await timed("sg_override", () =>
+    glue.sg_override(manifest.override_example, q0)));
+  console.log("sg_override diagnostics", ov.diagnostics.length,
+    "changed", ov.before.fingerprint !== ov.after.fingerprint);
+  const rs = show("sg_reset", await timed("sg_reset", () => glue.sg_reset(q0)));
+  console.log("sg_reset fingerprint equals before", rs.fingerprint === ov.before.fingerprint);
+  if (ov.before.fingerprint === ov.after.fingerprint || rs.fingerprint !== ov.before.fingerprint)
+    throw new Error("override/reset did not behave");
+
   for (const [label, ms] of timings) console.log(`time ${label} ${ms.toFixed(0)} ms`);
 } catch (e) {
   console.error("FAIL", e && e.stack ? e.stack : e);

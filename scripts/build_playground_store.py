@@ -57,6 +57,40 @@ LINEAGE_SUBJECTS = (
     "analytics.revenue_by_segment.revenue",
     "analytics.revenue_by_segment.segment",
 )
+# synthetic on purpose: nothing here resembles a real provider's key format
+PRIVACY_EXAMPLES: tuple[dict[str, str], ...] = (
+    {"label": "E-mail", "mode": "masked", "text": "Ping jane.doe@example.org about the refund."},
+    {"label": "Phone", "mode": "masked", "text": "Call +44 20 7946 0958 before noon."},
+    {"label": "IBAN", "mode": "masked", "text": "Refund to GB82 WEST 1234 5698 7654 32 today."},
+    {
+        "label": "Card number",
+        "mode": "masked",
+        "text": "Test card 4111 1111 1111 1111 was declined.",
+    },
+    {
+        "label": "Key and value",
+        "mode": "masked",
+        "text": "connect with password=example-not-a-secret",
+    },
+    {
+        "label": "Quoted literal",
+        "mode": "none",
+        "text": "Mail jane.doe@example.org where segment = 'vip'",
+    },
+)
+OVERRIDE_EXAMPLE = """\
+version: 1
+warehouse: shop
+tables:
+  shop.customers:
+    description: Playground override wins.
+    pitfalls:
+      - rule: segment is free text entered by sales; do not group on it without lower()
+        fix: group on lower(segment)
+lineage:
+  - table: analytics.paid_revenue
+    ignore: true
+"""
 EXTRA_QUESTIONS = ("revenue by customer segment from the analytics views",)
 
 
@@ -100,6 +134,11 @@ def build(out: Path) -> dict[str, Any]:
         "lineage_subjects": list(LINEAGE_SUBJECTS),
         "questions": [*QUESTIONS, *EXTRA_QUESTIONS],
         "search_backend_at_build": backend,
+        "privacy_examples": [
+            {"label": e["label"], "text": e["text"], "mode": e["mode"]} for e in PRIVACY_EXAMPLES
+        ],
+        "override_example": OVERRIDE_EXAMPLE,
+        "precomputed": {},
     }
     (out / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest

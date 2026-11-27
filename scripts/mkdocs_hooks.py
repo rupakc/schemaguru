@@ -65,8 +65,9 @@ def _publish_playground(files: Files, config: Any) -> None:
             missing.append(piece)
     if missing:
         log.warning(
-            "%s missing from %s: build the wheels into it and run "
-            "python scripts/build_playground_store.py, or the playground cannot load",
+            "%s missing from %s: the playground cannot load. Build it as CONTRIBUTING.md, "
+            "section 'Docs site', describes (wheels, factlang wheel, then "
+            "scripts/build_playground_store.py)",
             ", ".join(missing),
             PLAYGROUND_BUILD,
         )

@@ -17,9 +17,10 @@ mypy --strict src
 
 ## Global constraints
 
-- Package `schemaguru`, `src/` layout, version `0.1.0` in `src/schemaguru/__about__.py`.
+- Package `schemaguru`, `src/` layout, version in `src/schemaguru/__about__.py`.
 - Python `>=3.10`; CI matrix 3.10, 3.11, 3.12, 3.13 × ubuntu, macos, windows.
 - Runtime dependencies exactly: `factlang>=0.1.2,<0.2`, `PyYAML>=6`. Everything else is an extra imported lazily inside functions. FactLang is installed from PyPI everywhere (CI, docs, dev).
+- Docs site and playground: build, generate and test them as `CONTRIBUTING.md` ("Docs site") says; `docs.yml` runs the same commands.
 - **FactLang seam:** only `src/schemaguru/measure/flbridge.py`, `src/schemaguru/catalog/executor.py` and `src/schemaguru/render/fragments.py` import `factlang`; everything else uses SchemaGuru types. Enforced by `tests/architecture/test_layers.py::test_factlang_seam`.
 - **SchemaGuru never writes measurement SQL** (spec §5.2). The only SQL in `src/` is catalog-metadata SQL in `catalog/readers/*.py`, with bind parameters for every value.
 - Layer rule spec §5.1; `mypy --strict src`, `ruff check`, `ruff format --check` blocking.

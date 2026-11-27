@@ -36,15 +36,27 @@ jobs:
             --no-deps --only-binary=:all: -d build/playground
       - name: Build the playground store
         run: python scripts/build_playground_store.py --out build/playground
-      - name: Smoke-test the glue in a clean venv (the wheels only, no extras)
+      - name: Smoke-test the glue in a clean venv (what the browser has - the wheels and PyYAML, no PyPI deps)
         run: |
           python -m venv /tmp/smoke
-          /tmp/smoke/bin/pip install build/playground/*.whl
+          /tmp/smoke/bin/pip install --no-deps build/playground/*.whl PyYAML
           cd /tmp && /tmp/smoke/bin/python -I "$GITHUB_WORKSPACE/site-playground/glue.py" "$GITHUB_WORKSPACE/build/playground"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run the playground glue under Pyodide (the browser's runtime)
+        run: |
+          mkdir -p "$RUNNER_TEMP/pyodide"
+          (cd "$RUNNER_TEMP/pyodide" && npm init -y >/dev/null && npm i pyodide@0.29.0)
+          node scripts/pyodide_check.mjs "$RUNNER_TEMP/pyodide/node_modules/pyodide" build/playground
       - name: Check the generated pages are current
         run: |
           python scripts/gen_docs.py
           git diff --exit-code -- docs/
+      - name: Test the docs hooks and the landing page
+        run: |
+          pip install pytest
+          pytest tests/conformance/test_mkdocs_hooks.py tests/conformance/test_landing.py -q -p no:cacheprovider
       - name: Build the site
         run: mkdocs build --strict
         env:

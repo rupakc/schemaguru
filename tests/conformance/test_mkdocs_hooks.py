@@ -68,6 +68,9 @@ def test_hook_warns_without_wheels(
     with caplog.at_level(logging.WARNING):
         files = _publish(tmp_path / "missing", monkeypatch)
     assert "playground cannot load" in caplog.text
+    # the warning points at the maintainer docs, and that section exists
+    assert "CONTRIBUTING.md" in caplog.text and "Docs site" in caplog.text
+    assert "\n## Docs site\n" in (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
     for piece in ("schemaguru", "factlang", "playground.db", "playground.json"):
         assert piece in caplog.text
     assert json.loads(files["assets/playground/wheels.json"].content_string) == {

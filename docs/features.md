@@ -8,7 +8,7 @@ hide:
 
 # Features
 
-What works out of the box in 0.2.0 (alpha). Each card links to its guide. Try it first in the
+What works out of the box in 0.2.1 (alpha). Each card links to its guide. Try it first in the
 [playground](playground.md) or read the [landing page](index.md) for the short version.
 
 <div class="sg-cards" markdown>

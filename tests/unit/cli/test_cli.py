@@ -609,7 +609,7 @@ def test_python_dash_m_entry_point(tmp_path: Path) -> None:
         env=env,
         cwd=tmp_path,
     )
-    assert p.returncode == 0 and "schemaguru 0.2.0" in p.stdout
+    assert p.returncode == 0 and "schemaguru 0.2.1" in p.stdout
     assert main(["--version"]) == 0
 
 

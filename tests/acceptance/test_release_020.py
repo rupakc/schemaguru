@@ -95,8 +95,8 @@ def _source_kinds(facts: list[Fact]) -> set[tuple[Provenance, str]]:
 # ----- release ---------------------------------------------------------------------------------
 
 
-def test_version_is_020() -> None:
-    assert sg.__version__ == "0.2.0"
+def test_version_is_in_the_020_line() -> None:
+    assert re.fullmatch(r"0\.2\.\d+", sg.__version__)  # 0.2.x patch releases keep 0.2.0's surface
     assert re.search(r"^## \[0\.2\.0\] - \d{4}-\d{2}-\d{2}$", CHANGELOG, re.M)
     assert "UNRELEASED" not in CHANGELOG
 

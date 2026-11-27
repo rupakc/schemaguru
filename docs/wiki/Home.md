@@ -44,7 +44,7 @@ measurement (see [[Measurement]]).
 
 ## Status of this release
 
-SchemaGuru is at version 0.2.0 (in development, alpha). Everything described in this wiki exists on `main`
+SchemaGuru is at version 0.2.1 (alpha). Everything described in this wiki exists on `main`
 unless the page says otherwise. Two things matter for what you can do today:
 
 - **Measurement needs FactLang.** SchemaGuru never writes measurement SQL itself; every number

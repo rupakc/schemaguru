@@ -202,7 +202,7 @@
   "tables": 500000
  },
  "schema_dump_tokens": 287,
- "schemaguru_version": "0.2.0",
+ "schemaguru_version": "0.2.1",
  "tools": [
   "schema_context",
   "search_tables",

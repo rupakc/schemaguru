@@ -6,9 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-27
+
+No library change: the API, the CLI and the store are those of 0.2.0.
+
 ### Documentation
-- The interactive demo is replaced by an in-browser playground ([playground](docs/playground.md))
-  built from the same commit by the docs workflow.
+- A redesigned [documentation site](https://rupakc.github.io/schemaguru/): a landing page, a
+  features page, and an in-browser playground (the real library under Pyodide, built from the same
+  commit by the docs workflow) that replaces the interactive demo.
+- The SchemaGuru mascot, a meditating guru pondering a schema, as the logo, the site icon and the
+  link-preview card, and at the top of the README (so on PyPI too).
+
+### Fixed
+- The nightly scale benchmark failed on its documented `context_p95_ms` limit: the comparator now
+  also reads `known_limits` from committed results at the same table count, and the first GitHub
+  runner result is committed as that runner's regression baseline.
 
 ## [0.2.0] - 2026-11-26
 
@@ -165,5 +177,8 @@ First release.
   classifiers, join candidate sources, stores, retrievers, embedders, token counters, LLM
   providers, authenticators); a documentation site, a wiki and an interactive demo.
 
-[Unreleased]: https://github.com/rupakc/schemaguru/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/rupakc/schemaguru/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/rupakc/schemaguru/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/rupakc/schemaguru/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/rupakc/schemaguru/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/rupakc/schemaguru/releases/tag/v0.1.0

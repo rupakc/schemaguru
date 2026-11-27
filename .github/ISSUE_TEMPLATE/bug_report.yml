@@ -1,0 +1,45 @@
+name: Bug report
+description: Something SchemaGuru did that it should not have (a wrong fact, a crash, a bad join path).
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please leave out real data, credentials and personal information:
+        a table and column shape, or a small synthetic example, is enough.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The smallest code, CLI command or overlay YAML that shows it.
+      render: python
+  - type: input
+    id: version
+    attributes:
+      label: SchemaGuru version
+      description: "`python -c 'import schemaguru; print(schemaguru.__version__)'`"
+    validations:
+      required: true
+  - type: input
+    id: warehouse
+    attributes:
+      label: Warehouse or reader
+      placeholder: e.g. Snowflake, BigQuery, Postgres, DuckDB, a custom reader
+  - type: input
+    id: environment
+    attributes:
+      label: Python version and OS
+      placeholder: e.g. Python 3.12 on macOS 15
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics or traceback
+      description: Any SGxxx diagnostic codes or the traceback.
+      render: text

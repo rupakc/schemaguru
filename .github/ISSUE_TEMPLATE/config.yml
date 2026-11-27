@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/rupakc/schemaguru/discussions
+    about: Ask how to use SchemaGuru, or share an idea before opening an issue.
+  - name: Documentation and playground
+    url: https://rupakc.github.io/schemaguru/
+    about: Guides, reference, and the in-browser playground.

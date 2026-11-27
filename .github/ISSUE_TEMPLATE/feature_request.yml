@@ -1,0 +1,20 @@
+name: Feature request
+description: A warehouse trap SchemaGuru should catch, a reader, an integration or anything else.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What goes wrong for your agent or your team today? A concrete example helps most.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you would like SchemaGuru to do
+  - type: input
+    id: warehouse
+    attributes:
+      label: Warehouse or stack
+      placeholder: e.g. BigQuery + dbt, an MCP agent in Claude

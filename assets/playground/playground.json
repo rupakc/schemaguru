@@ -1,0 +1,81 @@
+{
+  "format": "schemaguru-playground/1",
+  "schemaguru_version": "0.2.1",
+  "now": "2026-11-24T12:00:00+00:00",
+  "store": "playground.db",
+  "overlay": "base_overlay.yaml",
+  "tables": [
+    "analytics.paid_orders",
+    "analytics.paid_revenue",
+    "analytics.revenue_by_segment",
+    "shop.accounts",
+    "shop.all_null_t",
+    "shop.anon_enum_t",
+    "shop.broken_child",
+    "shop.customers",
+    "shop.empty_t",
+    "shop.events",
+    "shop.order_items",
+    "shop.orders",
+    "shop.payments",
+    "shop.products",
+    "shop.ref_child",
+    "shop.ref_parent",
+    "shop.sessions"
+  ],
+  "lineage_subjects": [
+    "analytics.paid_orders",
+    "analytics.paid_revenue",
+    "analytics.revenue_by_segment",
+    "analytics.revenue_by_segment.revenue",
+    "analytics.revenue_by_segment.segment"
+  ],
+  "questions": [
+    "monthly revenue by customer segment",
+    "refund rate by month",
+    "how many orders were paid last month",
+    "events per account and session",
+    "which products appear in refunded orders",
+    "payments per customer",
+    "average basket size per order",
+    "active customers by segment",
+    "how fresh are the sessions",
+    "order line items per product",
+    "revenue by customer segment from the analytics views"
+  ],
+  "search_backend_at_build": "fts5",
+  "privacy_examples": [
+    {
+      "label": "E-mail",
+      "text": "Ping jane.doe@example.org about the refund.",
+      "mode": "masked"
+    },
+    {
+      "label": "Phone",
+      "text": "Call +44 20 7946 0958 before noon.",
+      "mode": "masked"
+    },
+    {
+      "label": "IBAN",
+      "text": "Refund to GB82 WEST 1234 5698 7654 32 today.",
+      "mode": "masked"
+    },
+    {
+      "label": "Card number",
+      "text": "Test card 4111 1111 1111 1111 was declined.",
+      "mode": "masked"
+    },
+    {
+      "label": "Key and value",
+      "text": "connect with password=example-not-a-secret",
+      "mode": "masked"
+    },
+    {
+      "label": "Quoted literal",
+      "text": "Mail jane.doe@example.org where segment = 'vip'",
+      "mode": "none"
+    }
+  ],
+  "override_example": "version: 1\nwarehouse: shop\ntables:\n  shop.customers:\n    description: Playground override wins.\n    pitfalls:\n      - rule: segment is free text entered by sales; do not group on it without lower()\n        fix: group on lower(segment)\nlineage:\n  - table: analytics.paid_revenue\n    ignore: true\n",
+  "precomputed": {}
+}

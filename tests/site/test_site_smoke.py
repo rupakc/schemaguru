@@ -290,7 +290,9 @@ def test_hung_download_fails_with_retry(page: Any, base: str) -> None:
     # a request that never answers (not one that fails) still ends in the failure message
     page.add_init_script("window.sgPlaygroundStageTimeoutMs = 1500")
     page.route("**/pyodide.js", lambda route: None)  # never fulfilled
-    page.goto(base + "playground/")
+    # the playground starts loading when it scrolls into view; Firefox holds the page's `load`
+    # event for that (never answered) script, Chromium and WebKit do not
+    page.goto(base + "playground/", wait_until="domcontentloaded")
     page.locator("#sg-pg-tab-ask").click()
     block = page.locator("#sg-pg-unsupported")
     block.wait_for(state="visible", timeout=10_000)

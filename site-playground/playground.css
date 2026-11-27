@@ -1,0 +1,139 @@
+/* SchemaGuru playground: layout on top of the site tokens (docs/assets/schemaguru.css). */
+
+.sg-pg {
+  margin: 1.5rem 0 2rem;
+  padding: 0.5rem 1rem 1rem;
+  border: 1px solid var(--sg-border);
+  border-radius: var(--sg-radius);
+  background: var(--sg-surface);
+  min-width: 0;
+}
+.sg-pg [hidden] { display: none !important; }
+/* five tabs wrap on a phone instead of hiding three off-screen */
+.sg-pg.sg-tabs [role="tablist"] { flex-wrap: wrap; overflow-x: visible; }
+.sg-pg__status {
+  margin: 0.5rem 0;
+  color: var(--sg-fg-muted);
+  font-size: 0.85rem;
+}
+.sg-pg--ready .sg-pg__status { color: var(--sg-teal-ink); }
+.sg-pg__unsupported p { margin: 0.4rem 0; }
+.sg-pg__hint { margin: 0 0 0.75rem; color: var(--sg-fg-muted); }
+.sg-pg__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin: 0.5rem 0;
+}
+.sg-pg__row > * { min-width: 0; }
+.sg-pg__grow { flex: 1 1 16rem; }
+.sg-pg label > span,
+.sg-pg legend {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: var(--sg-fg-muted);
+  font: 600 0.75rem/1.2 var(--sg-font);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.sg-pg input[type="text"],
+.sg-pg input[type="number"],
+.sg-pg select,
+.sg-pg textarea {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--sg-border);
+  border-radius: 0.5rem;
+  background: var(--sg-bg);
+  color: var(--sg-fg);
+  font: 0.9rem/1.4 var(--sg-font);
+}
+.sg-pg textarea,
+.sg-pg input[type="number"] { font-family: var(--sg-mono); }
+.sg-pg input[type="number"] { width: 5rem; }
+.sg-pg__block { display: block; margin: 0.5rem 0; }
+.sg-pg input:focus-visible,
+.sg-pg select:focus-visible,
+.sg-pg textarea:focus-visible,
+.sg-pg__out:focus-visible,
+.sg-pg__seg input:focus-visible + span {
+  outline: 3px solid var(--sg-focus);
+  outline-offset: 2px;
+}
+.sg-pg [disabled] { cursor: not-allowed; opacity: 0.6; }
+
+/* segmented radio group */
+.sg-pg__seg { margin: 0.5rem 0; padding: 0; border: 0; min-width: 0; }
+.sg-pg__seg label { display: inline-block; margin: 0 0.25rem 0.25rem 0; }
+.sg-pg__seg input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.sg-pg .sg-pg__seg label > span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  margin: 0;
+  padding: 0 0.9rem;
+  border: 1px solid var(--sg-border);
+  border-radius: 999px;
+  color: var(--sg-fg);
+  font: 600 0.85rem/1 var(--sg-mono);
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+.sg-pg .sg-pg__seg input:checked + span {
+  border-color: var(--sg-indigo);
+  background: var(--sg-indigo);
+  color: var(--sg-accent-ink);
+}
+
+.sg-pg__chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0; }
+.sg-pg__chip { font-family: var(--sg-font); white-space: normal; text-align: left; }
+.sg-pg__chip::after { content: none; }
+
+.sg-pg__meta { margin: 0.5rem 0; color: var(--sg-fg-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+.sg-pg__note {
+  margin: 0.5rem 0;
+  padding: 0.4rem 0.7rem;
+  border-left: 3px solid var(--sg-amber);
+  color: var(--sg-fg);
+  font-size: 0.85rem;
+}
+.sg-pg__out {
+  box-sizing: border-box;
+  max-width: 100%;
+  max-height: 28rem;
+  margin: 0.5rem 0;
+  padding: 0.8rem 1rem;
+  overflow: auto;
+  border-radius: 0.5rem;
+  background: var(--sg-code-bg);
+  color: var(--sg-fg);
+  font: 0.8rem/1.5 var(--sg-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sg-pg__out:empty { display: none; }
+.sg-pg__out--short { max-height: 10rem; }
+.sg-pg__out--error { border-left: 4px solid var(--sg-rose); }
+.md-typeset .sg-pg__sub { margin: 1rem 0 0.25rem; font-size: 0.9rem; }
+.sg-pg__fp { font-size: 0.75rem; }
+.sg-pg__diags { margin: 0.5rem 0; padding-left: 1.2rem; font-size: 0.85rem; overflow-wrap: anywhere; }
+.sg-pg__diag--error { color: var(--sg-rose-ink); }
+.sg-pg__pair {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+}
+.sg-pg__pair > div { min-width: 0; }
+
+@media (max-width: 30rem) {
+  .sg-pg { padding: 0.5rem 0.75rem 0.75rem; }
+  .sg-pg .sg-button { width: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sg-pg * { transition: none !important; animation: none !important; }
+}

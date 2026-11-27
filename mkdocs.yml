@@ -51,9 +51,11 @@ hooks:
 
 extra_css:
   - assets/schemaguru.css
+  - assets/playground/playground.css
 
 extra_javascript:
   - assets/schemaguru.js
+  - assets/playground/playground.js
 
 markdown_extensions:
   - admonition
@@ -95,6 +97,7 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - Demo: demo.md
+  - Playground: playground.md
   - Guide:
       - Concepts: guide/concepts.md
       - Crawl the catalog: guide/crawl.md

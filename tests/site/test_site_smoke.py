@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import functools
 import http.server
+import os
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -158,3 +159,135 @@ def test_after_pane_opens_on_a_whole_line(page: Any, base: str, width: int) -> N
     )
     assert first[0] >= 4, first  # the first visible text line is whole, below the padding
     assert first[1].startswith("["), first  # the table header line opens the view
+
+
+# ----- the playground: the real wheels in Pyodide ------------------------------------------
+
+PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.0/full/"
+
+
+@pytest.fixture
+def pg_page(browser: Any) -> Iterator[Any]:
+    """The site plus the Pyodide CDN, nothing else (needs network for the CDN)."""
+    context = browser.new_context()
+    allowed = ("http://127.0.0.1", PYODIDE_CDN)
+    context.route(
+        "**/*", lambda r: r.continue_() if r.request.url.startswith(allowed) else r.abort()
+    )
+    p = context.new_page()
+    p.set_default_timeout(30_000)
+    yield p
+    context.close()
+
+
+def _ready(page: Any, base: str) -> None:
+    page.goto(base + "playground/")
+    page.locator("#sg-pg-tab-ask").click()
+    try:
+        page.wait_for_function(
+            "document.getElementById('sg-pg-status').textContent.startsWith('Ready')",
+            timeout=180_000,
+        )
+    except Exception:
+        reason = page.locator("#sg-pg-unsupported").inner_text()
+        pytest.skip(f"the playground did not start (no network for the CDN?): {reason}")
+
+
+def _text(page: Any, selector: str) -> str:
+    return str(page.locator(selector).text_content())
+
+
+def test_playground_runs_every_tab(pg_page: Any, base: str) -> None:
+    page = pg_page
+    _ready(page, base)
+    # ask: a suggested question, then a profile switch re-renders with the real token count
+    page.locator("#sg-pg-chips button", has_text="how many orders were paid last month").click()
+    assert "shop.orders" in _text(page, "#sg-pg-ask-out")
+    agent_meta = _text(page, "#sg-pg-ask-meta")
+    assert "tokens" in agent_meta and "profile agent" in agent_meta
+    page.locator("#sg-pg-profile label", has_text="planner").click()
+    assert "profile planner" in _text(page, "#sg-pg-ask-meta")
+    # join path: a measured route, then a typed refusal; no SQL is made up
+    page.locator("#sg-pg-tab-path").click()
+    assert "support" in _text(page, "#sg-pg-path-out")
+    assert "routes" in _text(page, "#sg-pg-path-badge")
+    page.select_option("#sg-pg-from", "shop.orders")
+    page.select_option("#sg-pg-to", "shop.events")
+    page.locator("#sg-pg-path-form button[type=submit]").click()
+    assert "HUB_PIVOT" in _text(page, "#sg-pg-path-badge")
+    assert "SQL snippets appear in the context view" in _text(page, "#sg-pg-path-note")
+    # lineage: upstream depth 3 of the revenue view reaches the payments table
+    page.locator("#sg-pg-tab-lineage").click()
+    page.select_option("#sg-pg-subject", "analytics.revenue_by_segment")
+    page.fill("#sg-pg-depth", "3")
+    page.locator("#sg-pg-lineage-form button[type=submit]").click()
+    assert "shop.payments" in _text(page, "#sg-pg-lineage-out")
+    page.locator("#sg-pg-panel-lineage label", has_text="downstream").click()
+    assert "downstream" in _text(page, "#sg-pg-lineage-out")
+    # privacy: every example masks its value; none mode also replaces quoted literals
+    page.locator("#sg-pg-tab-privacy").click()
+    page.locator("#sg-pg-examples button", has_text="E-mail").click()
+    out = _text(page, "#sg-pg-privacy-out")
+    assert "@example" not in out and "<email>" in out
+    assert "detected as: email" in _text(page, "#sg-pg-privacy-meta")
+    assert "[shop.customers]" in _text(page, "#sg-pg-privacy-table")
+    page.locator("#sg-pg-examples button", has_text="Quoted literal").click()
+    assert "?" in _text(page, "#sg-pg-privacy-out") and "'vip'" not in _text(
+        page, "#sg-pg-privacy-out"
+    )
+    assert "llm_values = none" in _text(page, "#sg-pg-privacy-table-title")
+    # override: apply wins, reset restores the site's own view
+    page.locator("#sg-pg-tab-override").click()
+    page.locator("#sg-pg-override-form button[type=submit]").click()
+    before = _text(page, "#sg-pg-before")
+    assert "Playground override wins." in _text(page, "#sg-pg-after")
+    assert "Playground override wins." not in before
+    assert _text(page, "#sg-pg-before-fp") != _text(page, "#sg-pg-after-fp")
+    page.locator("#sg-pg-reset").click()
+    assert _text(page, "#sg-pg-after") == before
+    # a broken overlay is a SchemaGuru diagnostic, an empty question a plain failure
+    page.fill("#sg-pg-yaml", "tables: [1")
+    page.locator("#sg-pg-override-form button[type=submit]").click()
+    assert _text(page, "#sg-pg-diags").startswith("SG208")
+    page.fill("#sg-pg-ov-question", "")
+    page.locator("#sg-pg-override-form button[type=submit]").click()
+    assert _text(page, "#sg-pg-diags") == "Could not run this: the question is empty."
+
+
+def test_playground_without_webassembly_explains(page: Any, base: str) -> None:
+    page.add_init_script("delete window.WebAssembly")
+    page.goto(base + "playground/")
+    block = page.locator("#sg-pg-unsupported")
+    block.wait_for(state="visible", timeout=5_000)
+    assert "WebAssembly" in block.inner_text()
+    assert block.locator("a[href$='getting-started/']").count() >= 1
+    assert page.locator("#sg-pg-retry").is_hidden()
+
+
+def test_pasted_html_is_inert(pg_page: Any, base: str) -> None:
+    page = pg_page
+    _ready(page, base)
+    page.locator("#sg-pg-tab-privacy").click()
+    page.fill("#sg-pg-privacy-text", '<img src=x onerror="window.__pwned=1">')
+    page.locator("#sg-pg-privacy-form button[type=submit]").click()
+    assert "<img" in _text(page, "#sg-pg-privacy-out")
+    assert page.evaluate("window.__pwned") is None
+    assert page.locator("#sg-playground img[src='x']").count() == 0
+
+
+@pytest.mark.parametrize("width", [375, 1280])
+def test_playground_layout(pg_page: Any, base: str, width: int) -> None:
+    page = pg_page
+    page.set_viewport_size({"width": width, "height": 900})
+    _ready(page, base)
+    for tab in ("ask", "path", "lineage", "privacy", "override"):
+        assert page.locator(f"#sg-pg-tab-{tab}").evaluate(
+            "t => { const r = t.getBoundingClientRect();"
+            " return r.left >= 0 && r.right <= innerWidth; }"
+        ), f"tab {tab} is off-screen"
+        page.locator(f"#sg-pg-tab-{tab}").click()
+        assert page.evaluate("document.documentElement.scrollWidth") <= width, tab
+    shots = os.environ.get("SG_SCREENSHOT_DIR")  # optional: a place to look at the page
+    if shots:
+        page.locator("#sg-pg-tab-ask").click()
+        page.screenshot(path=str(Path(shots) / f"playground-{width}.png"), full_page=True)

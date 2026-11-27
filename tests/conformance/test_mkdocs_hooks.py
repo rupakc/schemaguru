@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+pytest.importorskip("mkdocs")  # docs-only dependency; CI test jobs install just ``.[dev]``
+
 from mkdocs.config import load_config
 from mkdocs.structure.files import Files
 

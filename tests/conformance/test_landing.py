@@ -131,6 +131,7 @@ def test_landing_holds_no_raw_identifying_values(
 def test_on_env_without_landing_warns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
+    pytest.importorskip("mkdocs")  # the hook module imports mkdocs at load time
     hooks = _load("mkdocs_hooks")
     monkeypatch.setattr(hooks, "LANDING", tmp_path / "landing.json")
     env: Any = type("Env", (), {"globals": {}})()

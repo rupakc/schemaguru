@@ -9,8 +9,21 @@
   min-width: 0;
 }
 .sg-pg [hidden] { display: none !important; }
-/* five tabs wrap on a phone instead of hiding three off-screen */
-.sg-pg.sg-tabs [role="tablist"] { flex-wrap: wrap; overflow-x: visible; }
+.sg-pg__short { display: none; }
+.sg-pg__progress {
+  height: 4px;
+  margin: 0 0 0.5rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--sg-border);
+}
+.sg-pg__progress > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--sg-indigo);
+  transition: width 0.3s var(--sg-ease);
+}
 .sg-pg__status {
   margin: 0.5rem 0;
   color: var(--sg-fg-muted);
@@ -113,11 +126,22 @@
   background: var(--sg-code-bg);
   color: var(--sg-fg);
   font: 0.8rem/1.5 var(--sg-mono);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  /* views are column-aligned: keep each line whole and scroll inside the box */
+  white-space: pre;
+  overflow-x: auto;
+  position: relative;
 }
 .sg-pg__out:empty { display: none; }
-.sg-pg__out--short { max-height: 10rem; }
+.sg-pg__out--short { max-height: 10rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sg-pg__line--added,
+.sg-pg__line--removed {
+  display: inline-block;
+  box-sizing: border-box;
+  min-width: 100%;
+  padding-left: 0.4rem;
+}
+.sg-pg__line--added { background: var(--sg-glow); border-left: 3px solid var(--sg-teal); }
+.sg-pg__line--removed { background: var(--sg-glow); border-left: 3px solid var(--sg-rose); }
 .sg-pg__out--error { border-left: 4px solid var(--sg-rose); }
 .md-typeset .sg-pg__sub { margin: 1rem 0 0.25rem; font-size: 0.9rem; }
 .sg-pg__fp { font-size: 0.75rem; }
@@ -132,8 +156,14 @@
 
 @media (max-width: 30rem) {
   .sg-pg { padding: 0.5rem 0.75rem 0.75rem; }
+  /* one row of five: short labels, tighter padding */
+  .sg-pg__long { display: none; }
+  .sg-pg__short { display: inline; }
+  .sg-pg.sg-tabs [role="tablist"] { gap: 0; justify-content: space-between; }
+  .sg-pg.sg-tabs [role="tab"] { flex: 0 1 auto; padding: 0.5rem 0.25rem; font-size: 0.68rem; }
   .sg-pg .sg-button { width: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sg-pg * { transition: none !important; animation: none !important; }
+  .sg-pg *,
+  .sg-pg__progress > span { transition: none !important; animation: none !important; }
 }

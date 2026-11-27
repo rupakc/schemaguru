@@ -236,6 +236,10 @@ def test_playground_runs_every_tab(pg_page: Any, base: str) -> None:
         page, "#sg-pg-privacy-out"
     )
     assert "llm_values = none" in _text(page, "#sg-pg-privacy-table-title")
+    # only the library's sweep categories are "detected as"; the literal is said in words
+    meta = _text(page, "#sg-pg-privacy-meta")
+    assert "detected as: email ·" in meta and "1 quoted literal replaced (none mode)" in meta
+    assert "literal," not in meta and "email, literal" not in meta
     # override: apply wins, reset restores the site's own view
     page.locator("#sg-pg-tab-override").click()
     page.locator("#sg-pg-override-form button[type=submit]").click()
@@ -243,8 +247,18 @@ def test_playground_runs_every_tab(pg_page: Any, base: str) -> None:
     assert "Playground override wins." in _text(page, "#sg-pg-after")
     assert "Playground override wins." not in before
     assert _text(page, "#sg-pg-before-fp") != _text(page, "#sg-pg-after-fp")
+    # the lines the overlay changed are marked, and After opens on the first of them
+    added = page.locator("#sg-pg-after .sg-pg__line--added")
+    assert added.count() >= 1 and page.locator("#sg-pg-before .sg-pg__line--removed").count() >= 1
+    assert "Playground override wins." in " ".join(added.all_text_contents())
+    assert added.first.evaluate(
+        "l => { const p = l.parentElement.getBoundingClientRect(), r = l.getBoundingClientRect();"
+        " return r.top >= p.top && r.bottom <= p.bottom; }"
+    ), "After did not scroll to the first changed line"
+    assert "highlighted" in _text(page, "#sg-pg-ov-summary")
     page.locator("#sg-pg-reset").click()
     assert _text(page, "#sg-pg-after") == before
+    assert page.locator("#sg-pg-after .sg-pg__line--added").count() == 0
     # a broken overlay is a SchemaGuru diagnostic, an empty question a plain failure
     page.fill("#sg-pg-yaml", "tables: [1")
     page.locator("#sg-pg-override-form button[type=submit]").click()
@@ -252,6 +266,8 @@ def test_playground_runs_every_tab(pg_page: Any, base: str) -> None:
     page.fill("#sg-pg-ov-question", "")
     page.locator("#sg-pg-override-form button[type=submit]").click()
     assert _text(page, "#sg-pg-diags") == "Could not run this: the question is empty."
+    # no stale views next to the error
+    assert _text(page, "#sg-pg-before") == "" and _text(page, "#sg-pg-after") == ""
 
 
 def test_playground_without_webassembly_explains(page: Any, base: str) -> None:
@@ -262,6 +278,31 @@ def test_playground_without_webassembly_explains(page: Any, base: str) -> None:
     assert "WebAssembly" in block.inner_text()
     assert block.locator("a[href$='getting-started/']").count() >= 1
     assert page.locator("#sg-pg-retry").is_hidden()
+
+
+def test_hung_download_fails_with_retry(page: Any, base: str) -> None:
+    # a request that never answers (not one that fails) still ends in the failure message
+    page.add_init_script("window.sgPlaygroundStageTimeoutMs = 1500")
+    page.route("**/pyodide.js", lambda route: None)  # never fulfilled
+    page.goto(base + "playground/")
+    page.locator("#sg-pg-tab-ask").click()
+    block = page.locator("#sg-pg-unsupported")
+    block.wait_for(state="visible", timeout=10_000)
+    assert "Pyodide stage failed: no answer after 2 s" in block.inner_text()
+    assert page.locator("#sg-pg-retry").is_visible()
+    assert page.locator("#sg-pg-progress").is_hidden()
+
+
+def test_loading_shows_progress(pg_page: Any, base: str) -> None:
+    page = pg_page
+    page.goto(base + "playground/")
+    page.wait_for_function(
+        "document.getElementById('sg-pg-status').textContent.startsWith('Step ')"
+    )
+    assert page.locator("#sg-pg-progress").is_visible()
+    assert "of 6:" in _text(page, "#sg-pg-status")
+    _ready(page, base)
+    assert page.locator("#sg-pg-progress").is_hidden()
 
 
 def test_pasted_html_is_inert(pg_page: Any, base: str) -> None:
@@ -280,6 +321,10 @@ def test_playground_layout(pg_page: Any, base: str, width: int) -> None:
     page = pg_page
     page.set_viewport_size({"width": width, "height": 900})
     _ready(page, base)
+    tops = page.eval_on_selector_all(
+        "#sg-playground [role=tab]", "ts => ts.map(t => Math.round(t.getBoundingClientRect().top))"
+    )
+    assert len(set(tops)) == 1, f"the five tabs are not one row: {tops}"
     for tab in ("ask", "path", "lineage", "privacy", "override"):
         assert page.locator(f"#sg-pg-tab-{tab}").evaluate(
             "t => { const r = t.getBoundingClientRect();"

@@ -51,6 +51,8 @@
     document.querySelectorAll('input[name="' + name + '"]').forEach(function (i) { i.checked = i.value === value; });
   }
 
+  function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+
   function shortFingerprint(fp) {
     return fp ? String(fp).replace(/^sha256:/, "").slice(0, 12) : "";
   }
@@ -82,13 +84,36 @@
     var started = null;
     var pyodideReady = null;
 
+    var STAGES = 6;
+    var progress = byId("sg-pg-progress");
+    // a stage that neither finishes nor fails (a hung CDN or fetch) is failed after this long
+    var stageTimeoutMs = window.sgPlaygroundStageTimeoutMs || 120000;
+
     function status(text) { statusEl.textContent = text; }
+
+    function step(n, text) {
+      status("Step " + n + " of " + STAGES + ": " + text);
+      progress.hidden = false;
+      progress.setAttribute("aria-valuenow", String(n));
+      progress.firstElementChild.style.width = Math.round((n - 1) / STAGES * 100) + "%";
+    }
+
+    function withTimeout(promise) {
+      var timer;
+      var limit = new Promise(function (resolve, reject) {
+        timer = window.setTimeout(function () {
+          reject(new Error("no answer after " + Math.round(stageTimeoutMs / 1000) + " s"));
+        }, stageTimeoutMs);
+      });
+      return Promise.race([promise, limit]).finally(function () { window.clearTimeout(timer); });
+    }
 
     function fail(title, reason, canRetry) {
       byId("sg-pg-unsupported-title").textContent = title;
       byId("sg-pg-unsupported-reason").textContent = reason;
       retry.hidden = !canRetry;
       unsupported.hidden = false;
+      if (progress) { progress.hidden = true; }
       status(title);
     }
 
@@ -110,10 +135,10 @@
       }
     }
 
-    function stage(name, text, fn) {
+    function stage(n, name, text, fn) {
       return function (value) {
-        status(text);
-        return Promise.resolve().then(function () { return fn(value); }).catch(function (e) {
+        step(n, text);
+        return withTimeout(Promise.resolve().then(function () { return fn(value); })).catch(function (e) {
           var err = new Error((e && e.message) || String(e));
           err.stage = name;
           throw err;
@@ -127,17 +152,17 @@
       var py = null;
       if (!pyodideReady) {
         pyodideReady = Promise.resolve()
-          .then(stage("Pyodide", "Loading Python (Pyodide)…", function () {
+          .then(stage(1, "Pyodide", "Loading Python (Pyodide)…", function () {
             return (window.loadPyodide ? Promise.resolve() : loadScript(cdn + "pyodide.js"))
               .then(function () { return window.loadPyodide({ indexURL: cdn }); });
           }))
-          .then(stage("packages", "Loading sqlite3 and PyYAML…", function (pyodide) {
+          .then(stage(2, "packages", "Loading sqlite3 and PyYAML…", function (pyodide) {
             return pyodide.loadPackage(["sqlite3", "pyyaml"]).then(function () { return pyodide; });
           }));
         pyodideReady.catch(function () { pyodideReady = null; });
       }
       return pyodideReady
-        .then(stage("wheels", "Installing the schemaguru and factlang wheels…", function (pyodide) {
+        .then(stage(3, "wheels", "Installing the schemaguru and factlang wheels…", function (pyodide) {
           py = pyodide;
           return fetchOk(base + "wheels.json", "text").then(function (text) {
             var wheels = JSON.parse(text);
@@ -148,7 +173,7 @@
             buffers.forEach(function (b) { py.unpackArchive(b, "wheel"); });
           });
         }))
-        .then(stage("store", "Loading the shop store…", function () {
+        .then(stage(4, "store", "Loading the shop store…", function () {
           return fetchOk(base + "playground.json", "text").then(function (text) {
             manifest = JSON.parse(text);
             manifest.raw = text;
@@ -161,11 +186,11 @@
             py.FS.writeFile(HOME + "glue.py", parts[2]);
           });
         }))
-        .then(stage("glue", "Starting the playground glue…", function () {
+        .then(stage(5, "glue", "Starting the playground glue…", function () {
           py.runPython("import glue");
           glue = py.pyimport("glue");
         }))
-        .then(stage("open", "Opening the store…", function () {
+        .then(stage(6, "open", "Opening the store…", function () {
           var raw = manifest.raw;
           delete manifest.raw;
           var opened = JSON.parse(glue.sg_open(HOME + manifest.store, raw));
@@ -208,7 +233,7 @@
       var data = call("sg_context", q, checked("sg-pg-profile"));
       var meta = byId("sg-pg-ask-meta");
       if (show(byId("sg-pg-ask-out"), data)) {
-        meta.textContent = data.tokens + " tokens · " + data.tables.length + " tables · profile " +
+        meta.textContent = plural(data.tokens, "token") + " · " + plural(data.tables.length, "table") + " · profile " +
           data.profile + " · fingerprint " + shortFingerprint(data.fingerprint);
       } else {
         meta.textContent = "";
@@ -240,8 +265,12 @@
       var meta = byId("sg-pg-privacy-meta");
       var table = byId("sg-pg-privacy-table");
       if (show(byId("sg-pg-privacy-out"), data)) {
-        meta.textContent = data.hits + (data.hits === 1 ? " value replaced" : " values replaced") +
-          (data.categories.length ? " · detected as: " + data.categories.join(", ") : "");
+        // the library sweep's categories, then what the glue counted beside them, in words
+        var parts = [plural(data.hits, "value") + " replaced"];
+        if (data.categories.length) { parts.push("detected as: " + data.categories.join(", ")); }
+        if (data.names) { parts.push(plural(data.names, "person name") + " replaced"); }
+        if (data.literals) { parts.push(plural(data.literals, "quoted literal") + " replaced (none mode)"); }
+        meta.textContent = parts.join(" · ");
         table.textContent = data.table_block;
         byId("sg-pg-privacy-table-title").textContent =
           "shop.customers as the agent sees it (sampling.llm_values = " + data.mode + ")";
@@ -250,11 +279,56 @@
       }
     }
 
+    /* Line-level diff (longest common subsequence): which lines of each side are not shared. */
+    function changedLines(a, b) {
+      var n = a.length, m = b.length, i, j;
+      var lcs = [];
+      for (i = 0; i <= n; i++) { lcs.push(new Array(m + 1).fill(0)); }
+      for (i = n - 1; i >= 0; i--) {
+        for (j = m - 1; j >= 0; j--) {
+          lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+        }
+      }
+      var inA = new Array(n).fill(true), inB = new Array(m).fill(true);
+      i = 0; j = 0;
+      while (i < n && j < m) {
+        if (a[i] === b[j]) { inA[i] = false; inB[j] = false; i++; j++; }
+        else if (lcs[i + 1][j] >= lcs[i][j + 1]) { i++; }
+        else { j++; }
+      }
+      return [inA, inB];
+    }
+
+    function paintLines(pre, lines, changed, cls) {
+      clear(pre);
+      var first = null;
+      lines.forEach(function (line, k) {
+        var span = el("span", line, changed[k] ? "sg-pg__line " + cls : "sg-pg__line");
+        if (changed[k] && !first) { first = span; }
+        pre.appendChild(span);
+        if (k < lines.length - 1) { pre.appendChild(document.createTextNode("\n")); }
+      });
+      pre.scrollTop = first ? Math.max(0, first.offsetTop - 24) : 0;
+      return first;
+    }
+
     function views(before, after) {
-      byId("sg-pg-before").textContent = before.text;
+      var a = String(before.text).split("\n"), b = String(after.text).split("\n");
+      var diff = changedLines(a, b);
+      paintLines(byId("sg-pg-before"), a, diff[0], "sg-pg__line--removed");
+      paintLines(byId("sg-pg-after"), b, diff[1], "sg-pg__line--added");
       byId("sg-pg-before-fp").textContent = shortFingerprint(before.fingerprint);
-      byId("sg-pg-after").textContent = after.text;
       byId("sg-pg-after-fp").textContent = shortFingerprint(after.fingerprint);
+      var removed = diff[0].filter(Boolean).length, added = diff[1].filter(Boolean).length;
+      byId("sg-pg-ov-summary").textContent = removed || added
+        ? plural(added, "line") + " added or changed, " + plural(removed, "line") + " removed: highlighted below."
+        : "Before and After are the same view.";
+    }
+
+    function clearViews() {
+      ["sg-pg-before", "sg-pg-after", "sg-pg-before-fp", "sg-pg-after-fp", "sg-pg-ov-summary"].forEach(function (id) {
+        clear(byId(id));
+      });
     }
 
     function override() {
@@ -262,6 +336,7 @@
       var list = byId("sg-pg-diags");
       clear(list);
       if (data.error) {
+        clearViews();
         list.appendChild(el("li", failureText(data), "sg-pg__diag--error"));
         return;
       }
@@ -281,6 +356,7 @@
       clear(list);
       byId("sg-pg-yaml").value = manifest.override_example;
       if (data.error) {
+        clearViews();
         list.appendChild(el("li", failureText(data), "sg-pg__diag--error"));
         return;
       }
@@ -356,6 +432,7 @@
         if (!precomputedNote(tab, byId(outId))) { runs[tab](); }
       });
       root.classList.add("sg-pg--ready");
+      progress.hidden = true;
       status("Ready: schemaguru " + opened.schemaguru + " is running in your browser.");
     }
 

@@ -166,21 +166,24 @@ def sg_mask(text, mode="masked"):
     if len(text) > MAX_MASK_TEXT:
         return _error("too_large", f"the text is over {MAX_MASK_TEXT} characters")
     try:
+        # ``categories`` is the sweep's own list of what it found; person names (the rest of
+        # mask_free_text's hits) and quoted literals (none mode) are counted apart, so the page
+        # never shows a glue-side count as a library category
         masked, hits = mask_free_text(text)
-        categories = sorted(set(sweep_detail(text)[1]))
-        if hits > len(sweep_detail(text)[1]):
-            categories = sorted({*categories, "name"})
+        swept = sweep_detail(text)[1]
+        names = hits - len(swept)
+        literals = 0
         if mode == "none":
             masked, literals = predicate_text(masked, "none")
             hits += literals
-            if literals:
-                categories = sorted({*categories, "literal"})
         return json.dumps(
             {
                 "mode": mode,
                 "text": masked,
                 "hits": hits,
-                "categories": categories,
+                "categories": sorted(set(swept)),
+                "names": names,
+                "literals": literals,
                 "table_block": _table_block(mode),
             }
         )

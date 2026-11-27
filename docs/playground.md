@@ -16,6 +16,7 @@ Pyodide CDN and this site's own files, a few megabytes on the first visit and ca
 
 <div id="sg-playground" class="sg-pg sg-tabs" data-pyodide="https://cdn.jsdelivr.net/pyodide/v0.29.0/full/">
 <p id="sg-pg-status" class="sg-pg__status" role="status" aria-live="polite">Python starts when you pick a tab or scroll here.</p>
+<div id="sg-pg-progress" class="sg-pg__progress" role="progressbar" aria-label="Loading the playground" aria-valuemin="0" aria-valuemax="6" aria-valuenow="0" hidden><span></span></div>
 <div id="sg-pg-unsupported" class="sg-callout sg-callout--amber sg-pg__unsupported" hidden>
 <p><strong id="sg-pg-unsupported-title">This browser cannot run the playground.</strong> <span id="sg-pg-unsupported-reason">It needs WebAssembly, which is missing or turned off here.</span></p>
 <p>Everything on this page also runs locally: start with <a href="../getting-started/">Getting started</a>, or read the guides on <a href="../guide/scoping/">scoping</a>, <a href="../guide/graph/">join paths</a>, <a href="../guide/lineage/">lineage</a>, <a href="../guide/pii/">PII and value masking</a> and <a href="../guide/overlays/">overlays</a>.</p>
@@ -23,7 +24,7 @@ Pyodide CDN and this site's own files, a few megabytes on the first visit and ca
 </div>
 <noscript><p class="sg-callout sg-callout--amber">The playground needs JavaScript. Everything on this page also runs locally: see <a href="../getting-started/">Getting started</a>.</p></noscript>
 <div role="tablist" aria-label="Playground tools">
-<button type="button" role="tab" id="sg-pg-tab-ask" aria-controls="sg-pg-panel-ask" aria-selected="true">Ask a question</button>
+<button type="button" role="tab" id="sg-pg-tab-ask" aria-controls="sg-pg-panel-ask" aria-selected="true"><span class="sg-pg__long">Ask a question</span><span class="sg-pg__short">Ask</span></button>
 <button type="button" role="tab" id="sg-pg-tab-path" aria-controls="sg-pg-panel-path" aria-selected="false" tabindex="-1">Join path</button>
 <button type="button" role="tab" id="sg-pg-tab-lineage" aria-controls="sg-pg-panel-lineage" aria-selected="false" tabindex="-1">Lineage</button>
 <button type="button" role="tab" id="sg-pg-tab-privacy" aria-controls="sg-pg-panel-privacy" aria-selected="false" tabindex="-1">Privacy</button>
@@ -100,6 +101,7 @@ Pyodide CDN and this site's own files, a few megabytes on the first visit and ca
 <button type="button" id="sg-pg-reset" class="sg-button" disabled>Reset</button>
 </div>
 </form>
+<p class="sg-pg__meta" id="sg-pg-ov-summary"></p>
 <ul class="sg-pg__diags" id="sg-pg-diags" aria-label="Diagnostics from your overlay"></ul>
 <div class="sg-pg__pair">
 <div><h3 class="sg-pg__sub">Before <code class="sg-pg__fp" id="sg-pg-before-fp"></code></h3><pre class="sg-pg__out" id="sg-pg-before" tabindex="0" aria-label="View before the overlay"></pre></div>

@@ -184,6 +184,18 @@ def test_mask_modes(opened: dict[str, Any]) -> None:
     assert json.loads(opened["sg_mask"](s, "masked"))["table_block"] == m["table_block"]
 
 
+def test_mask_keeps_library_categories_apart(opened: dict[str, Any]) -> None:
+    # ``categories`` is the library sweep's own list; what the glue counts on top of it (quoted
+    # literals replaced in none mode, person names) is reported separately, never as a category
+    s = "Mail jane.doe@example.org where segment = 'vip'"
+    n = json.loads(opened["sg_mask"](s, "none"))
+    m = json.loads(opened["sg_mask"](s, "masked"))
+    assert n["categories"] == ["email"] == m["categories"]
+    assert n["literals"] == 1 and m["literals"] == 0
+    assert n["names"] == 0 and n["hits"] == 2
+    assert n["hits"] == len(n["categories"]) + n["literals"] + n["names"]
+
+
 def test_version_mismatch_is_refused(playground: Path, glue: dict[str, Any]) -> None:
     manifest = json.loads((playground / "playground.json").read_text())
     manifest["schemaguru_version"] = "0.0.0"

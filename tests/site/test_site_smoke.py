@@ -23,7 +23,7 @@ SITE = Path(__file__).resolve().parents[2] / "site"
 
 
 class _Quiet(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+    def log_message(self, format: str, *args: Any) -> None:
         pass
 
 
@@ -71,6 +71,22 @@ def test_landing_narrow_dark_reduced_motion(page: Any, base: str) -> None:
     assert page.locator(".sg-reveal").first.evaluate("e => getComputedStyle(e).opacity") == "1"
     assert page.locator("#sg-before-after mark[data-trap]").count() >= 2
     assert page.locator("#sg-warehouses .sg-badge").count() == 11
+    fits = "e => e.scrollWidth <= e.clientWidth"
+    for chip in page.locator(".sg-chip").all():
+        assert chip.evaluate(fits), "the install chip clips its text"
+    assert page.locator(".sg-integrations [role=tablist]").evaluate(fits), "tabs hidden off-screen"
+
+
+@pytest.mark.parametrize("width", [375, 1280, 1920])
+def test_sections_share_one_container(page: Any, base: str, width: int) -> None:
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(base)
+    boxes = page.eval_on_selector_all(
+        "section.sg-section",
+        "els => els.map(e => { const b = e.getBoundingClientRect();"
+        " return [Math.round(b.left), Math.round(b.width)]; })",
+    )
+    assert len(boxes) == 8 and len(set(map(tuple, boxes))) == 1, boxes
 
 
 def test_sections_render_in_order(page: Any, base: str) -> None:

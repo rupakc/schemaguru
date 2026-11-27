@@ -8,6 +8,8 @@ hide:
 
 <section class="sg-section sg-integrations" aria-labelledby="use-it-from" markdown>
 
+<span class="sg-eyebrow">Integrations</span>
+
 ## Use it from
 
 <p class="sg-lead">One knowledge store, every surface: each calls the same <code>Guru</code>
@@ -125,19 +127,42 @@ pip install schemaguru            # core: FactLang + PyYAML
 pip install 'schemaguru[duckdb]'  # plus a warehouse driver (one extra per warehouse)
 ```
 
-| Extra | Adds | Extra | Adds |
-|---|---|---|---|
-| `bigquery` | google-cloud-bigquery | `anthropic` | Anthropic drafting provider |
-| `snowflake` | snowflake-connector-python | `openai` | OpenAI-compatible drafting provider |
-| `redshift` | redshift-connector | `mcp` | `schemaguru mcp` (MCP SDK ≥ 2.3) |
-| `databricks` | databricks-sql-connector | `server` | HTTP server (Starlette, uvicorn) |
-| `postgres` | psycopg 3 | `langchain` | LangChain tools and retriever |
-| `duckdb` | duckdb | `llamaindex` | LlamaIndex tools |
-| `clickhouse` | clickhouse-connect | `openai-agents` | OpenAI Agents SDK tools |
-| `mssql` | pyodbc (SQL Server, Synapse) | `embeddings` | numpy (embedding retriever) |
-| `oracle` | oracledb | `tiktoken` | tiktoken token counter |
-| `trino` | trino | `postgres-store` | Postgres knowledge store |
-| `mysql` | PyMySQL (MySQL, MariaDB) | `all` | everything above |
+<div class="sg-extras" markdown>
+<div markdown>
+
+| Warehouse extra | Adds |
+|---|---|
+| `bigquery` | google-cloud-bigquery |
+| `snowflake` | snowflake-connector-python |
+| `redshift` | redshift-connector |
+| `databricks` | databricks-sql-connector |
+| `postgres` | psycopg 3 |
+| `duckdb` | duckdb |
+| `clickhouse` | clickhouse-connect |
+| `mssql` | pyodbc (SQL Server, Synapse) |
+| `oracle` | oracledb |
+| `trino` | trino |
+| `mysql` | PyMySQL (MySQL, MariaDB) |
+
+</div>
+<div markdown>
+
+| Feature extra | Adds |
+|---|---|
+| `anthropic` | Anthropic drafting provider |
+| `openai` | OpenAI-compatible drafting provider |
+| `mcp` | `schemaguru mcp` (MCP SDK ≥ 2.3) |
+| `server` | HTTP server (Starlette, uvicorn) |
+| `langchain` | LangChain tools and retriever |
+| `llamaindex` | LlamaIndex tools |
+| `openai-agents` | OpenAI Agents SDK tools |
+| `embeddings` | numpy (embedding retriever) |
+| `tiktoken` | tiktoken token counter |
+| `postgres-store` | Postgres knowledge store |
+| `all` | everything above |
+
+</div>
+</div>
 
 The `lineage` extra (`pip install 'schemaguru[lineage]'`, sqlglot) reads lineage out of view
 definitions and dbt SQL; see [Lineage](guide/lineage.md). SchemaGuru needs Python 3.10+.

@@ -47,9 +47,10 @@ jobs:
         # exit 2 = no committed baseline for github-ubuntu-latest at this size: the hard targets
         # were still checked, only the 25% regression gate did not run. That passes with a
         # visible warning until the baseline is committed; 1 (a miss no known limit names, or a
-        # regression) and 3 (a malformed result) fail the job. A hard-target miss the result's
-        # known_limits names (context_p95_ms today) is a WARNING from the comparator, and that
-        # metric stays regression-gated at 25%.
+        # regression) and 3 (a malformed result) fail the job. A hard-target miss a known_limits
+        # entry names (in the result or in a committed result at this size, e.g. 0.2.0.json;
+        # context_p95_ms today) is a WARNING from the comparator, and that metric stays
+        # regression-gated at 25%.
         run: |
           set +e
           python3 -m benchmarks.scale.compare bench.json --baseline-dir benchmarks/results

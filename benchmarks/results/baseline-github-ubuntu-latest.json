@@ -1,0 +1,60 @@
+{
+  "version": "0.2.0",
+  "shape": {
+    "tables": 500000,
+    "columns_per_table": 50,
+    "tables_per_schema": 5000,
+    "view_share": 0.1,
+    "fks_per_table": 2,
+    "comment_share": 0.5,
+    "max_lineage_depth": 6,
+    "seed": 20261125
+  },
+  "size": {
+    "tables": 500000,
+    "columns": 25000000,
+    "views": 50000
+  },
+  "environment": {
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "cores": 4,
+    "ram_bytes": 16758394880,
+    "python": "3.12.16",
+    "os": "Linux-7.0.0-1020-azure-x86_64-with-glibc2.43",
+    "runner_class": "github-ubuntu-latest"
+  },
+  "metrics": {
+    "crawl_full_s": 872.456638875,
+    "crawl_peak_rss_bytes": 60465152,
+    "parser_peak_rss_bytes": 59154432,
+    "crawl_incremental_s": 83.97616756999992,
+    "incremental_ratio": 0.09625254004403477,
+    "lineage_parse_s": 206.14171920900003,
+    "graph_build_s": 227.50111806100017,
+    "context_p50_ms": 15941.302193999945,
+    "context_p95_ms": 45568.285561000266,
+    "path_p95_ms": 2108.0300960002205,
+    "lineage_upstream_p95_ms": 0.30769499971938785,
+    "lineage_downstream_p95_ms": 0.30063000031077536,
+    "store_bytes": 9490685952
+  },
+  "known_limits": [
+    "join facts are synthetic (hash-derived rates, source benchmark:synthetic), not measured",
+    "a view's declared columns are not derived from its definition",
+    "context runs against a store with no column-level facts beyond the crawl"
+  ],
+  "nightly": null,
+  "checks": {
+    "tables_written": 500000,
+    "errors": 0,
+    "views_parsed": 50000,
+    "incremental_tables_written": 5000,
+    "incremental_changed": 5000,
+    "n_questions": 200,
+    "context_nonempty": 200,
+    "n_paths": 200,
+    "path_nonempty": 200,
+    "n_lineage": 200,
+    "lineage_nonempty": 200
+  }
+}

@@ -136,3 +136,32 @@ def test_cli_known_miss_exits_0_with_a_warning(tmp_path: Any, capsys: Any) -> No
     _write(tmp_path / "base" / "b.json", result(context_p95_ms=27_000.0))
     assert main([str(tmp_path / "r.json"), "--baseline-dir", str(tmp_path / "base")]) == 0
     assert "WARNING: context_p95_ms" in capsys.readouterr().err
+
+
+def test_a_committed_baseline_documents_the_limit_for_a_fresh_result(
+    tmp_path: Any, capsys: Any
+) -> None:
+    """A nightly result carries no ``known_limits``: the limit is documented in the committed
+    release result. A committed result at the same table count (any runner class: the limit is
+    the algorithm's, not the machine's) excuses the miss; one at another size does not."""
+    from benchmarks.scale.compare import known_misses
+
+    fresh = result(runner="gh", tables=500, context_p95_ms=45_000.0)
+    release = result(runner="laptop", tables=500, context_p95_ms=28_000.0)
+    release["known_limits"] = ["context_p95_ms: documented"]
+    assert compare(fresh, [release]) == []
+    (warning,) = known_misses(fresh, [release])
+    assert "context_p95_ms" in warning and "known limit" in warning
+    other_size = dict(release, size={"tables": 1000})
+    assert any("exceeds the hard target" in p for p in compare(fresh, [other_size]))
+    assert known_misses(fresh, [other_size]) == []
+    # still regression-gated against a same-class baseline
+    gh_base = result(runner="gh", tables=500, context_p95_ms=30_000.0)
+    assert any("regressed" in p for p in compare(fresh, [release, gh_base]))
+    # the CLI: exit 0 with the warning, not 1
+    _write(tmp_path / "r.json", fresh)
+    (tmp_path / "base").mkdir()
+    _write(tmp_path / "base" / "release.json", release)
+    _write(tmp_path / "base" / "gh.json", result(runner="gh", tables=500, context_p95_ms=44_000.0))
+    assert main([str(tmp_path / "r.json"), "--baseline-dir", str(tmp_path / "base")]) == 0
+    assert "WARNING: context_p95_ms" in capsys.readouterr().err

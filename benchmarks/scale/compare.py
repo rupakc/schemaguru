@@ -1,8 +1,11 @@
 """Compare a scale-benchmark result with the hard targets and with committed baselines.
 
-A hard-target miss whose metric name the result's ``known_limits`` names (a documented limit,
-with its measured numbers) is a WARNING, not a failure; that metric is then regression-gated
-like the others, so it cannot get worse unnoticed. An unlisted miss fails.
+A hard-target miss whose metric name a ``known_limits`` entry names (a documented limit, with
+its measured numbers) is a WARNING, not a failure; that metric is then regression-gated like
+the others, so it cannot get worse unnoticed. An unlisted miss fails. The entry may be in the
+result itself or in a committed result at the same table count, from any runner class (the
+limit is the algorithm's, not the machine's): a nightly result carries no ``known_limits``, the
+release result that documents them does.
 
 CLI exit codes: 0 pass; 1 problems; 2 no matching baseline (regression gate inactive, a
 WARNING on stderr); 3 malformed result."""
@@ -71,20 +74,33 @@ def compare_notes(result: Mapping[str, Any], baselines: Sequence[Mapping[str, An
     return [f"no baseline for {cls} at {n} tables: regression gate inactive"]
 
 
-def known_limit_metrics(result: Mapping[str, Any]) -> frozenset[str]:
-    """The hard-target metrics a ``known_limits`` entry names (the metric key as a word)."""
-    limits = result.get("known_limits")
-    texts = [t for t in limits if isinstance(t, str)] if isinstance(limits, list) else []
+def _limit_texts(doc: Mapping[str, Any]) -> list[str]:
+    limits = doc.get("known_limits")
+    return [t for t in limits if isinstance(t, str)] if isinstance(limits, list) else []
+
+
+def known_limit_metrics(
+    result: Mapping[str, Any], baselines: Sequence[Mapping[str, Any]] = ()
+) -> frozenset[str]:
+    """The hard-target metrics a ``known_limits`` entry names (the metric key as a word), in
+    the result or in a committed baseline at the same table count (any runner class)."""
+    tables = _need(result, "size", "tables")
+    texts = _limit_texts(result)
+    for b in baselines:
+        if b.get("size", {}).get("tables") == tables:
+            texts += _limit_texts(b)
     return frozenset(
         name for name in HARD_TARGETS if any(re.search(rf"\b{name}\b", t) for t in texts)
     )
 
 
-def known_misses(result: Mapping[str, Any]) -> list[str]:
-    """Warnings: hard targets missed by a metric ``known_limits`` documents."""
+def known_misses(
+    result: Mapping[str, Any], baselines: Sequence[Mapping[str, Any]] = ()
+) -> list[str]:
+    """Warnings: hard targets missed by a metric a ``known_limits`` entry documents."""
     metrics = _need(result, "metrics")
     out = []
-    for name in sorted(known_limit_metrics(result)):
+    for name in sorted(known_limit_metrics(result, baselines)):
         value = metrics.get(name)
         if value is not None and value > HARD_TARGETS[name]:
             out.append(
@@ -101,7 +117,7 @@ def compare(result: Mapping[str, Any], baselines: Sequence[Mapping[str, Any]]) -
     problems: list[str] = []
     metrics = _need(result, "metrics")
     matching = _matching(result, baselines)
-    known = known_limit_metrics(result)
+    known = known_limit_metrics(result, baselines)
     for name, bound in HARD_TARGETS.items():
         if name not in metrics:
             problems.append(f"{name} is missing from the result")
@@ -140,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         notes = compare_notes(result, baselines)
         problems = compare(result, baselines)
-        known = known_misses(result)
+        known = known_misses(result, baselines)
     except MalformedResult as e:
         print(f"ERROR: malformed result: {e}", file=sys.stderr)
         return EXIT_MALFORMED

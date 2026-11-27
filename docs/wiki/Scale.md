@@ -100,12 +100,15 @@ Why 500,000: projected from the run above with 30% headroom, the store needs 9.4
 
 The comparator fails the job when a hard target is missed or a regression-gated metric is more
 than 25% worse than the committed baseline for the same runner class and size. A hard-target
-miss whose metric the result's `known_limits` names (here `context_p95_ms`, with its measured
+miss whose metric a `known_limits` entry names (here `context_p95_ms`, with its measured
 numbers) is reported as a warning instead of a failure, and that metric is then regression-gated
 at 25% like the others, so the documented miss cannot get worse unnoticed; a miss no known limit
-names still fails. Until a GitHub baseline
-(`benchmarks/results/baseline-github-ubuntu-latest.json`) is committed the comparator exits 2
-("gate inactive"), which the workflow reports as a warning, not a failure.
+names still fails. The entry may be in the result itself or in a committed result at the same
+table count, from any machine: a nightly result documents no limits, `0.2.0.json` does. The
+GitHub baseline (`benchmarks/results/baseline-github-ubuntu-latest.json`) is the first
+`workflow_dispatch` run on 2026-11-26 (context p95 45.6 s, about 1.6x the M2 Pro figure); with
+no baseline for the runner class and size the comparator exits 2 ("gate inactive"), which the
+workflow reports as a warning, not a failure.
 
 ## Reproduce
 

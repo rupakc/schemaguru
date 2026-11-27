@@ -115,3 +115,16 @@ def test_theme_wiring() -> None:
     assert "assets/extra.css" not in cfg["extra_css"]
     assert "assets/schemaguru.js" in cfg["extra_javascript"]
     assert not (ROOT / "docs" / "assets" / "extra.css").exists()
+
+
+def test_footer_maps_material_text_and_band_to_tokens() -> None:
+    """Material's footer band and copyright default to translucent black/white (about 2:1)."""
+    css = CSS_PATH.read_text(encoding="utf-8")
+    assert "--md-footer-fg-color--lighter: var(--sg-fg-muted)" in css
+    assert "--md-footer-bg-color--dark: var(--sg-bg)" in css
+
+
+@pytest.mark.parametrize("scheme", ["default", "slate"])
+def test_footer_text_meets_aa(scheme: str) -> None:
+    tokens = scheme_tokens(CSS_PATH.read_text(encoding="utf-8"), scheme)
+    assert contrast(tokens["--sg-fg-muted"], tokens["--sg-bg"]) >= 4.5

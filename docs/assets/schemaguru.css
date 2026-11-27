@@ -71,6 +71,8 @@
   --md-footer-bg-color: var(--sg-surface);
   --md-footer-fg-color: var(--sg-fg-muted);
   --md-footer-fg-color--light: var(--sg-fg-muted);
+  --md-footer-fg-color--lighter: var(--sg-fg-muted);
+  --md-footer-bg-color--dark: var(--sg-bg);
 }
 
 .md-header,

@@ -119,3 +119,42 @@ def test_tabs_keyboard(page: Any, base: str) -> None:
     assert page.evaluate("document.activeElement.id") == "sg-tab-mcp"
     page.keyboard.press("End")
     assert tabs.nth(4).get_attribute("aria-selected") == "true"
+
+
+_LUMINANCE = """c => { const v = c.match(/[\\d.]+/g).map(Number);
+  const ch = x => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+  return [0.2126 * ch(v[0]) + 0.7152 * ch(v[1]) + 0.0722 * ch(v[2]), v.length > 3 ? v[3] : 1]; }"""
+
+_FOOTER_COLOURS = """e => { let b = e, bg;
+  while ((bg = getComputedStyle(b).backgroundColor) === "rgba(0, 0, 0, 0)") b = b.parentElement;
+  return [getComputedStyle(e).color, bg]; }"""
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_footer_text_contrast(page: Any, base: str, scheme: str) -> None:
+    page.emulate_media(color_scheme=scheme)
+    page.goto(base)
+    for selector in (".md-copyright", ".md-footer__link"):
+        fg, bg = page.locator(selector).first.evaluate(_FOOTER_COLOURS)
+        (lf, af), (lb, ab) = page.evaluate(_LUMINANCE, fg), page.evaluate(_LUMINANCE, bg)
+        assert af == 1 and ab == 1, (selector, fg, bg)  # opaque, so the ratio is exact
+        hi, lo = max(lf, lb), min(lf, lb)
+        assert (hi + 0.05) / (lo + 0.05) >= 4.5, (selector, fg, bg)
+
+
+@pytest.mark.parametrize("width", [375, 1280])
+def test_after_pane_opens_on_a_whole_line(page: Any, base: str, width: int) -> None:
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(base)
+    page.wait_for_load_state("load")
+    code = page.locator("#sg-before-after .sg-pane--after code")
+    assert code.evaluate("c => c.scrollTop") > 0  # opened on the traps, not on the legend
+    first = code.evaluate(
+        """c => { const box = c.getBoundingClientRect();
+          const line = [...c.querySelectorAll(".sg-line")]
+            .find(l => l.textContent.trim() && l.getBoundingClientRect().bottom > box.top + 1);
+          const r = line.getBoundingClientRect();
+          return [r.top - box.top, line.textContent]; }"""
+    )
+    assert first[0] >= 4, first  # the first visible text line is whole, below the padding
+    assert first[1].startswith("["), first  # the table header line opens the view

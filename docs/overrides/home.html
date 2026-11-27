@@ -333,15 +333,25 @@
 
   </div></div></div>
   <script>
-    /* start the measured pane at its first trap line; scrolls only that pane, never the page */
-    document.querySelectorAll("#sg-before-after .sg-pane--after code").forEach(function (code) {
-      var mark = code.querySelector("mark[data-trap]");
-      if (!mark) { return; }
-      /* the line before the first trap starts the visible area, with the pane's own padding */
-      var start = mark.previousElementSibling || mark;
-      var pad = parseFloat(getComputedStyle(code).paddingTop) || 0;
-      code.scrollTop = Math.max(0, start.offsetTop - pad);
-    });
+    /* open the measured pane on the table holding the first trap: its "[schema.table]" line
+       starts the view, one padding below the pane's top edge; scrolls only that pane */
+    (function () {
+      function place() {
+        document.querySelectorAll("#sg-before-after .sg-pane--after code").forEach(function (code) {
+          var mark = code.querySelector("mark[data-trap]");
+          if (!mark) { return; }
+          var start = mark;
+          while (start.previousElementSibling && start.textContent.charAt(0) !== "[") {
+            start = start.previousElementSibling;
+          }
+          var pad = parseFloat(getComputedStyle(code).paddingTop) || 0;
+          var delta = start.getBoundingClientRect().top - code.getBoundingClientRect().top;
+          code.scrollTop = Math.max(0, Math.round(code.scrollTop + delta - pad));
+        });
+      }
+      place();
+      window.addEventListener("load", place);
+    })();
   </script>
 {% endblock %}
 

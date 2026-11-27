@@ -165,6 +165,6 @@ pip install 'schemaguru[duckdb]'  # plus a warehouse driver (one extra per wareh
 </div>
 
 The `lineage` extra (`pip install 'schemaguru[lineage]'`, sqlglot) reads lineage out of view
-definitions and dbt SQL; see [Lineage](guide/lineage.md). SchemaGuru needs Python 3.10+.
+definitions and dbt SQL; see [Lineage](guide/lineage.md). SchemaGuru needs Python 3.10 to 3.13.
 
 </section>

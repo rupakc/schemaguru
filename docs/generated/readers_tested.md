@@ -1,0 +1,1 @@
+The ClickHouse, DuckDB, MySQL, PostgreSQL, SQL Server and Trino readers are tested against real engines in CI. The BigQuery, Databricks, Oracle, Redshift and Snowflake readers are built from the documented system views and tested on recorded metadata, **not yet validated against live accounts**. Azure Synapse is supported through the SQL Server reader and is not tested in CI.

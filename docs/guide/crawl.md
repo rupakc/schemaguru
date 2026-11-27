@@ -60,13 +60,15 @@ parameters for every value; the metadata SQL is the only SQL SchemaGuru writes.
 | PostgreSQL | `pg_catalog` (row estimates from `reltuples`, comments from `pg_description`) | real engine, CI |
 | MySQL / MariaDB | `information_schema` | real engine, CI |
 | ClickHouse | `system.tables`, `system.columns` (no foreign keys) | real engine, CI |
-| SQL Server / Synapse | `sys.*` views, `MS_Description` comments | real engine, CI |
+| SQL Server | `sys.*` views, `MS_Description` comments | real engine, CI |
 | Trino | `<catalog>.information_schema.*` (constraints usually absent) | real engine, CI |
 | BigQuery | `region-*.INFORMATION_SCHEMA.*` (billed: admitted against `Budget.crawl_bytes`) | recorded metadata only |
 | Snowflake | `<db>.INFORMATION_SCHEMA.*`, `SHOW … KEYS` | recorded metadata only |
 | Redshift | `SVV_*` views, `pg_constraint` | recorded metadata only |
 | Databricks | Unity Catalog `system.information_schema.*` | recorded metadata only |
 | Oracle | `ALL_*` dictionary views | recorded metadata only |
+
+--8<-- "generated/readers_tested.md"
 
 Known limits: the BigQuery incremental listing misses schema-only changes (a column added
 without the table's `last_altered` moving), so run a periodic full crawl

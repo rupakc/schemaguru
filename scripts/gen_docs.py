@@ -27,6 +27,58 @@ from _shop_docs import ROOT, ShopGuru, block, naive_counts, schema_dump, shop_gu
 
 DOCS = ROOT / "docs"
 
+READER_NAMES = {
+    "bigquery": "BigQuery",
+    "clickhouse": "ClickHouse",
+    "databricks": "Databricks",
+    "duckdb": "DuckDB",
+    "mysql": "MySQL",
+    "oracle": "Oracle",
+    "postgres": "PostgreSQL",
+    "redshift": "Redshift",
+    "snowflake": "Snowflake",
+    "trino": "Trino",
+    "tsql": "SQL Server",
+}
+# DuckDB runs in-process, so the unit matrix covers it; the others are the integration job's
+# service containers (``SCHEMAGURU_REQUIRE_ENGINES`` in ci.yml).
+IN_PROCESS_ENGINES = ("duckdb",)
+
+
+def _join(names: list[str]) -> str:
+    return ", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else names[0]
+
+
+def tested_readers() -> tuple[list[str], list[str]]:
+    """``(tested against real engines in CI, recorded metadata only)``, as reader ids.
+
+    The first list is the CI integration job's engine list plus the in-process engines.
+    """
+    from schemaguru.catalog.registry import dialects
+
+    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    match = re.search(r"SCHEMAGURU_REQUIRE_ENGINES:\s*([\w,]+)", text)
+    if match is None:
+        raise ValueError("ci.yml has no SCHEMAGURU_REQUIRE_ENGINES")
+    live = sorted({*match.group(1).split(","), *IN_PROCESS_ENGINES})
+    unknown = [e for e in live if e not in dialects()]
+    if unknown:
+        raise ValueError(f"ci.yml names engines with no reader: {unknown}")
+    return live, sorted(set(dialects()) - set(live))
+
+
+def readers_tested() -> str:
+    """The one statement of which readers are tested live; every page quotes this text."""
+    live, recorded = tested_readers()
+    live_names = sorted(READER_NAMES[r] for r in live)
+    rec_names = sorted(READER_NAMES[r] for r in recorded)
+    return (
+        f"The {_join(live_names)} readers are tested against real engines in CI. "
+        f"The {_join(rec_names)} readers are built from the documented system views and tested "
+        "on recorded metadata, **not yet validated against live accounts**. Azure Synapse is "
+        "supported through the SQL Server reader and is not tested in CI.\n"
+    )
+
 
 def _fence(text: str, lang: str = "text") -> str:
     return f"```{lang}\n{text.rstrip()}\n```\n"
@@ -223,6 +275,7 @@ def landing_data(shop: ShopGuru) -> dict[str, Any]:
         "schema_dump_tokens": guru.counter.count(schema_dump(guru)),
         "traps": traps,
         "readers": dialects(),
+        "readers_tested": readers_tested().replace("**", "").strip(),
         "tools": [t["name"] for t in guru.tools()],
         "profiles": profile_names(),
         "value_policy": Config().sampling.llm_values,
@@ -389,6 +442,7 @@ def generate() -> dict[str, str]:
             json.dumps(landing_data(shop), indent=1, sort_keys=True, ensure_ascii=False) + "\n"
         )
     out["generated/scale_claim.md"] = scale_claim()
+    out["generated/readers_tested.md"] = readers_tested()
     return out
 
 

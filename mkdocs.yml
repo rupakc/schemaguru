@@ -15,6 +15,9 @@ exclude_docs: |
   generated/
   overrides/
 
+not_in_nav: |
+  /demo.md
+
 theme:
   name: material
   language: en

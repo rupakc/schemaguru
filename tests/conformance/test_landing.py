@@ -270,6 +270,11 @@ def test_features_carries_the_stories_and_the_trap_table() -> None:
     assert "HUB_PIVOT" in text
 
 
+# the one allowed leftover: /demo/ redirects to the playground instead of 404ing
+REDIRECT_STUB = "docs/demo.md"
+ALLOWED_DEMO_REFERENCES = (REDIRECT_STUB, "mkdocs.yml")  # the stub and its not_in_nav entry
+
+
 def test_no_demo_consumers() -> None:
     """The retired demo leaves no link, path or script reference (prose may say "demo")."""
     import subprocess
@@ -281,7 +286,9 @@ def test_no_demo_consumers() -> None:
     me = Path(__file__).resolve().relative_to(ROOT).as_posix()
     hits = []
     for name in names:
-        if name == me or name.startswith("docs/specs/") or not (ROOT / name).is_file():
+        if name in (me, *ALLOWED_DEMO_REFERENCES) or name.startswith("docs/specs/"):
+            continue
+        if not (ROOT / name).is_file():
             continue
         try:
             text = (ROOT / name).read_text(encoding="utf-8")
@@ -296,3 +303,11 @@ def test_negative_control_demo_consumer_pattern() -> None:
     pattern = re.compile(r"site-demo|shop_export\.json|build_demo_export|\bdemo\.md")
     assert pattern.search("[demo](docs/demo.md)")
     assert not pattern.search("an interactive demo, in prose")
+
+
+def test_demo_stub_redirects_to_the_playground() -> None:
+    text = (ROOT / REDIRECT_STUB).read_text(encoding="utf-8")
+    assert "redirect_to: playground/" in text and "(playground.md)" in text
+    assert 'http-equiv="refresh"' in (ROOT / "docs/overrides/redirect.html").read_text("utf-8")
+    nav = (ROOT / "mkdocs.yml").read_text("utf-8")
+    assert "not_in_nav" in nav and "/demo.md" in nav

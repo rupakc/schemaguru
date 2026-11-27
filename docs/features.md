@@ -135,9 +135,7 @@ Every component sits behind a small protocol: readers, stores, retrievers, provi
 </div>
 
 !!! note "Readers"
-    The readers for PostgreSQL, MySQL, ClickHouse, SQL Server, Trino and DuckDB are tested
-    against real engines in CI. The BigQuery, Snowflake, Redshift, Databricks and Oracle
-    readers are tested on recorded metadata and **not yet validated against live accounts**.
+    --8<-- "generated/readers_tested.md"
 
 ## Why it matters: a wrong guess does not error
 

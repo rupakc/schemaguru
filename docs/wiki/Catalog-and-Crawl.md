@@ -93,11 +93,12 @@ Each has a guide with permissions, cost and quirks: [[Warehouse-BigQuery]],
 
 How well each reader is tested:
 
-- **Validated against real engines in CI:** PostgreSQL, MySQL, ClickHouse, SQL Server, Trino
-  (service containers) and DuckDB.
-- **Built from documented system-view shapes, not yet validated against live accounts:**
-  BigQuery, Snowflake, Redshift, Databricks, Oracle. They are tested against recorded metadata
-  fixtures, and opt-in live tests exist (`tests/live/`). Please report what you find.
+<!-- readers-tested:begin -->
+The ClickHouse, DuckDB, MySQL, PostgreSQL, SQL Server and Trino readers are tested against real engines in CI. The BigQuery, Databricks, Oracle, Redshift and Snowflake readers are built from the documented system views and tested on recorded metadata, **not yet validated against live accounts**. Azure Synapse is supported through the SQL Server reader and is not tested in CI.
+<!-- readers-tested:end -->
+
+Opt-in live tests for the recorded-metadata readers exist (`tests/live/`). Please report what
+you find.
 
 Rules every reader follows:
 

@@ -82,10 +82,14 @@ changes your file. See [[Overlays]].
 
 ### Which warehouses are supported?
 
-BigQuery, Snowflake, Redshift, Databricks, PostgreSQL, DuckDB, ClickHouse, SQL Server / Synapse,
-Oracle, Trino and MySQL/MariaDB. The container-testable ones are validated against real engines
-in CI; the cloud ones (and Oracle) are built from documented system views and not yet validated
-against live accounts. Any other warehouse: write a `CatalogReader` ([[Extending-CatalogReader]]).
+BigQuery, Snowflake, Redshift, Databricks, PostgreSQL, DuckDB, ClickHouse, SQL Server (and Azure
+Synapse through it), Oracle, Trino and MySQL/MariaDB.
+
+<!-- readers-tested:begin -->
+The ClickHouse, DuckDB, MySQL, PostgreSQL, SQL Server and Trino readers are tested against real engines in CI. The BigQuery, Databricks, Oracle, Redshift and Snowflake readers are built from the documented system views and tested on recorded metadata, **not yet validated against live accounts**. Azure Synapse is supported through the SQL Server reader and is not tested in CI.
+<!-- readers-tested:end -->
+
+Any other warehouse: write a `CatalogReader` ([[Extending-CatalogReader]]).
 
 ### Is there a server?
 

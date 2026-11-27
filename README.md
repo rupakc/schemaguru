@@ -131,8 +131,12 @@ Every statement carries its provenance (*catalog*, *declared*, *measured*, *draf
 | Warehouse | Status |
 |---|---|
 | DuckDB, PostgreSQL, MySQL / MariaDB, ClickHouse, SQL Server, Trino | catalog readers tested against real engines in CI (SQL Server 2022) |
-| Azure Synapse | supported through the T-SQL reader; not CI-tested |
+| Azure Synapse | supported through the SQL Server (T-SQL) reader; not tested in CI |
 | BigQuery, Snowflake, Redshift, Databricks, Oracle | built from the documented system views and tested on recorded metadata; **not yet validated against live accounts** |
+
+<!-- readers-tested:begin -->
+The ClickHouse, DuckDB, MySQL, PostgreSQL, SQL Server and Trino readers are tested against real engines in CI. The BigQuery, Databricks, Oracle, Redshift and Snowflake readers are built from the documented system views and tested on recorded metadata, **not yet validated against live accounts**. Azure Synapse is supported through the SQL Server reader and is not tested in CI.
+<!-- readers-tested:end -->
 
 A warehouse that is not listed needs a
 [custom catalog reader](https://rupakc.github.io/schemaguru/extending/catalog-reader/).
@@ -155,7 +159,7 @@ installed with SchemaGuru.
 ## Contributing
 
 Contributions are welcome. [CONTRIBUTING.md](https://github.com/rupakc/schemaguru/blob/main/CONTRIBUTING.md)
-has the setup, the checks CI runs and the project rules;
+has the setup, the checks CI runs, the project rules and how to build the docs site;
 [SECURITY.md](https://github.com/rupakc/schemaguru/blob/main/SECURITY.md) says how to report a
 vulnerability.
 

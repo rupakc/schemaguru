@@ -1,0 +1,7 @@
+{% extends "main.html" %}
+{% block extrahead %}
+  {{ super() }}
+  <meta http-equiv="refresh" content="0; url={{ page.meta.redirect_to }}">
+  <link rel="canonical" href="{{ config.site_url }}{{ page.meta.redirect_to }}">
+  <meta name="robots" content="noindex">
+{% endblock %}

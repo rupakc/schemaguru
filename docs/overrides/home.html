@@ -360,7 +360,7 @@
     "bigquery": "BigQuery", "clickhouse": "ClickHouse", "databricks": "Databricks",
     "duckdb": "DuckDB", "mysql": "MySQL / MariaDB", "oracle": "Oracle",
     "postgres": "PostgreSQL", "redshift": "Redshift", "snowflake": "Snowflake",
-    "trino": "Trino", "tsql": "SQL Server / Synapse"
+    "trino": "Trino", "tsql": "SQL Server"
   } %}
   <div class="sg-home-tail">
   {{ super() }}
@@ -373,10 +373,7 @@
       <li><span class="sg-badge">{{ names.get(reader, reader) }}</span></li>
       {% endfor %}
     </ul>
-    <p>The PostgreSQL, MySQL, ClickHouse, SQL Server, Trino and DuckDB readers are tested against
-    real engines in CI. The BigQuery, Snowflake, Redshift, Databricks and Oracle readers are built
-    from the documented system views and tested on recorded metadata, not yet against live
-    accounts.</p>
+    <p>{{ landing.readers_tested }}</p>
   </section>
 
   <section id="sg-trust" class="sg-section sg-reveal" aria-labelledby="sg-trust-title">
